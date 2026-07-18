@@ -94,7 +94,7 @@ export const dateTime = value => {
   const match = String(value).match(/^(\d{4})-(\d{2})-(\d{2})(?:[ T](.*))?$/)
   return match ? `${match[3]}/${match[2]}/${match[1]}${match[4] ? ` ${match[4]}` : ''}` : value
 }
-export function DateInput({ value, onChange, onClose, onFocus, autoFocus, className = '', ...props }) {
+export function DateInput({ value, onChange, onClose, onFocus, autoFocus, closeOnScroll = true, className = '', ...props }) {
   const [draft, setDraft] = useState(value ? shortDate(value) : '')
   const [open, setOpen] = useState(false)
   const [viewMonth, setViewMonth] = useState(() => monthFromValue(value))
@@ -128,11 +128,11 @@ export function DateInput({ value, onChange, onClose, onFocus, autoFocus, classN
   useEffect(() => {
     if (!open) return
     const outside = event => { if (!rootRef.current?.contains(event.target) && !calendarRef.current?.contains(event.target)) commit() }
-    const closeOnScroll = () => commit()
+    const closeOnScrollHandler = () => commit()
     document.addEventListener('mousedown', outside)
-    window.addEventListener('scroll', closeOnScroll, true)
-    return () => { document.removeEventListener('mousedown', outside); window.removeEventListener('scroll', closeOnScroll, true) }
-  }, [open, draft, value])
+    if (closeOnScroll) window.addEventListener('scroll', closeOnScrollHandler, true)
+    return () => { document.removeEventListener('mousedown', outside); if (closeOnScroll) window.removeEventListener('scroll', closeOnScrollHandler, true) }
+  }, [open, draft, value, closeOnScroll])
   const choose = next => { onChange(next); setDraft(next ? shortDate(next) : ''); hide() }
   const selected = value || parseDateDraft(draft) || ''
   const year = viewMonth.getFullYear(); const month = viewMonth.getMonth(); const offset = (new Date(year, month, 1).getDay() + 6) % 7

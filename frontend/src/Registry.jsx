@@ -142,7 +142,7 @@ function DateHeaderFilter({ label, value, onChange }) {
   const [open, setOpen] = useState(false)
   return <div className={`header-filter date-header-filter ${open ? 'is-open' : ''} ${value ? 'has-value' : ''}`}>
     <button type="button" className="header-filter-trigger" aria-label={`Фильтр по дате: ${label}`} aria-expanded={open} onClick={() => setOpen(current => !current)}><CalendarDays size={13}/>{value && <i/>}</button>
-    {open && <div className="header-date-filter-menu"><DateInput value={value} onChange={next => { onChange(next); setOpen(false) }} onClose={() => setOpen(false)} aria-label={`Дата фильтра: ${label}`} autoFocus/></div>}
+    {open && <div className="header-date-filter-menu"><DateInput value={value} onChange={next => { onChange(next); setOpen(false) }} onClose={() => setOpen(false)} closeOnScroll={false} aria-label={`Дата фильтра: ${label}`} autoFocus/></div>}
   </div>
 }
 
