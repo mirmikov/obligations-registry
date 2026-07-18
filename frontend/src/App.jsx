@@ -94,7 +94,7 @@ export const dateTime = value => {
   const match = String(value).match(/^(\d{4})-(\d{2})-(\d{2})(?:[ T](.*))?$/)
   return match ? `${match[3]}/${match[2]}/${match[1]}${match[4] ? ` ${match[4]}` : ''}` : value
 }
-export function DateInput({ value, onChange, onClose, onFocus, autoFocus, closeOnScroll = true, className = '', ...props }) {
+export function DateInput({ value, onChange, onClose, onFocus, autoFocus, closeOnScroll = true, anchorRef, triggerOnly = false, className = '', ...props }) {
   const [draft, setDraft] = useState(value ? shortDate(value) : '')
   const [open, setOpen] = useState(false)
   const [viewMonth, setViewMonth] = useState(() => monthFromValue(value))
@@ -111,7 +111,7 @@ export function DateInput({ value, onChange, onClose, onFocus, autoFocus, closeO
     hide()
   }
   const show = () => {
-    const rect = inputRef.current?.getBoundingClientRect()
+    const rect = anchorRef?.current?.getBoundingClientRect() || inputRef.current?.getBoundingClientRect()
     if (rect) {
       const width = 304; const height = 350
       const left = Math.max(10, Math.min(rect.left, window.innerWidth - width - 10))
@@ -122,7 +122,7 @@ export function DateInput({ value, onChange, onClose, onFocus, autoFocus, closeO
   }
   useEffect(() => {
     if (!autoFocus) return
-    const frame = requestAnimationFrame(() => { inputRef.current?.focus(); show() })
+    const frame = requestAnimationFrame(() => { inputRef.current?.focus({ preventScroll: true }); show() })
     return () => cancelAnimationFrame(frame)
   }, [])
   useEffect(() => {
@@ -138,7 +138,7 @@ export function DateInput({ value, onChange, onClose, onFocus, autoFocus, closeO
   const year = viewMonth.getFullYear(); const month = viewMonth.getMonth(); const offset = (new Date(year, month, 1).getDay() + 6) % 7
   const days = Array.from({ length: 42 }, (_, index) => { const date = new Date(year, month, index - offset + 1); return { date, iso: localISO(date), outside: date.getMonth() !== month } })
   const today = localISO(new Date())
-  return <><div ref={rootRef} className={`date-input-wrap ${open ? 'is-open' : ''}`}><input ref={inputRef} {...props} className={className} type="text" inputMode="numeric" placeholder="дд/мм/гггг" value={draft} onChange={event => setDraft(event.target.value)} onFocus={show} onClick={show} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); commit() } if (event.key === 'Escape') { event.preventDefault(); setDraft(value ? shortDate(value) : ''); hide() } }}/></div>{open && createPortal(<div ref={calendarRef} className="custom-calendar" style={position} role="dialog" aria-label="Выбор даты">
+  return <><div ref={rootRef} className={`date-input-wrap ${triggerOnly ? 'is-trigger-only' : ''} ${open ? 'is-open' : ''}`}><input ref={inputRef} {...props} className={className} type="text" inputMode="numeric" placeholder="дд/мм/гггг" value={draft} onChange={event => setDraft(event.target.value)} onFocus={show} onClick={show} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); commit() } if (event.key === 'Escape') { event.preventDefault(); setDraft(value ? shortDate(value) : ''); hide() } }}/></div>{open && createPortal(<div ref={calendarRef} className="custom-calendar" style={position} role="dialog" aria-label="Выбор даты">
     <div className="calendar-head"><button type="button" onClick={() => setViewMonth(new Date(year, month - 1, 1))} aria-label="Предыдущий месяц"><ChevronLeft size={17}/></button><strong>{capitalizeMonth(viewMonth.toLocaleDateString('ru-RU', { month: 'long', year: 'numeric' }))}</strong><button type="button" onClick={() => setViewMonth(new Date(year, month + 1, 1))} aria-label="Следующий месяц"><ChevronRight size={17}/></button></div>
     <div className="calendar-weekdays">{['Пн','Вт','Ср','Чт','Пт','Сб','Вс'].map(day => <span key={day}>{day}</span>)}</div>
     <div className="calendar-days">{days.map(day => <button type="button" key={day.iso} className={`${day.outside ? 'outside' : ''} ${day.iso === selected ? 'selected' : ''} ${day.iso === today ? 'today' : ''}`} onClick={() => choose(day.iso)} aria-label={shortDate(day.iso)}>{day.date.getDate()}</button>)}</div>
