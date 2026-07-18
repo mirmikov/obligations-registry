@@ -39,7 +39,7 @@ func (a *app) exportXLSX(w http.ResponseWriter, r *http.Request) {
 			fail(w, 500, "Ошибка экспорта")
 			return
 		}
-		values := []any{item.AccountType, dateValue(item.EntryDate), item.Counterparty, item.LegalEntity, item.CostCategory, item.Priority, item.Responsible, item.DocumentNumber, item.DefermentDays, dateValue(item.DocumentDate), item.Amount, dateValue(item.PlannedPaymentDate), dateValue(item.ApprovalDate), dateValue(item.ActualPaymentDate), item.Status, item.Urgency, item.Comment}
+		values := []any{item.AccountType, dateValue(item.EntryDate), item.Counterparty, item.LegalEntity, item.CostCategory, item.Priority, item.Responsible, item.DocumentNumber, intValue(item.DefermentDays), dateValue(item.DocumentDate), floatValue(item.Amount), dateValue(item.PlannedPaymentDate), dateValue(item.ApprovalDate), dateValue(item.ActualPaymentDate), item.Status, item.Urgency, item.Comment}
 		cell, _ := excelize.CoordinatesToCellName(1, rowNumber)
 		_ = f.SetSheetRow(sheet, cell, &values)
 		if item.SourceNote != "" {
@@ -66,6 +66,20 @@ func (a *app) exportXLSX(w http.ResponseWriter, r *http.Request) {
 	if err := f.Write(w); err != nil {
 		return
 	}
+}
+
+func intValue(value *int) any {
+	if value == nil {
+		return nil
+	}
+	return *value
+}
+
+func floatValue(value *float64) any {
+	if value == nil {
+		return nil
+	}
+	return *value
 }
 
 func dateValue(value string) any {

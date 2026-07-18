@@ -83,7 +83,12 @@ function Login({ onLogin }) {
 
 export function PageHeader({ eyebrow, title, subtitle, actions }) { return <header className="page-header"><div><p className="eyebrow">{eyebrow}</p><h1>{title}</h1>{subtitle && <span>{subtitle}</span>}</div>{actions && <div className="header-actions">{actions}</div>}</header> }
 export const roleLabel = role => ({ admin: 'Администратор', editor: 'Редактор', viewer: 'Зритель' }[role] || role)
-export const money = value => new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'RUB', maximumFractionDigits: 0 }).format(value || 0)
+export const money = value => new Intl.NumberFormat('ru-RU', {
+  style: 'currency',
+  currency: 'RUB',
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+}).format(value || 0)
 export const shortDate = value => {
   if (!value) return '—'
   const match = String(value).match(/^(\d{4})-(\d{2})-(\d{2})/)

@@ -2,6 +2,7 @@ package main
 
 import (
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -62,6 +63,24 @@ func TestExcelDateParsing(t *testing.T) {
 		if actual := parseDate(input); actual != expected {
 			t.Fatalf("parseDate(%q)=%q, want %q", input, actual, expected)
 		}
+	}
+}
+
+func TestExcelNumberParsingPreservesKopecks(t *testing.T) {
+	value := parseFloatPtr("60\u00a0591,67")
+	if value == nil || strconv.FormatFloat(*value, 'f', 2, 64) != "60591.67" {
+		t.Fatalf("parseFloatPtr() = %v, want 60591.67", value)
+	}
+}
+
+func TestExcelExportDereferencesNumbers(t *testing.T) {
+	days := 10
+	amount := 60591.67
+	if value, ok := intValue(&days).(int); !ok || value != days {
+		t.Fatalf("intValue() = %#v, want numeric %d", intValue(&days), days)
+	}
+	if value, ok := floatValue(&amount).(float64); !ok || value != amount {
+		t.Fatalf("floatValue() = %#v, want numeric %.2f", floatValue(&amount), amount)
 	}
 }
 
