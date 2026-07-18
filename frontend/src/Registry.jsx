@@ -7,6 +7,7 @@ import usePresence from './usePresence'
 const emptyFilters = { q: '', counterparty: '', account_type: '', legal_entity: '', cost_category: '', priority: '', responsible: '', status: '', urgency: '', planned_from: '', planned_to: '', overdue: '' }
 const dateFields = new Set(['entry_date', 'document_date', 'planned_payment_date', 'approval_date', 'actual_payment_date'])
 const fieldLabels = { counterparty: 'Контрагент', entry_date: 'Дата внесения', document_number: 'Документ', document_date: 'Дата документа', legal_entity: 'Юрлицо', cost_category: 'Статья затрат', amount: 'Сумма, ₽', deferment_days: 'Отсрочка, дней', planned_payment_date: 'Плановая оплата', approval_date: 'Дата утверждения', actual_payment_date: 'Фактическая оплата', status: 'Статус', urgency: 'Срочность', responsible: 'Ответственный', priority: 'Приоритет', account_type: 'Признак учёта', comment: 'Комментарий', source_note: 'Условия оплаты' }
+const registryColumnWidths = [46, 220, 130, 180, 135, 180, 240, 120, 110, 145, 145, 145, 160, 135, 160, 120, 130, 240, 240, 52]
 
 export default function Registry({ user, notify }) {
   const [data, setData] = useState({ items: [], total: 0, page: 1, page_size: 50 })
@@ -93,7 +94,7 @@ export default function Registry({ user, notify }) {
     </section>
     <section className="table-card">
       {selected.length > 0 && <div className="selection-bar"><span><Check size={16}/>{selected.length} выбрано</span>{user.role !== 'viewer' && <button onClick={() => setBulkOpen(true)}>Изменить статус и даты</button>}<button onClick={() => setSelected([])}>Снять выбор</button></div>}
-      <div className="registry-table-wrap"><table className="registry-table inline-registry"><thead><tr><th className="check-col">{user.role !== 'viewer' ? <button type="button" className={`inline-add-row ${newRow ? 'active' : ''}`} onClick={addInlineRow} title={newRow ? 'Убрать новую строку' : 'Добавить строку'} aria-label={newRow ? 'Убрать новую строку' : 'Добавить строку'}><Plus size={16}/></button> : <input type="checkbox" checked={allSelected} onChange={toggleAll}/>}</th>
+      <div className="registry-table-wrap"><table className="registry-table inline-registry"><colgroup>{registryColumnWidths.map((width, index) => <col key={index} style={{ width }}/>)}</colgroup><thead><tr><th className="check-col">{user.role !== 'viewer' ? <button type="button" className={`inline-add-row ${newRow ? 'active' : ''}`} onClick={addInlineRow} title={newRow ? 'Убрать новую строку' : 'Добавить строку'} aria-label={newRow ? 'Убрать новую строку' : 'Добавить строку'}><Plus size={16}/></button> : <input type="checkbox" checked={allSelected} onChange={toggleAll}/>}</th>
         <ColumnHead label="Контрагент" field="counterparty" sort={sort} onSort={doSort} value={filters.counterparty} options={refs.counterparties} onFilter={value => setFilter('counterparty', value)}/>
         <ColumnHead label="Дата внесения" field="entry_date" sort={sort} onSort={doSort}/>
         <th>Документ</th><th>Дата документа</th>
