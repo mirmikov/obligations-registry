@@ -1,0 +1,55 @@
+# ФинРеестр — реестр обязательств
+
+Сервис заменяет исходную книгу «Реестр обязательств.xlsx»: единый реестр из 17 полей, рабочие справочники, устойчивые персональные фильтры, реестр к оплате, управленческая панель, импорт/экспорт Excel и журнал действий.
+
+## Запуск
+
+1. Скопируйте `.env.example` в `.env` и обязательно замените пароли и `JWT_SECRET`.
+2. Запустите:
+
+```bash
+docker compose up --build -d
+```
+
+3. Откройте [http://localhost:8088](http://localhost:8088).
+
+При первом старте PostgreSQL автоматически получает все 1 521 рабочую строку исходного реестра, справочники и 453 заметки об условиях оплаты.
+
+## Тестовые учётные записи
+
+Если значения не переопределены в `.env`:
+
+| Роль | Логин | Пароль |
+|---|---|---|
+| Администратор | `admin@registry.local` | `Admin123!` |
+| Редактор | `editor@registry.local` | `Editor123!` |
+| Зритель | `viewer@registry.local` | `Viewer123!` |
+
+Администратор управляет пользователями и справочниками, импортирует Excel и может удалять записи. Редактор создаёт и изменяет обязательства. Зритель имеет только чтение и экспорт.
+
+## Резервное копирование
+
+```bash
+docker compose exec -T db pg_dump -U registry registry > registry-backup.sql
+```
+
+Восстановление выполняется в пустую базу командой `psql -U registry registry < registry-backup.sql`.
+
+## Локальная разработка
+
+Backend:
+
+```bash
+cd backend
+DATABASE_URL='postgres://registry:registry@localhost:5432/registry?sslmode=disable' go run ./cmd/server
+```
+
+Frontend:
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Vite проксирует `/api` на `localhost:8080`.

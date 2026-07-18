@@ -1,0 +1,46 @@
+name: obligations-registry
+
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: registry
+      POSTGRES_USER: registry
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-registry}
+      TZ: Europe/Moscow
+    volumes:
+      - registry_db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U registry -d registry"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  backend:
+    build: ./backend
+    environment:
+      DATABASE_URL: postgres://registry:${POSTGRES_PASSWORD:-registry}@db:5432/registry?sslmode=disable
+      JWT_SECRET: ${JWT_SECRET:-replace-this-secret-before-production}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@registry.local}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-Admin123!}
+      EDITOR_EMAIL: ${EDITOR_EMAIL:-editor@registry.local}
+      EDITOR_PASSWORD: ${EDITOR_PASSWORD:-Editor123!}
+      VIEWER_EMAIL: ${VIEWER_EMAIL:-viewer@registry.local}
+      VIEWER_PASSWORD: ${VIEWER_PASSWORD:-Viewer123!}
+      TZ: Europe/Moscow
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "${APP_PORT:-8088}:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  registry_db:
