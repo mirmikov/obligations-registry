@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { BarChart3, BookOpen, ChevronLeft, ChevronRight, CircleDollarSign, FileClock, LogOut, Menu, ReceiptText, Settings, Users } from 'lucide-react'
 import { request } from './api'
 import Dashboard from './Dashboard'
@@ -93,16 +94,58 @@ export const dateTime = value => {
   const match = String(value).match(/^(\d{4})-(\d{2})-(\d{2})(?:[ T](.*))?$/)
   return match ? `${match[3]}/${match[2]}/${match[1]}${match[4] ? ` ${match[4]}` : ''}` : value
 }
-export function DateInput({ value, onChange, ...props }) {
+export function DateInput({ value, onChange, onClose, onFocus, autoFocus, className = '', ...props }) {
   const [draft, setDraft] = useState(value ? shortDate(value) : '')
+  const [open, setOpen] = useState(false)
+  const [viewMonth, setViewMonth] = useState(() => monthFromValue(value))
+  const [position, setPosition] = useState({ left: 0, top: 0 })
+  const rootRef = useRef(null)
+  const inputRef = useRef(null)
+  const calendarRef = useRef(null)
   useEffect(() => setDraft(value ? shortDate(value) : ''), [value])
+  const hide = () => { setOpen(false); onClose?.() }
   const commit = () => {
-    if (!draft.trim()) { onChange(''); return }
-    const match = draft.trim().match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{4})$/)
-    if (!match) { setDraft(value ? shortDate(value) : ''); return }
-    const day = Number(match[1]); const month = Number(match[2]); const year = Number(match[3]); const date = new Date(Date.UTC(year, month - 1, day))
-    if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) { setDraft(value ? shortDate(value) : ''); return }
-    onChange(`${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`)
+    const parsed = parseDateDraft(draft)
+    if (parsed == null) setDraft(value ? shortDate(value) : '')
+    else { onChange(parsed); setDraft(parsed ? shortDate(parsed) : '') }
+    hide()
   }
-  return <input {...props} type="text" inputMode="numeric" placeholder="дд/мм/гггг" value={draft} onChange={event => setDraft(event.target.value)} onBlur={commit} onKeyDown={event => { if (event.key === 'Enter') event.currentTarget.blur(); if (event.key === 'Escape') { setDraft(value ? shortDate(value) : ''); event.currentTarget.blur() } }}/>
+  const show = () => {
+    const rect = inputRef.current?.getBoundingClientRect()
+    if (rect) {
+      const width = 304; const height = 350
+      const left = Math.max(10, Math.min(rect.left, window.innerWidth - width - 10))
+      const top = window.innerHeight - rect.bottom >= height ? rect.bottom + 6 : Math.max(10, rect.top - height - 6)
+      setPosition({ left, top })
+    }
+    setViewMonth(monthFromValue(value)); setOpen(true); onFocus?.()
+  }
+  useEffect(() => {
+    if (!autoFocus) return
+    const frame = requestAnimationFrame(() => { inputRef.current?.focus(); show() })
+    return () => cancelAnimationFrame(frame)
+  }, [])
+  useEffect(() => {
+    if (!open) return
+    const outside = event => { if (!rootRef.current?.contains(event.target) && !calendarRef.current?.contains(event.target)) commit() }
+    const closeOnScroll = () => commit()
+    document.addEventListener('mousedown', outside)
+    window.addEventListener('scroll', closeOnScroll, true)
+    return () => { document.removeEventListener('mousedown', outside); window.removeEventListener('scroll', closeOnScroll, true) }
+  }, [open, draft, value])
+  const choose = next => { onChange(next); setDraft(next ? shortDate(next) : ''); hide() }
+  const selected = value || parseDateDraft(draft) || ''
+  const year = viewMonth.getFullYear(); const month = viewMonth.getMonth(); const offset = (new Date(year, month, 1).getDay() + 6) % 7
+  const days = Array.from({ length: 42 }, (_, index) => { const date = new Date(year, month, index - offset + 1); return { date, iso: localISO(date), outside: date.getMonth() !== month } })
+  const today = localISO(new Date())
+  return <><div ref={rootRef} className={`date-input-wrap ${open ? 'is-open' : ''}`}><input ref={inputRef} {...props} className={className} type="text" inputMode="numeric" placeholder="дд/мм/гггг" value={draft} onChange={event => setDraft(event.target.value)} onFocus={show} onClick={show} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); commit() } if (event.key === 'Escape') { event.preventDefault(); setDraft(value ? shortDate(value) : ''); hide() } }}/></div>{open && createPortal(<div ref={calendarRef} className="custom-calendar" style={position} role="dialog" aria-label="Выбор даты">
+    <div className="calendar-head"><button type="button" onClick={() => setViewMonth(new Date(year, month - 1, 1))} aria-label="Предыдущий месяц"><ChevronLeft size={17}/></button><strong>{capitalizeMonth(viewMonth.toLocaleDateString('ru-RU', { month: 'long', year: 'numeric' }))}</strong><button type="button" onClick={() => setViewMonth(new Date(year, month + 1, 1))} aria-label="Следующий месяц"><ChevronRight size={17}/></button></div>
+    <div className="calendar-weekdays">{['Пн','Вт','Ср','Чт','Пт','Сб','Вс'].map(day => <span key={day}>{day}</span>)}</div>
+    <div className="calendar-days">{days.map(day => <button type="button" key={day.iso} className={`${day.outside ? 'outside' : ''} ${day.iso === selected ? 'selected' : ''} ${day.iso === today ? 'today' : ''}`} onClick={() => choose(day.iso)} aria-label={shortDate(day.iso)}>{day.date.getDate()}</button>)}</div>
+    <div className="calendar-footer"><button type="button" onClick={() => choose(today)}>Сегодня</button><button type="button" onClick={() => choose('')}>Очистить</button></div>
+  </div>, document.body)}</>
 }
+function monthFromValue(value) { const match = String(value || '').match(/^(\d{4})-(\d{2})/); return match ? new Date(Number(match[1]), Number(match[2]) - 1, 1) : new Date(new Date().getFullYear(), new Date().getMonth(), 1) }
+function localISO(date) { return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}` }
+function parseDateDraft(draft) { if (!String(draft).trim()) return ''; const match = String(draft).trim().match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{4})$/); if (!match) return null; const day = Number(match[1]); const month = Number(match[2]); const year = Number(match[3]); const date = new Date(year, month - 1, day); return date.getFullYear() === year && date.getMonth() === month - 1 && date.getDate() === day ? localISO(date) : null }
+function capitalizeMonth(value) { return value ? value[0].toUpperCase() + value.slice(1) : value }
