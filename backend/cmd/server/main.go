@@ -24,6 +24,7 @@ var assets embed.FS
 type app struct {
 	db        *sql.DB
 	jwtSecret []byte
+	presence  *presenceHub
 }
 
 func main() {
@@ -47,7 +48,7 @@ func main() {
 		time.Sleep(2 * time.Second)
 	}
 
-	a := &app{db: db, jwtSecret: []byte(getenv("JWT_SECRET", "change-me-in-production"))}
+	a := &app{db: db, jwtSecret: []byte(getenv("JWT_SECRET", "change-me-in-production")), presence: newPresenceHub()}
 	if err := a.migrateAndSeed(context.Background()); err != nil {
 		log.Fatal(err)
 	}
@@ -56,6 +57,9 @@ func main() {
 	mux.HandleFunc("GET /api/health", a.health)
 	mux.HandleFunc("POST /api/auth/login", a.login)
 	mux.Handle("GET /api/auth/me", a.authorize(http.HandlerFunc(a.me)))
+	mux.Handle("GET /api/presence", a.authorize(http.HandlerFunc(a.listPresence)))
+	mux.Handle("POST /api/presence", a.authorize(http.HandlerFunc(a.updatePresence)))
+	mux.Handle("DELETE /api/presence/{session}", a.authorize(http.HandlerFunc(a.removePresence)))
 	mux.Handle("GET /api/obligations", a.authorize(http.HandlerFunc(a.listObligations)))
 	mux.Handle("POST /api/obligations", a.authorize(a.requireRole("admin", "editor")(http.HandlerFunc(a.createObligation))))
 	mux.Handle("PATCH /api/obligations/{id}", a.authorize(a.requireRole("admin", "editor")(http.HandlerFunc(a.updateObligation))))

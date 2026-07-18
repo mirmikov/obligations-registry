@@ -28,3 +28,13 @@ export async function download(path, filename) {
   link.href = url; link.download = filename; link.click()
   URL.revokeObjectURL(url)
 }
+
+export function closePresence(sessionId) {
+  const token = localStorage.getItem('registry_token')
+  if (!token || !sessionId) return
+  fetch(`${API}/api/presence/${encodeURIComponent(sessionId)}`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${token}` },
+    keepalive: true,
+  }).catch(() => {})
+}

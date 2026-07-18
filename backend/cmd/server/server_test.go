@@ -4,6 +4,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestObligationNormalizeCalculatesPlannedDate(t *testing.T) {
@@ -15,6 +16,31 @@ func TestObligationNormalizeCalculatesPlannedDate(t *testing.T) {
 	}
 	if input.EntryDate == "" {
 		t.Fatal("entry date must be populated")
+	}
+}
+
+func TestPresenceExpiresStaleSessions(t *testing.T) {
+	hub := newPresenceHub()
+	now := time.Date(2026, 7, 18, 12, 0, 0, 0, time.UTC)
+	hub.update(authUser{ID: 1, Name: "Администратор", Role: "admin"}, presenceInput{SessionID: "session-admin", Page: "registry", Mode: "edit", RecordID: 42, Field: "amount"}, now)
+	hub.update(authUser{ID: 2, Name: "Редактор", Role: "editor"}, presenceInput{SessionID: "session-editor", Page: "registry"}, now.Add(-presenceTTL-time.Second))
+	items := hub.list(now)
+	if len(items) != 1 || items[0].SessionID != "session-admin" {
+		t.Fatalf("active presence = %#v", items)
+	}
+}
+
+func TestPresenceCanOnlyBeRemovedByItsUser(t *testing.T) {
+	hub := newPresenceHub()
+	now := time.Now()
+	hub.update(authUser{ID: 7, Name: "Редактор"}, presenceInput{SessionID: "session-123"}, now)
+	hub.remove("session-123", 8)
+	if len(hub.list(now)) != 1 {
+		t.Fatal("another user removed the session")
+	}
+	hub.remove("session-123", 7)
+	if len(hub.list(now)) != 0 {
+		t.Fatal("session owner could not remove the session")
 	}
 }
 
