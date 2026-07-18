@@ -75,8 +75,12 @@ func buildFilters(r *http.Request, start int) (string, []any) {
 	if value := query.Get("planned_to"); value != "" {
 		add("planned_payment_date <= $%d::date", value)
 	}
-	if value := query.Get("approval_date"); value != "" {
-		add("approval_date = $%d::date", value)
+	for _, filter := range []struct{ param, column string }{
+		{"entry_date", "entry_date"}, {"document_date", "document_date"}, {"planned_payment_date", "planned_payment_date"}, {"approval_date", "approval_date"}, {"actual_payment_date", "actual_payment_date"},
+	} {
+		if value := strings.TrimSpace(query.Get(filter.param)); value != "" {
+			add(filter.column+" = $%d::date", value)
+		}
 	}
 	if query.Get("overdue") == "true" {
 		clauses = append(clauses, "planned_payment_date<CURRENT_DATE AND COALESCE(status,'') NOT IN ('Оплачено','Отменено')")

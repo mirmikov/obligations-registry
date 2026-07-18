@@ -45,12 +45,12 @@ func TestPresenceCanOnlyBeRemovedByItsUser(t *testing.T) {
 }
 
 func TestBuildFiltersUsesBoundParameters(t *testing.T) {
-	r := httptest.NewRequest("GET", "/?status=%D0%9A+%D0%BE%D0%BF%D0%BB%D0%B0%D1%82%D0%B5&q=%D0%94%D0%B5%D0%BB%D1%8C%D1%82%D0%B0&overdue=true", nil)
+	r := httptest.NewRequest("GET", "/?status=%D0%9A+%D0%BE%D0%BF%D0%BB%D0%B0%D1%82%D0%B5&q=%D0%94%D0%B5%D0%BB%D1%8C%D1%82%D0%B0&entry_date=2026-07-18&overdue=true", nil)
 	where, args := buildFilters(r, 1)
-	if len(args) != 2 {
-		t.Fatalf("got %d args, want 2", len(args))
+	if len(args) != 3 {
+		t.Fatalf("got %d args, want 3", len(args))
 	}
-	for _, expected := range []string{"status=$1", "$2", "planned_payment_date<CURRENT_DATE"} {
+	for _, expected := range []string{"status=$1", "$2", "entry_date = $3::date", "planned_payment_date<CURRENT_DATE"} {
 		if !strings.Contains(where, expected) {
 			t.Fatalf("filter SQL %q does not contain %q", where, expected)
 		}

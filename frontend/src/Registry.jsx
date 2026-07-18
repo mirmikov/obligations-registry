@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Check, ChevronDown, ChevronLeft, ChevronRight, Download, FileUp, Filter, LocateFixed, Maximize2, Minimize2, Plus, RotateCcw, Search, Trash2, X } from 'lucide-react'
+import { CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, Download, FileUp, Filter, LocateFixed, Maximize2, Minimize2, Plus, RotateCcw, Search, Trash2, X } from 'lucide-react'
 import { download, request } from './api'
 import { DateInput, money, PageHeader, roleLabel, shortDate } from './App'
 import usePresence from './usePresence'
 
-const emptyFilters = { q: '', counterparty: '', account_type: '', legal_entity: '', cost_category: '', priority: '', responsible: '', status: '', urgency: '', planned_from: '', planned_to: '', overdue: '' }
+const emptyFilters = { q: '', counterparty: '', account_type: '', legal_entity: '', cost_category: '', priority: '', responsible: '', status: '', urgency: '', entry_date: '', document_date: '', planned_payment_date: '', approval_date: '', actual_payment_date: '', planned_from: '', planned_to: '', overdue: '' }
 const dateFields = new Set(['entry_date', 'document_date', 'planned_payment_date', 'approval_date', 'actual_payment_date'])
 const fieldLabels = { counterparty: 'Контрагент', entry_date: 'Дата внесения', document_number: 'Документ', document_date: 'Дата документа', legal_entity: 'Юрлицо', cost_category: 'Статья затрат', amount: 'Сумма, ₽', deferment_days: 'Отсрочка, дней', planned_payment_date: 'Плановая оплата', approval_date: 'Дата утверждения', actual_payment_date: 'Фактическая оплата', status: 'Статус', urgency: 'Срочность', responsible: 'Ответственный', priority: 'Приоритет', account_type: 'Признак учёта', comment: 'Комментарий', source_note: 'Условия оплаты' }
 const registryColumnWidths = [46, 220, 130, 180, 135, 180, 240, 120, 110, 145, 145, 145, 160, 135, 160, 120, 130, 240, 240, 52]
@@ -105,15 +105,15 @@ export default function Registry({ user, notify }) {
       {selected.length > 0 && <div className="selection-bar"><span><Check size={16}/>{selected.length} выбрано</span>{user.role !== 'viewer' && <button onClick={() => setBulkOpen(true)}>Изменить статус и даты</button>}<button onClick={() => setSelected([])}>Снять выбор</button></div>}
       <div className="registry-table-wrap"><table className="registry-table inline-registry"><colgroup>{registryColumnWidths.map((width, index) => <col key={index} style={{ width }}/>)}</colgroup><thead><tr><th className="check-col">{user.role !== 'viewer' ? <button type="button" className={`inline-add-row ${newRow ? 'active' : ''}`} onClick={addInlineRow} title={newRow ? 'Убрать новую строку' : 'Добавить строку'} aria-label={newRow ? 'Убрать новую строку' : 'Добавить строку'}><Plus size={16}/></button> : <input type="checkbox" checked={allSelected} onChange={toggleAll}/>}</th>
         <ColumnHead className="counterparty-head" label="Контрагент" field="counterparty" sort={sort} onSort={doSort} value={filters.counterparty} options={refs.counterparties} onFilter={value => setFilter('counterparty', value)}/>
-        <ColumnHead className="entry-date-head" label="Дата внесения" field="entry_date" sort={sort} onSort={doSort}/>
-        <th>Документ</th><th>Дата документа</th>
+        <ColumnHead className="entry-date-head" label="Дата внесения" field="entry_date" sort={sort} onSort={doSort} dateValue={filters.entry_date} onDateFilter={value => setFilter('entry_date', value)}/>
+        <th>Документ</th><ColumnHead label="Дата документа" dateValue={filters.document_date} onDateFilter={value => setFilter('document_date', value)}/>
         <ColumnHead label="Юрлицо" field="legal_entity" sort={sort} onSort={doSort} value={filters.legal_entity} options={refs.legal_entities} onFilter={value => setFilter('legal_entity', value)}/>
         <ColumnHead label="Статья затрат" value={filters.cost_category} options={refs.cost_categories} onFilter={value => setFilter('cost_category', value)}/>
         <ColumnHead label="Сумма" field="amount" sort={sort} onSort={doSort}/>
         <th>Отсрочка, дней</th>
-        <ColumnHead label="Плановая оплата" field="planned_payment_date" sort={sort} onSort={doSort}/>
-        <ColumnHead label="Дата утверждения" field="approval_date" sort={sort} onSort={doSort}/>
-        <th>Фактическая оплата</th>
+        <ColumnHead label="Плановая оплата" field="planned_payment_date" sort={sort} onSort={doSort} dateValue={filters.planned_payment_date} onDateFilter={value => setFilter('planned_payment_date', value)}/>
+        <ColumnHead label="Дата утверждения" field="approval_date" sort={sort} onSort={doSort} dateValue={filters.approval_date} onDateFilter={value => setFilter('approval_date', value)}/>
+        <ColumnHead label="Фактическая оплата" dateValue={filters.actual_payment_date} onDateFilter={value => setFilter('actual_payment_date', value)}/>
         <ColumnHead label="Статус" field="status" sort={sort} onSort={doSort} value={filters.status} options={refs.statuses} onFilter={value => setFilter('status', value)}/>
         <ColumnHead label="Срочность" value={filters.urgency} options={refs.urgencies} onFilter={value => setFilter('urgency', value)}/>
         <ColumnHead label="Ответственный" value={filters.responsible} options={refs.responsibles} onFilter={value => setFilter('responsible', value)}/>
@@ -129,12 +129,21 @@ export default function Registry({ user, notify }) {
   </div>
 }
 
-function ColumnHead({ label, field, sort, onSort, value = '', options, onFilter, className = '' }) {
+function ColumnHead({ label, field, sort, onSort, value = '', options, onFilter, dateValue = '', onDateFilter, className = '' }) {
   const sorted = field && sort?.key === field
-  return <th className={`${className} ${sorted ? 'sorted' : ''} ${value ? 'filtered' : ''}`}><div className="column-head-inner">
+  return <th className={`${className} ${sorted ? 'sorted' : ''} ${value || dateValue ? 'filtered' : ''}`}><div className="column-head-inner">
     {field ? <button type="button" className="column-sort" onClick={() => onSort(field)}>{label}<i>{sorted ? (sort.order === 'asc' ? '↑' : '↓') : '↕'}</i></button> : <span className="column-label">{label}</span>}
     {onFilter && <HeaderFilter label={label} value={value} options={options} onChange={onFilter}/>}
+    {onDateFilter && <DateHeaderFilter label={label} value={dateValue} onChange={onDateFilter}/>}
   </div></th>
+}
+
+function DateHeaderFilter({ label, value, onChange }) {
+  const [open, setOpen] = useState(false)
+  return <div className={`header-filter date-header-filter ${open ? 'is-open' : ''} ${value ? 'has-value' : ''}`}>
+    <button type="button" className="header-filter-trigger" aria-label={`Фильтр по дате: ${label}`} aria-expanded={open} onClick={() => setOpen(current => !current)}><CalendarDays size={13}/>{value && <i/>}</button>
+    {open && <div className="header-date-filter-menu"><DateInput value={value} onChange={next => { onChange(next); setOpen(false) }} onClose={() => setOpen(false)} aria-label={`Дата фильтра: ${label}`} autoFocus/></div>}
+  </div>
 }
 
 function HeaderFilter({ label, value, options = [], onChange }) {
