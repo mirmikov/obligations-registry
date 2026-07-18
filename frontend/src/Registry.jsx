@@ -44,7 +44,7 @@ export default function Registry({ user, notify }) {
     const current = rowsRef.current.get(item.id) || item
     if (sameCellValue(current[field], value)) { finishCellEdit(current); return true }
     const previousValue = current[field]
-    const next = { ...current, [field]: value }
+    const next = withCalculatedPlannedDate({ ...current, [field]: value }, field)
     rowsRef.current.set(item.id, next)
     setData(state => ({ ...state, items: state.items.map(row => row.id === item.id ? next : row) }))
     const cellKey = `${item.id}:${field}`
@@ -56,6 +56,7 @@ export default function Registry({ user, notify }) {
       const latest = rowsRef.current.get(item.id)
       if (sameCellValue(latest?.[field], value)) {
         const reverted = { ...latest, [field]: previousValue }
+        if (!sameCellValue(next.planned_payment_date, current.planned_payment_date) && sameCellValue(latest?.planned_payment_date, next.planned_payment_date)) reverted.planned_payment_date = current.planned_payment_date
         rowsRef.current.set(item.id, reverted)
         setData(state => ({ ...state, items: state.items.map(row => row.id === item.id ? reverted : row) }))
       }
@@ -66,7 +67,7 @@ export default function Registry({ user, notify }) {
   const commitNewCell = async (item, field, rawValue) => {
     let value
     try { value = normalizeCellValue(field, rawValue) } catch (error) { notify(error.message, 'error'); return false }
-    const next = { ...item, [field]: value }
+    const next = withCalculatedPlannedDate({ ...item, [field]: value }, field)
     setNewRow(next)
     if (sameCellValue(item[field], value) || creatingRef.current) return true
     creatingRef.current = true; markSaving(`new:${field}`, true)
@@ -95,8 +96,8 @@ export default function Registry({ user, notify }) {
     <section className="table-card">
       {selected.length > 0 && <div className="selection-bar"><span><Check size={16}/>{selected.length} выбрано</span>{user.role !== 'viewer' && <button onClick={() => setBulkOpen(true)}>Изменить статус и даты</button>}<button onClick={() => setSelected([])}>Снять выбор</button></div>}
       <div className="registry-table-wrap"><table className="registry-table inline-registry"><colgroup>{registryColumnWidths.map((width, index) => <col key={index} style={{ width }}/>)}</colgroup><thead><tr><th className="check-col">{user.role !== 'viewer' ? <button type="button" className={`inline-add-row ${newRow ? 'active' : ''}`} onClick={addInlineRow} title={newRow ? 'Убрать новую строку' : 'Добавить строку'} aria-label={newRow ? 'Убрать новую строку' : 'Добавить строку'}><Plus size={16}/></button> : <input type="checkbox" checked={allSelected} onChange={toggleAll}/>}</th>
-        <ColumnHead label="Контрагент" field="counterparty" sort={sort} onSort={doSort} value={filters.counterparty} options={refs.counterparties} onFilter={value => setFilter('counterparty', value)}/>
-        <ColumnHead label="Дата внесения" field="entry_date" sort={sort} onSort={doSort}/>
+        <ColumnHead className="counterparty-head" label="Контрагент" field="counterparty" sort={sort} onSort={doSort} value={filters.counterparty} options={refs.counterparties} onFilter={value => setFilter('counterparty', value)}/>
+        <ColumnHead className="entry-date-head" label="Дата внесения" field="entry_date" sort={sort} onSort={doSort}/>
         <th>Документ</th><th>Дата документа</th>
         <ColumnHead label="Юрлицо" field="legal_entity" sort={sort} onSort={doSort} value={filters.legal_entity} options={refs.legal_entities} onFilter={value => setFilter('legal_entity', value)}/>
         <ColumnHead label="Статья затрат" value={filters.cost_category} options={refs.cost_categories} onFilter={value => setFilter('cost_category', value)}/>
@@ -120,9 +121,9 @@ export default function Registry({ user, notify }) {
   </div>
 }
 
-function ColumnHead({ label, field, sort, onSort, value = '', options, onFilter }) {
+function ColumnHead({ label, field, sort, onSort, value = '', options, onFilter, className = '' }) {
   const sorted = field && sort?.key === field
-  return <th className={`${sorted ? 'sorted' : ''} ${value ? 'filtered' : ''}`}><div className="column-head-inner">
+  return <th className={`${className} ${sorted ? 'sorted' : ''} ${value ? 'filtered' : ''}`}><div className="column-head-inner">
     {field ? <button type="button" className="column-sort" onClick={() => onSort(field)}>{label}<i>{sorted ? (sort.order === 'asc' ? '↑' : '↓') : '↕'}</i></button> : <span className="column-label">{label}</span>}
     {onFilter && <HeaderFilter label={label} value={value} options={options} onChange={onFilter}/>}
   </div></th>
@@ -164,7 +165,7 @@ function RegistryRow({ item, refs, editable, isNew = false, selected, savingCell
   return <tr className={`${isNew ? 'inline-new-row' : rowTone(item)}`}>
     <td className="check-col">{isNew ? <button type="button" className="cancel-inline-row" onClick={onDelete} title="Отменить новую строку"><X size={14}/></button> : <input type="checkbox" checked={selected} onChange={onToggle}/>}</td>
     {cell('counterparty', { className: 'counterparty-cell', options: refs.counterparties, allowCustom: true })}
-    {cell('entry_date', { type: 'date' })}
+    {cell('entry_date', { type: 'date', className: 'entry-date-cell' })}
     {cell('document_number')}
     {cell('document_date', { type: 'date' })}
     {cell('legal_entity', { options: refs.legal_entities })}
@@ -242,6 +243,14 @@ function strip(values) { const result = { ...values }; delete result.id; delete 
 function blankObligation() { return { account_type:'',entry_date:todayISO(),counterparty:'',legal_entity:'',cost_category:'',priority:'',responsible:'',document_number:'',deferment_days:null,document_date:'',amount:null,planned_payment_date:'',approval_date:'',actual_payment_date:'',status:'Зарегистрирован',urgency:'',comment:'',source_note:'' } }
 function todayISO() { const date = new Date(); const offset = date.getTimezoneOffset() * 60000; return new Date(date.getTime() - offset).toISOString().slice(0, 10) }
 function sameCellValue(left, right) { return (left ?? '') === (right ?? '') }
+function withCalculatedPlannedDate(values, changedField) {
+  if (changedField !== 'deferment_days' && changedField !== 'document_date') return values
+  if (!values.document_date || values.deferment_days == null || values.deferment_days === '') return values
+  const date = new Date(`${values.document_date}T00:00:00Z`)
+  if (Number.isNaN(date.getTime())) return values
+  date.setUTCDate(date.getUTCDate() + Number(values.deferment_days))
+  return { ...values, planned_payment_date: date.toISOString().slice(0, 10) }
+}
 function cellEditorValue(field, value) { if (dateFields.has(field)) return value ? shortDate(value) : ''; return value ?? '' }
 function cellAriaValue(field, value) { if (dateFields.has(field)) return shortDate(value); if (field === 'amount' && value != null && value !== '') return money(value); return String(value ?? '') || 'не заполнено' }
 function normalizeCellValue(field, rawValue) {

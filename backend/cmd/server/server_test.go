@@ -9,7 +9,7 @@ import (
 
 func TestObligationNormalizeCalculatesPlannedDate(t *testing.T) {
 	days := 10
-	input := obligationInput{DocumentDate: "2026-07-01", DefermentDays: &days}
+	input := obligationInput{DocumentDate: "2026-07-01", DefermentDays: &days, PlannedPaymentDate: "2026-12-31"}
 	input.normalize()
 	if input.PlannedPaymentDate != "2026-07-11" {
 		t.Fatalf("planned date = %q, want 2026-07-11", input.PlannedPaymentDate)
