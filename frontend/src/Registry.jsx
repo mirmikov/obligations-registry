@@ -1,13 +1,10 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { Check, ChevronLeft, ChevronRight, Download, FileUp, Filter, LocateFixed, MoreHorizontal, Pencil, Plus, RotateCcw, Search, Trash2, X } from 'lucide-react'
+import { Check, ChevronDown, ChevronLeft, ChevronRight, Download, FileUp, Filter, LocateFixed, MoreHorizontal, Pencil, Plus, RotateCcw, Search, Trash2, X } from 'lucide-react'
 import { download, request } from './api'
 import { money, PageHeader, roleLabel, shortDate } from './App'
 import usePresence from './usePresence'
 
-const emptyFilters = { q: '', account_type: '', legal_entity: '', cost_category: '', priority: '', responsible: '', status: '', urgency: '', planned_from: '', planned_to: '', overdue: '' }
-const refMap = { account_type: 'account_types', legal_entity: 'legal_entities', cost_category: 'cost_categories', priority: 'priorities', responsible: 'responsibles', status: 'statuses', urgency: 'urgencies', counterparty: 'counterparties' }
-const labels = { account_type: 'Признак учёта', legal_entity: 'Юрлицо', cost_category: 'Статья затрат', priority: 'Приоритет', responsible: 'Ответственный', status: 'Статус', urgency: 'Срочность' }
-
+const emptyFilters = { q: '', counterparty: '', account_type: '', legal_entity: '', cost_category: '', priority: '', responsible: '', status: '', urgency: '', planned_from: '', planned_to: '', overdue: '' }
 export default function Registry({ user, notify }) {
   const [data, setData] = useState({ items: [], total: 0, page: 1, page_size: 50 })
   const [refs, setRefs] = useState({})
@@ -42,7 +39,6 @@ export default function Registry({ user, notify }) {
     <PageHeader eyebrow="Рабочая область" title="Реестр обязательств" subtitle={`${data.total.toLocaleString('ru-RU')} записей с учётом фильтров`} actions={<><PresenceCluster users={activeUsers} currentSession={sessionId}/>{user.role === 'admin' && <><input ref={importRef} type="file" accept=".xlsx" hidden onChange={importFile}/><button className="secondary" onClick={() => importRef.current.click()}><FileUp size={17}/>Импорт</button></>}<button className="secondary" onClick={() => download(`/api/obligations/export.xlsx?${query}`, 'Реестр обязательств.xlsx')}><Download size={17}/>Excel</button>{user.role !== 'viewer' && <button className="primary" onClick={() => setEditing({})}><Plus size={18}/>Добавить</button>}</>}/>
     <section className="filter-panel">
       <div className="search-box"><Search size={18}/><input placeholder="Контрагент, счёт, комментарий…" value={filters.q} onChange={e => setFilter('q', e.target.value)}/>{filters.q && <button onClick={() => setFilter('q', '')}><X size={15}/></button>}</div>
-      {['legal_entity','status','cost_category','priority','responsible','urgency','account_type'].map(key => <FilterSelect key={key} label={labels[key]} value={filters[key]} options={refs[refMap[key]]} onChange={value => setFilter(key, value)}/>) }
       <label className="filter-date"><span>Срок с</span><input type="date" value={filters.planned_from} onChange={e => setFilter('planned_from', e.target.value)}/></label>
       <label className="filter-date"><span>по</span><input type="date" value={filters.planned_to} onChange={e => setFilter('planned_to', e.target.value)}/></label>
       <button className={`overdue-toggle ${filters.overdue ? 'active' : ''}`} onClick={() => setFilter('overdue', filters.overdue ? '' : 'true')}><Filter size={15}/>Только просроченные</button>
@@ -50,7 +46,19 @@ export default function Registry({ user, notify }) {
     </section>
     <section className="table-card">
       {selected.length > 0 && <div className="selection-bar"><span><Check size={16}/>{selected.length} выбрано</span>{user.role !== 'viewer' && <button onClick={() => setBulkOpen(true)}>Изменить статус и даты</button>}<button onClick={() => setSelected([])}>Снять выбор</button></div>}
-      <div className="registry-table-wrap"><table className="registry-table"><thead><tr><th className="check-col"><input type="checkbox" checked={allSelected} onChange={toggleAll}/></th><SortHead label="Контрагент" field="counterparty" sort={sort} onClick={doSort}/><th>Документ</th><SortHead label="Юрлицо" field="legal_entity" sort={sort} onClick={doSort}/><th>Статья затрат</th><SortHead label="Сумма" field="amount" sort={sort} onClick={doSort}/><SortHead label="Плановая оплата" field="planned_payment_date" sort={sort} onClick={doSort}/><SortHead label="Статус" field="status" sort={sort} onClick={doSort}/><th>Срочность</th><th>Ответственный</th><th>Приоритет</th><th>Признак</th><th>Комментарий</th><th className="action-col"/></tr></thead>
+      <div className="registry-table-wrap"><table className="registry-table"><thead><tr><th className="check-col"><input type="checkbox" checked={allSelected} onChange={toggleAll}/></th>
+        <ColumnHead label="Контрагент" field="counterparty" sort={sort} onSort={doSort} value={filters.counterparty} options={refs.counterparties} onFilter={value => setFilter('counterparty', value)}/>
+        <th>Документ</th>
+        <ColumnHead label="Юрлицо" field="legal_entity" sort={sort} onSort={doSort} value={filters.legal_entity} options={refs.legal_entities} onFilter={value => setFilter('legal_entity', value)}/>
+        <ColumnHead label="Статья затрат" value={filters.cost_category} options={refs.cost_categories} onFilter={value => setFilter('cost_category', value)}/>
+        <ColumnHead label="Сумма" field="amount" sort={sort} onSort={doSort}/>
+        <ColumnHead label="Плановая оплата" field="planned_payment_date" sort={sort} onSort={doSort}/>
+        <ColumnHead label="Статус" field="status" sort={sort} onSort={doSort} value={filters.status} options={refs.statuses} onFilter={value => setFilter('status', value)}/>
+        <ColumnHead label="Срочность" value={filters.urgency} options={refs.urgencies} onFilter={value => setFilter('urgency', value)}/>
+        <ColumnHead label="Ответственный" value={filters.responsible} options={refs.responsibles} onFilter={value => setFilter('responsible', value)}/>
+        <ColumnHead label="Приоритет" value={filters.priority} options={refs.priorities} onFilter={value => setFilter('priority', value)}/>
+        <ColumnHead label="Признак" value={filters.account_type} options={refs.account_types} onFilter={value => setFilter('account_type', value)}/>
+        <th>Комментарий</th><th className="action-col"/></tr></thead>
       <tbody>{loading ? <SkeletonRows/> : data.items.length === 0 ? <tr><td colSpan="14"><div className="empty-state"><Search size={27}/><strong>Ничего не найдено</strong><span>Измените или сбросьте фильтры</span></div></td></tr> : data.items.map(item => <tr key={item.id} className={rowTone(item)}><td className="check-col"><input type="checkbox" checked={selected.includes(item.id)} onChange={() => setSelected(s => s.includes(item.id) ? s.filter(id => id !== item.id) : [...s, item.id])}/></td><td className="counterparty-cell"><strong>{item.counterparty || '—'}</strong><span>{shortDate(item.entry_date)}</span></td><td title={item.source_note || ''}><span className="doc-number">{item.document_number || '—'}{item.source_note && <i className="note-mark">i</i>}</span><small>{shortDate(item.document_date)}</small>{item.source_note && <small className="source-note">{item.source_note}</small>}</td><td>{item.legal_entity || '—'}</td><td className="category-cell">{item.cost_category || '—'}</td><td className="money-cell">{money(item.amount)}</td><td><span className={item.overdue ? 'date-overdue' : ''}>{shortDate(item.planned_payment_date)}</span>{item.deferment_days != null && <small>отсрочка {item.deferment_days} дн.</small>}</td><td><Status value={item.status}/></td><td><Urgency value={item.urgency}/></td><td>{item.responsible || '—'}</td><td><span className="priority">{item.priority || '—'}</span></td><td>{item.account_type || '—'}</td><td className="comment-cell" title={item.comment}>{item.comment || '—'}</td><td className="action-col">{user.role !== 'viewer' ? <div className="row-actions"><button onClick={() => setEditing(item)} title="Редактировать"><Pencil size={16}/></button>{user.role === 'admin' && <button className="danger-button" onClick={() => remove(item.id)} title="Удалить"><Trash2 size={16}/></button>}</div> : <MoreHorizontal size={18}/>}</td></tr>)}</tbody></table></div>
       <footer className="table-footer"><span>Показано {data.items.length} из {data.total.toLocaleString('ru-RU')}</span><div><button disabled={page === 1} onClick={() => setPage(p => p - 1)}><ChevronLeft size={17}/></button><span>Страница <b>{page}</b> из {totalPages}</span><button disabled={page === totalPages} onClick={() => setPage(p => p + 1)}><ChevronRight size={17}/></button></div></footer>
     </section>
@@ -59,8 +67,43 @@ export default function Registry({ user, notify }) {
   </div>
 }
 
-function FilterSelect({ label, value, options = [], onChange }) { return <label className={`filter-select ${value ? 'has-value' : ''}`}><span>{label}</span><select value={value} onChange={e => onChange(e.target.value)}><option value="">Все</option>{options.map(option => <option key={option.id ?? option.value} value={option.value}>{option.value}</option>)}</select></label> }
-function SortHead({ label, field, sort, onClick }) { return <th className={sort.key === field ? 'sorted' : ''} onClick={() => onClick(field)}>{label}<i>{sort.key === field ? (sort.order === 'asc' ? '↑' : '↓') : '↕'}</i></th> }
+function ColumnHead({ label, field, sort, onSort, value = '', options, onFilter }) {
+  const sorted = field && sort?.key === field
+  return <th className={`${sorted ? 'sorted' : ''} ${value ? 'filtered' : ''}`}><div className="column-head-inner">
+    {field ? <button type="button" className="column-sort" onClick={() => onSort(field)}>{label}<i>{sorted ? (sort.order === 'asc' ? '↑' : '↓') : '↕'}</i></button> : <span className="column-label">{label}</span>}
+    {onFilter && <HeaderFilter label={label} value={value} options={options} onChange={onFilter}/>}
+  </div></th>
+}
+
+function HeaderFilter({ label, value, options = [], onChange }) {
+  const [open, setOpen] = useState(false)
+  const [search, setSearch] = useState('')
+  const rootRef = useRef(null)
+  const inputRef = useRef(null)
+  const values = useMemo(() => [...new Set(options.map(option => typeof option === 'string' ? option : option.value).filter(Boolean))], [options])
+  const visible = useMemo(() => { const term = search.trim().toLocaleLowerCase('ru-RU'); return term ? values.filter(option => option.toLocaleLowerCase('ru-RU').includes(term)) : values }, [search, values])
+  useEffect(() => {
+    if (!open) return
+    const closeOutside = event => { if (!rootRef.current?.contains(event.target)) setOpen(false) }
+    const closeEscape = event => { if (event.key === 'Escape') setOpen(false) }
+    document.addEventListener('mousedown', closeOutside)
+    document.addEventListener('keydown', closeEscape)
+    requestAnimationFrame(() => inputRef.current?.focus())
+    return () => { document.removeEventListener('mousedown', closeOutside); document.removeEventListener('keydown', closeEscape) }
+  }, [open])
+  const select = next => { onChange(next); setSearch(''); setOpen(false) }
+  return <div ref={rootRef} className={`header-filter ${open ? 'is-open' : ''} ${value ? 'has-value' : ''}`}>
+    <button type="button" className="header-filter-trigger" aria-label={`Фильтр: ${label}`} aria-expanded={open} onClick={() => { setSearch(''); setOpen(current => !current) }}><ChevronDown size={13}/>{value && <i/>}</button>
+    {open && <div className="header-filter-menu">
+      <div className="header-filter-search"><Search size={15}/><input ref={inputRef} value={search} onChange={event => setSearch(event.target.value)} placeholder="Поиск по наименованию" aria-label={`Поиск: ${label}`}/>{search && <button type="button" onClick={() => setSearch('')} aria-label="Очистить поиск"><X size={13}/></button>}</div>
+      <div className="header-filter-options" role="listbox" aria-label={`Значения: ${label}`}>
+        <button type="button" className={!value ? 'selected' : ''} onClick={() => select('')}><span>Все значения</span>{!value && <Check size={14}/>}</button>
+        {visible.map(option => <button type="button" key={option} className={option === value ? 'selected' : ''} onClick={() => select(option)} title={option}><span>{option}</span>{option === value && <Check size={14}/>}</button>)}
+        {!visible.length && <p>Ничего не найдено</p>}
+      </div>
+    </div>}
+  </div>
+}
 function Status({ value }) { return <span className={`status status-${slug(value)}`}>{value || 'Не указан'}</span> }
 function Urgency({ value }) { return value ? <span className={`urgency urgency-${slug(value)}`}><i/>{value}</span> : <span className="muted">—</span> }
 function slug(value = '') { return ({ 'Оплачено':'paid','К оплате':'to-pay','Зарегистрирован':'registered','Частично оплачено':'partial','Отменено':'cancelled','Критическая':'critical','Срочная':'urgent','Обычная':'normal' }[value] || 'empty') }
