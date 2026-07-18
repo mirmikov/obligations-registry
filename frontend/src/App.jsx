@@ -83,4 +83,26 @@ function Login({ onLogin }) {
 export function PageHeader({ eyebrow, title, subtitle, actions }) { return <header className="page-header"><div><p className="eyebrow">{eyebrow}</p><h1>{title}</h1>{subtitle && <span>{subtitle}</span>}</div>{actions && <div className="header-actions">{actions}</div>}</header> }
 export const roleLabel = role => ({ admin: 'Администратор', editor: 'Редактор', viewer: 'Зритель' }[role] || role)
 export const money = value => new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'RUB', maximumFractionDigits: 0 }).format(value || 0)
-export const shortDate = value => value ? new Intl.DateTimeFormat('ru-RU').format(new Date(`${value}T00:00:00`)) : '—'
+export const shortDate = value => {
+  if (!value) return '—'
+  const match = String(value).match(/^(\d{4})-(\d{2})-(\d{2})/)
+  return match ? `${match[3]}/${match[2]}/${match[1]}` : value
+}
+export const dateTime = value => {
+  if (!value) return '—'
+  const match = String(value).match(/^(\d{4})-(\d{2})-(\d{2})(?:[ T](.*))?$/)
+  return match ? `${match[3]}/${match[2]}/${match[1]}${match[4] ? ` ${match[4]}` : ''}` : value
+}
+export function DateInput({ value, onChange, ...props }) {
+  const [draft, setDraft] = useState(value ? shortDate(value) : '')
+  useEffect(() => setDraft(value ? shortDate(value) : ''), [value])
+  const commit = () => {
+    if (!draft.trim()) { onChange(''); return }
+    const match = draft.trim().match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{4})$/)
+    if (!match) { setDraft(value ? shortDate(value) : ''); return }
+    const day = Number(match[1]); const month = Number(match[2]); const year = Number(match[3]); const date = new Date(Date.UTC(year, month - 1, day))
+    if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) { setDraft(value ? shortDate(value) : ''); return }
+    onChange(`${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`)
+  }
+  return <input {...props} type="text" inputMode="numeric" placeholder="дд/мм/гггг" value={draft} onChange={event => setDraft(event.target.value)} onBlur={commit} onKeyDown={event => { if (event.key === 'Enter') event.currentTarget.blur(); if (event.key === 'Escape') { setDraft(value ? shortDate(value) : ''); event.currentTarget.blur() } }}/>
+}

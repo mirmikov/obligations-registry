@@ -1,10 +1,13 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { Check, ChevronDown, ChevronLeft, ChevronRight, Download, FileUp, Filter, LocateFixed, MoreHorizontal, Pencil, Plus, RotateCcw, Search, Trash2, X } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { Check, ChevronDown, ChevronLeft, ChevronRight, Download, FileUp, Filter, LocateFixed, Plus, RotateCcw, Search, Trash2, X } from 'lucide-react'
 import { download, request } from './api'
-import { money, PageHeader, roleLabel, shortDate } from './App'
+import { DateInput, money, PageHeader, roleLabel, shortDate } from './App'
 import usePresence from './usePresence'
 
 const emptyFilters = { q: '', counterparty: '', account_type: '', legal_entity: '', cost_category: '', priority: '', responsible: '', status: '', urgency: '', planned_from: '', planned_to: '', overdue: '' }
+const dateFields = new Set(['entry_date', 'document_date', 'planned_payment_date', 'approval_date', 'actual_payment_date'])
+const fieldLabels = { counterparty: 'Контрагент', entry_date: 'Дата внесения', document_number: 'Документ', document_date: 'Дата документа', legal_entity: 'Юрлицо', cost_category: 'Статья затрат', amount: 'Сумма, ₽', deferment_days: 'Отсрочка, дней', planned_payment_date: 'Плановая оплата', approval_date: 'Дата утверждения', actual_payment_date: 'Фактическая оплата', status: 'Статус', urgency: 'Срочность', responsible: 'Ответственный', priority: 'Приоритет', account_type: 'Признак учёта', comment: 'Комментарий', source_note: 'Условия оплаты' }
+
 export default function Registry({ user, notify }) {
   const [data, setData] = useState({ items: [], total: 0, page: 1, page_size: 50 })
   const [refs, setRefs] = useState({})
@@ -12,58 +15,107 @@ export default function Registry({ user, notify }) {
   const [page, setPage] = useState(1)
   const [sort, setSort] = useState({ key: 'updated_at', order: 'desc' })
   const [loading, setLoading] = useState(true)
-  const [editing, setEditing] = useState(null)
+  const [newRow, setNewRow] = useState(null)
+  const [savingCells, setSavingCells] = useState(new Set())
   const [selected, setSelected] = useState([])
   const [bulkOpen, setBulkOpen] = useState(false)
   const importRef = useRef()
+  const rowsRef = useRef(new Map())
+  const saveQueues = useRef(new Map())
+  const creatingRef = useRef(false)
   const { activeUsers, updateLocation, sessionId } = usePresence({ page: 'registry', page_label: 'Реестр обязательств', mode: 'view' })
 
   useEffect(() => { Promise.all([request('/api/references'), request('/api/saved-view')]).then(([r, saved]) => { setRefs(r); if (saved && Object.keys(saved).length) setFilters({ ...emptyFilters, ...saved }) }).catch(e => notify(e.message, 'error')) }, [])
   const query = useMemo(() => { const params = new URLSearchParams({ page, page_size: 50, sort: sort.key, order: sort.order }); Object.entries(filters).forEach(([k, v]) => v && params.set(k, v)); return params.toString() }, [filters, page, sort])
-  const load = () => { setLoading(true); request(`/api/obligations?${query}`).then(setData).catch(e => notify(e.message, 'error')).finally(() => setLoading(false)) }
+  const load = () => { setLoading(true); request(`/api/obligations?${query}`).then(result => { rowsRef.current = new Map(result.items.map(item => [item.id, item])); setData(result) }).catch(e => notify(e.message, 'error')).finally(() => setLoading(false)) }
   useEffect(() => { const timer = setTimeout(load, 220); return () => clearTimeout(timer) }, [query])
   useEffect(() => { const timer = setTimeout(() => request('/api/saved-view', { method: 'PUT', body: JSON.stringify(filters) }).catch(() => {}), 700); return () => clearTimeout(timer) }, [filters])
-  useLayoutEffect(() => {
-    if (editing) updateLocation({ mode: 'view', record_id: editing.id || 0, source_row: editing.source_row || 0, field: '', field_label: '' })
-    else updateLocation({ mode: 'view', record_id: 0, source_row: 0, field: '', field_label: '' })
-  }, [editing, updateLocation])
   const setFilter = (key, value) => { setFilters(old => ({ ...old, [key]: value })); setPage(1) }
   const totalPages = Math.max(1, Math.ceil(data.total / data.page_size))
   const allSelected = data.items.length > 0 && data.items.every(item => selected.includes(item.id))
   const toggleAll = () => setSelected(allSelected ? selected.filter(id => !data.items.some(i => i.id === id)) : [...new Set([...selected, ...data.items.map(i => i.id)])])
-  const save = async values => { try { if (values.id) await request(`/api/obligations/${values.id}`, { method: 'PATCH', body: JSON.stringify(strip(values)) }); else await request('/api/obligations', { method: 'POST', body: JSON.stringify(strip(values)) }); notify(values.id ? 'Изменения сохранены' : 'Обязательство добавлено'); setEditing(null); load() } catch (e) { notify(e.message, 'error') } }
+  const markSaving = (key, active) => setSavingCells(current => { const next = new Set(current); active ? next.add(key) : next.delete(key); return next })
+  const startCellEdit = (item, field) => updateLocation({ mode: 'edit', record_id: item.id || 0, source_row: item.source_row || 0, field, field_label: fieldLabels[field] || field })
+  const finishCellEdit = item => updateLocation({ mode: 'view', record_id: item.id || 0, source_row: item.source_row || 0, field: '', field_label: '' })
+  const commitCell = async (item, field, rawValue) => {
+    let value
+    try { value = normalizeCellValue(field, rawValue) } catch (error) { notify(error.message, 'error'); return false }
+    const current = rowsRef.current.get(item.id) || item
+    if (sameCellValue(current[field], value)) { finishCellEdit(current); return true }
+    const previousValue = current[field]
+    const next = { ...current, [field]: value }
+    rowsRef.current.set(item.id, next)
+    setData(state => ({ ...state, items: state.items.map(row => row.id === item.id ? next : row) }))
+    const cellKey = `${item.id}:${field}`
+    markSaving(cellKey, true); finishCellEdit(next)
+    const previousSave = saveQueues.current.get(item.id) || Promise.resolve()
+    const operation = previousSave.catch(() => {}).then(() => request(`/api/obligations/${item.id}`, { method: 'PATCH', body: JSON.stringify(strip(rowsRef.current.get(item.id))) }))
+    saveQueues.current.set(item.id, operation)
+    try { await operation; return true } catch (error) {
+      const latest = rowsRef.current.get(item.id)
+      if (sameCellValue(latest?.[field], value)) {
+        const reverted = { ...latest, [field]: previousValue }
+        rowsRef.current.set(item.id, reverted)
+        setData(state => ({ ...state, items: state.items.map(row => row.id === item.id ? reverted : row) }))
+      }
+      notify(error.message, 'error'); return false
+    } finally { markSaving(cellKey, false) }
+  }
+  const addInlineRow = () => setNewRow(current => current ? null : blankObligation())
+  const commitNewCell = async (item, field, rawValue) => {
+    let value
+    try { value = normalizeCellValue(field, rawValue) } catch (error) { notify(error.message, 'error'); return false }
+    const next = { ...item, [field]: value }
+    setNewRow(next)
+    if (sameCellValue(item[field], value) || creatingRef.current) return true
+    creatingRef.current = true; markSaving(`new:${field}`, true)
+    try {
+      const result = await request('/api/obligations', { method: 'POST', body: JSON.stringify(strip(next)) })
+      const created = { ...next, id: result.id, source_row: 0, overdue: false, due_soon: false }
+      rowsRef.current.set(created.id, created)
+      setData(state => ({ ...state, items: [created, ...state.items].slice(0, state.page_size), total: state.total + 1 }))
+      setNewRow(null); finishCellEdit(created); notify('Новая строка создана')
+      return true
+    } catch (error) { notify(error.message, 'error'); return false }
+    finally { creatingRef.current = false; markSaving(`new:${field}`, false) }
+  }
   const remove = async id => { if (!confirm('Удалить обязательство? Отменить это действие нельзя.')) return; try { await request(`/api/obligations/${id}`, { method: 'DELETE' }); notify('Запись удалена'); load() } catch (e) { notify(e.message, 'error') } }
   const importFile = async event => { const file = event.target.files?.[0]; if (!file) return; const body = new FormData(); body.append('file', file); try { const result = await request('/api/obligations/import.xlsx', { method: 'POST', body }); notify(`Импортировано строк: ${result.imported}`); load() } catch (e) { notify(e.message, 'error') } finally { event.target.value = '' } }
   const doSort = key => setSort(current => ({ key, order: current.key === key && current.order === 'asc' ? 'desc' : 'asc' }))
   return <div className="page registry-page">
-    <PageHeader eyebrow="Рабочая область" title="Реестр обязательств" subtitle={`${data.total.toLocaleString('ru-RU')} записей с учётом фильтров`} actions={<><PresenceCluster users={activeUsers} currentSession={sessionId}/>{user.role === 'admin' && <><input ref={importRef} type="file" accept=".xlsx" hidden onChange={importFile}/><button className="secondary" onClick={() => importRef.current.click()}><FileUp size={17}/>Импорт</button></>}<button className="secondary" onClick={() => download(`/api/obligations/export.xlsx?${query}`, 'Реестр обязательств.xlsx')}><Download size={17}/>Excel</button>{user.role !== 'viewer' && <button className="primary" onClick={() => setEditing({})}><Plus size={18}/>Добавить</button>}</>}/>
+    <PageHeader eyebrow="Рабочая область" title="Реестр обязательств" subtitle={`${data.total.toLocaleString('ru-RU')} записей с учётом фильтров`} actions={<><PresenceCluster users={activeUsers} currentSession={sessionId}/>{user.role === 'admin' && <><input ref={importRef} type="file" accept=".xlsx" hidden onChange={importFile}/><button className="secondary" onClick={() => importRef.current.click()}><FileUp size={17}/>Импорт</button></>}<button className="secondary" onClick={() => download(`/api/obligations/export.xlsx?${query}`, 'Реестр обязательств.xlsx')}><Download size={17}/>Excel</button></>}/>
     <section className="filter-panel">
       <div className="search-box"><Search size={18}/><input placeholder="Контрагент, счёт, комментарий…" value={filters.q} onChange={e => setFilter('q', e.target.value)}/>{filters.q && <button onClick={() => setFilter('q', '')}><X size={15}/></button>}</div>
-      <label className="filter-date"><span>Срок с</span><input type="date" value={filters.planned_from} onChange={e => setFilter('planned_from', e.target.value)}/></label>
-      <label className="filter-date"><span>по</span><input type="date" value={filters.planned_to} onChange={e => setFilter('planned_to', e.target.value)}/></label>
+      <label className="filter-date"><span>Срок с</span><DateInput value={filters.planned_from} onChange={value => setFilter('planned_from', value)} aria-label="Срок с"/></label>
+      <label className="filter-date"><span>по</span><DateInput value={filters.planned_to} onChange={value => setFilter('planned_to', value)} aria-label="Срок по"/></label>
       <button className={`overdue-toggle ${filters.overdue ? 'active' : ''}`} onClick={() => setFilter('overdue', filters.overdue ? '' : 'true')}><Filter size={15}/>Только просроченные</button>
       {Object.values(filters).some(Boolean) && <button className="reset-filters" onClick={() => { setFilters(emptyFilters); setPage(1) }}><RotateCcw size={15}/>Сбросить</button>}
     </section>
     <section className="table-card">
       {selected.length > 0 && <div className="selection-bar"><span><Check size={16}/>{selected.length} выбрано</span>{user.role !== 'viewer' && <button onClick={() => setBulkOpen(true)}>Изменить статус и даты</button>}<button onClick={() => setSelected([])}>Снять выбор</button></div>}
-      <div className="registry-table-wrap"><table className="registry-table"><thead><tr><th className="check-col"><input type="checkbox" checked={allSelected} onChange={toggleAll}/></th>
+      <div className="registry-table-wrap"><table className="registry-table inline-registry"><thead><tr><th className="check-col">{user.role !== 'viewer' ? <button type="button" className={`inline-add-row ${newRow ? 'active' : ''}`} onClick={addInlineRow} title={newRow ? 'Убрать новую строку' : 'Добавить строку'} aria-label={newRow ? 'Убрать новую строку' : 'Добавить строку'}><Plus size={16}/></button> : <input type="checkbox" checked={allSelected} onChange={toggleAll}/>}</th>
         <ColumnHead label="Контрагент" field="counterparty" sort={sort} onSort={doSort} value={filters.counterparty} options={refs.counterparties} onFilter={value => setFilter('counterparty', value)}/>
-        <th>Документ</th>
+        <ColumnHead label="Дата внесения" field="entry_date" sort={sort} onSort={doSort}/>
+        <th>Документ</th><th>Дата документа</th>
         <ColumnHead label="Юрлицо" field="legal_entity" sort={sort} onSort={doSort} value={filters.legal_entity} options={refs.legal_entities} onFilter={value => setFilter('legal_entity', value)}/>
         <ColumnHead label="Статья затрат" value={filters.cost_category} options={refs.cost_categories} onFilter={value => setFilter('cost_category', value)}/>
         <ColumnHead label="Сумма" field="amount" sort={sort} onSort={doSort}/>
+        <th>Отсрочка, дней</th>
         <ColumnHead label="Плановая оплата" field="planned_payment_date" sort={sort} onSort={doSort}/>
+        <ColumnHead label="Дата утверждения" field="approval_date" sort={sort} onSort={doSort}/>
+        <th>Фактическая оплата</th>
         <ColumnHead label="Статус" field="status" sort={sort} onSort={doSort} value={filters.status} options={refs.statuses} onFilter={value => setFilter('status', value)}/>
         <ColumnHead label="Срочность" value={filters.urgency} options={refs.urgencies} onFilter={value => setFilter('urgency', value)}/>
         <ColumnHead label="Ответственный" value={filters.responsible} options={refs.responsibles} onFilter={value => setFilter('responsible', value)}/>
         <ColumnHead label="Приоритет" value={filters.priority} options={refs.priorities} onFilter={value => setFilter('priority', value)}/>
         <ColumnHead label="Признак" value={filters.account_type} options={refs.account_types} onFilter={value => setFilter('account_type', value)}/>
-        <th>Комментарий</th><th className="action-col"/></tr></thead>
-      <tbody>{loading ? <SkeletonRows/> : data.items.length === 0 ? <tr><td colSpan="14"><div className="empty-state"><Search size={27}/><strong>Ничего не найдено</strong><span>Измените или сбросьте фильтры</span></div></td></tr> : data.items.map(item => <tr key={item.id} className={rowTone(item)}><td className="check-col"><input type="checkbox" checked={selected.includes(item.id)} onChange={() => setSelected(s => s.includes(item.id) ? s.filter(id => id !== item.id) : [...s, item.id])}/></td><td className="counterparty-cell"><strong>{item.counterparty || '—'}</strong><span>{shortDate(item.entry_date)}</span></td><td title={item.source_note || ''}><span className="doc-number">{item.document_number || '—'}{item.source_note && <i className="note-mark">i</i>}</span><small>{shortDate(item.document_date)}</small>{item.source_note && <small className="source-note">{item.source_note}</small>}</td><td>{item.legal_entity || '—'}</td><td className="category-cell">{item.cost_category || '—'}</td><td className="money-cell">{money(item.amount)}</td><td><span className={item.overdue ? 'date-overdue' : ''}>{shortDate(item.planned_payment_date)}</span>{item.deferment_days != null && <small>отсрочка {item.deferment_days} дн.</small>}</td><td><Status value={item.status}/></td><td><Urgency value={item.urgency}/></td><td>{item.responsible || '—'}</td><td><span className="priority">{item.priority || '—'}</span></td><td>{item.account_type || '—'}</td><td className="comment-cell" title={item.comment}>{item.comment || '—'}</td><td className="action-col">{user.role !== 'viewer' ? <div className="row-actions"><button onClick={() => setEditing(item)} title="Редактировать"><Pencil size={16}/></button>{user.role === 'admin' && <button className="danger-button" onClick={() => remove(item.id)} title="Удалить"><Trash2 size={16}/></button>}</div> : <MoreHorizontal size={18}/>}</td></tr>)}</tbody></table></div>
+        <th>Комментарий</th><th>Условия оплаты</th><th className="action-col"/></tr></thead>
+      <tbody>{newRow && <RegistryRow item={newRow} refs={refs} editable isNew savingCells={savingCells} onCommit={commitNewCell} onStartEdit={startCellEdit} onFinishEdit={finishCellEdit} onDelete={() => setNewRow(null)}/>} {loading ? <SkeletonRows/> : data.items.length === 0 && !newRow ? <tr><td colSpan="20"><div className="empty-state"><Search size={27}/><strong>Ничего не найдено</strong><span>Измените или сбросьте фильтры</span></div></td></tr> : data.items.map(item => <RegistryRow key={item.id} item={item} refs={refs} editable={user.role !== 'viewer'} selected={selected.includes(item.id)} savingCells={savingCells} onToggle={() => setSelected(s => s.includes(item.id) ? s.filter(id => id !== item.id) : [...s, item.id])} onCommit={commitCell} onStartEdit={startCellEdit} onFinishEdit={finishCellEdit} onDelete={user.role === 'admin' ? () => remove(item.id) : null}/>)}</tbody></table></div>
       <footer className="table-footer"><span>Показано {data.items.length} из {data.total.toLocaleString('ru-RU')}</span><div><button disabled={page === 1} onClick={() => setPage(p => p - 1)}><ChevronLeft size={17}/></button><span>Страница <b>{page}</b> из {totalPages}</span><button disabled={page === totalPages} onClick={() => setPage(p => p + 1)}><ChevronRight size={17}/></button></div></footer>
     </section>
-    {editing && <ObligationModal item={editing} refs={refs} onClose={() => setEditing(null)} onSave={save} onFieldFocus={(field, fieldLabel) => updateLocation({ mode: 'edit', record_id: editing.id || 0, source_row: editing.source_row || 0, field, field_label: fieldLabel })}/>}
-    {bulkOpen && <BulkModal count={selected.length} refs={refs} onClose={() => setBulkOpen(false)} onSave={async values => { try { await request('/api/obligations/bulk', { method: 'POST', body: JSON.stringify({ ids: selected, ...values }) }); notify('Выбранные строки обновлены'); setBulkOpen(false); setSelected([]); load() } catch (e) { notify(e.message, 'error') } }}/>}
+    {bulkOpen && (
+      <BulkModal count={selected.length} refs={refs} onClose={() => setBulkOpen(false)} onSave={async values => { try { await request('/api/obligations/bulk', { method: 'POST', body: JSON.stringify({ ids: selected, ...values }) }); notify('Выбранные строки обновлены'); setBulkOpen(false); setSelected([]); load() } catch (e) { notify(e.message, 'error') } }}/>
+    )}
   </div>
 }
 
@@ -104,12 +156,110 @@ function HeaderFilter({ label, value, options = [], onChange }) {
     </div>}
   </div>
 }
+
+function RegistryRow({ item, refs, editable, isNew = false, selected, savingCells, onToggle, onCommit, onStartEdit, onFinishEdit, onDelete }) {
+  const saving = field => savingCells.has(`${isNew ? 'new' : item.id}:${field}`)
+  const cell = (field, props = {}) => <EditableCell item={item} field={field} label={fieldLabels[field]} editable={editable} saving={saving(field)} onCommit={onCommit} onStartEdit={onStartEdit} onFinishEdit={onFinishEdit} {...props}/>
+  return <tr className={`${isNew ? 'inline-new-row' : rowTone(item)}`}>
+    <td className="check-col">{isNew ? <button type="button" className="cancel-inline-row" onClick={onDelete} title="Отменить новую строку"><X size={14}/></button> : <input type="checkbox" checked={selected} onChange={onToggle}/>}</td>
+    {cell('counterparty', { className: 'counterparty-cell', options: refs.counterparties, allowCustom: true })}
+    {cell('entry_date', { type: 'date' })}
+    {cell('document_number')}
+    {cell('document_date', { type: 'date' })}
+    {cell('legal_entity', { options: refs.legal_entities })}
+    {cell('cost_category', { options: refs.cost_categories, className: 'category-cell' })}
+    {cell('amount', { type: 'number', className: 'money-cell', render: value => value == null || value === '' ? '—' : money(value) })}
+    {cell('deferment_days', { type: 'number' })}
+    {cell('planned_payment_date', { type: 'date', className: item.overdue ? 'date-overdue' : '' })}
+    {cell('approval_date', { type: 'date' })}
+    {cell('actual_payment_date', { type: 'date' })}
+    {cell('status', { options: refs.statuses, render: value => <Status value={value}/> })}
+    {cell('urgency', { options: refs.urgencies, render: value => <Urgency value={value}/> })}
+    {cell('responsible', { options: refs.responsibles })}
+    {cell('priority', { options: refs.priorities })}
+    {cell('account_type', { options: refs.account_types })}
+    {cell('comment', { className: 'comment-cell' })}
+    {cell('source_note', { className: 'comment-cell' })}
+    <td className="action-col">{onDelete && !isNew && <div className="row-actions"><button className="danger-button" onClick={onDelete} title="Удалить"><Trash2 size={16}/></button></div>}</td>
+  </tr>
+}
+
+function EditableCell({ item, field, label, editable, saving, type = 'text', options, allowCustom = false, className = '', render, onCommit, onStartEdit, onFinishEdit }) {
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState('')
+  const begin = () => {
+    if (!editable || editing) return
+    setDraft(cellEditorValue(field, item[field])); setEditing(true); onStartEdit(item, field)
+  }
+  const cancel = () => { setEditing(false); onFinishEdit(item) }
+  const commit = async () => { const ok = await onCommit(item, field, draft); if (ok) setEditing(false) }
+  const keyDown = event => {
+    if (event.key === 'Enter') { event.preventDefault(); event.currentTarget.blur() }
+    if (event.key === 'Escape') { event.preventDefault(); cancel() }
+  }
+  const display = render ? render(item[field]) : type === 'date' ? shortDate(item[field]) : (item[field] ?? '') || '—'
+  return <td className={`editable-cell ${className} ${editing ? 'is-editing' : ''} ${saving ? 'is-saving' : ''}`} aria-label={`${label}: ${cellAriaValue(field, item[field])}`} onClick={begin} title={editable && !editing ? `Изменить: ${label}` : undefined}>
+    {editing ? options ? <InlineCellSelect label={label} value={item[field] || ''} options={options} allowCustom={allowCustom} onChoose={value => { setDraft(value); onCommit(item, field, value).then(ok => ok && setEditing(false)) }} onCancel={cancel}/> : <input className="inline-cell-input" type={type === 'number' ? 'number' : 'text'} inputMode={type === 'date' ? 'numeric' : undefined} placeholder={type === 'date' ? 'дд/мм/гггг' : 'Введите значение'} value={draft} onChange={event => setDraft(event.target.value)} onBlur={commit} onKeyDown={keyDown} autoFocus/> : <div className="cell-display">{display}</div>}
+    {saving && <i className="cell-saving-dot"/>}
+  </td>
+}
+
+function InlineCellSelect({ label, value, options = [], allowCustom, onChoose, onCancel }) {
+  const [search, setSearch] = useState('')
+  const rootRef = useRef(null)
+  const inputRef = useRef(null)
+  const values = useMemo(() => [...new Set(options.map(option => typeof option === 'string' ? option : option.value).filter(Boolean))], [options])
+  const visible = useMemo(() => { const term = search.trim().toLocaleLowerCase('ru-RU'); return term ? values.filter(option => option.toLocaleLowerCase('ru-RU').includes(term)) : values }, [search, values])
+  useEffect(() => {
+    const outside = event => { if (!rootRef.current?.contains(event.target)) onCancel() }
+    document.addEventListener('mousedown', outside)
+    requestAnimationFrame(() => inputRef.current?.focus())
+    return () => document.removeEventListener('mousedown', outside)
+  }, [])
+  const useCustom = search.trim() && !values.some(option => option.toLocaleLowerCase('ru-RU') === search.trim().toLocaleLowerCase('ru-RU'))
+  const keyDown = event => {
+    if (event.key === 'Escape') { event.preventDefault(); onCancel() }
+    if (event.key === 'Enter') { event.preventDefault(); const next = visible[0] || (allowCustom ? search.trim() : ''); if (next) onChoose(next) }
+  }
+  return <div ref={rootRef} className="inline-select-menu" onClick={event => event.stopPropagation()}>
+    <div className="inline-select-search"><Search size={14}/><input ref={inputRef} value={search} onChange={event => setSearch(event.target.value)} onKeyDown={keyDown} placeholder="Поиск по наименованию" aria-label={`Поиск значения: ${label}`}/></div>
+    <div className="inline-select-options">
+      <button type="button" className={!value ? 'selected' : ''} onClick={() => onChoose('')}><span>Не выбрано</span>{!value && <Check size={13}/>}</button>
+      {allowCustom && useCustom && <button type="button" className="custom-value" onClick={() => onChoose(search.trim())}><span>Использовать «{search.trim()}»</span><Plus size={13}/></button>}
+      {visible.map(option => <button type="button" key={option} className={option === value ? 'selected' : ''} onClick={() => onChoose(option)} title={option}><span>{option}</span>{option === value && <Check size={13}/>}</button>)}
+      {!visible.length && !(allowCustom && useCustom) && <p>Ничего не найдено</p>}
+    </div>
+  </div>
+}
+
 function Status({ value }) { return <span className={`status status-${slug(value)}`}>{value || 'Не указан'}</span> }
 function Urgency({ value }) { return value ? <span className={`urgency urgency-${slug(value)}`}><i/>{value}</span> : <span className="muted">—</span> }
 function slug(value = '') { return ({ 'Оплачено':'paid','К оплате':'to-pay','Зарегистрирован':'registered','Частично оплачено':'partial','Отменено':'cancelled','Критическая':'critical','Срочная':'urgent','Обычная':'normal' }[value] || 'empty') }
 function rowTone(item) { return item.overdue ? 'row-overdue' : item.due_soon ? 'row-soon' : item.status === 'К оплате' ? 'row-to-pay' : '' }
-function SkeletonRows() { return <>{Array.from({ length: 8 }).map((_, i) => <tr className="skeleton-row" key={i}>{Array.from({ length: 14 }).map((__, j) => <td key={j}><i/></td>)}</tr>)}</> }
+function SkeletonRows() { return <>{Array.from({ length: 8 }).map((_, i) => <tr className="skeleton-row" key={i}>{Array.from({ length: 20 }).map((__, j) => <td key={j}><i/></td>)}</tr>)}</> }
 function strip(values) { const result = { ...values }; delete result.id; delete result.created_at; delete result.updated_at; delete result.overdue; delete result.due_soon; return result }
+function blankObligation() { return { account_type:'',entry_date:todayISO(),counterparty:'',legal_entity:'',cost_category:'',priority:'',responsible:'',document_number:'',deferment_days:null,document_date:'',amount:null,planned_payment_date:'',approval_date:'',actual_payment_date:'',status:'Зарегистрирован',urgency:'',comment:'',source_note:'' } }
+function todayISO() { const date = new Date(); const offset = date.getTimezoneOffset() * 60000; return new Date(date.getTime() - offset).toISOString().slice(0, 10) }
+function sameCellValue(left, right) { return (left ?? '') === (right ?? '') }
+function cellEditorValue(field, value) { if (dateFields.has(field)) return value ? shortDate(value) : ''; return value ?? '' }
+function cellAriaValue(field, value) { if (dateFields.has(field)) return shortDate(value); if (field === 'amount' && value != null && value !== '') return money(value); return String(value ?? '') || 'не заполнено' }
+function normalizeCellValue(field, rawValue) {
+  const value = typeof rawValue === 'string' ? rawValue.trim() : rawValue
+  if (dateFields.has(field)) return parseInlineDate(value)
+  if (field === 'amount') { if (value === '') return null; const number = Number(String(value).replace(',', '.')); if (!Number.isFinite(number)) throw new Error('Введите корректную сумму'); return number }
+  if (field === 'deferment_days') { if (value === '') return null; const number = Number(value); if (!Number.isInteger(number) || number < 0) throw new Error('Отсрочка должна быть целым числом'); return number }
+  return value
+}
+function parseInlineDate(value) {
+  if (!value) return ''
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value
+  const match = String(value).match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{4})$/)
+  if (!match) throw new Error('Введите дату в формате дд/мм/гггг')
+  const day = Number(match[1]); const month = Number(match[2]); const year = Number(match[3])
+  const date = new Date(Date.UTC(year, month - 1, day))
+  if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) throw new Error('Введите корректную дату')
+  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+}
 
 function PresenceCluster({ users, currentSession }) {
   const [selectedSession, setSelectedSession] = useState(null)
@@ -137,20 +287,6 @@ function presenceLocation(person) {
   return person.source_row ? `Строка ${person.source_row} · запись №${person.record_id}` : `Запись №${person.record_id}`
 }
 
-function ObligationModal({ item, refs, onClose, onSave, onFieldFocus }) {
-  const [form, setForm] = useState({ account_type:'',entry_date:new Date().toISOString().slice(0,10),counterparty:'',legal_entity:'',cost_category:'',priority:'',responsible:'',document_number:'',deferment_days:'',document_date:'',amount:'',planned_payment_date:'',approval_date:'',actual_payment_date:'',status:'Зарегистрирован',urgency:'',comment:'',source_note:'',...item })
-  const set = (key, value) => setForm(old => ({ ...old, [key]: value }))
-  useEffect(() => { if (form.document_date && form.deferment_days !== '' && !item.id) { const d = new Date(`${form.document_date}T00:00:00`); d.setDate(d.getDate() + Number(form.deferment_days || 0)); set('planned_payment_date', d.toISOString().slice(0, 10)) } }, [form.document_date, form.deferment_days])
-  const submit = e => { e.preventDefault(); onSave({ ...form, deferment_days: form.deferment_days === '' ? null : Number(form.deferment_days), amount: form.amount === '' ? null : Number(form.amount) }) }
-  return <div className="modal-backdrop" onMouseDown={e => e.target === e.currentTarget && onClose()}><form className="modal obligation-modal" onSubmit={submit}><div className="modal-head"><div><p className="eyebrow">{item.id ? `Запись №${item.id}` : 'Новая запись'}</p><h2>{item.id ? 'Редактирование обязательства' : 'Новое обязательство'}</h2></div><button type="button" onClick={onClose}><X/></button></div><div className="modal-body form-grid">
-    <SelectField label="Признак учёта" fieldKey="account_type" value={form.account_type} options={refs.account_types} onChange={v => set('account_type', v)} onFocus={onFieldFocus}/><Field label="Дата внесения" fieldKey="entry_date" type="date" value={form.entry_date} onChange={v => set('entry_date', v)} onFocus={onFieldFocus}/>
-    <SelectField label="Контрагент" fieldKey="counterparty" value={form.counterparty} options={refs.counterparties} editable onChange={v => set('counterparty', v)} onFocus={onFieldFocus} wide/><SelectField label="Юридическое лицо" fieldKey="legal_entity" value={form.legal_entity} options={refs.legal_entities} onChange={v => set('legal_entity', v)} onFocus={onFieldFocus}/>
-    <SelectField label="Статья затрат" fieldKey="cost_category" value={form.cost_category} options={refs.cost_categories} onChange={v => set('cost_category', v)} onFocus={onFieldFocus} wide/><SelectField label="Приоритет" fieldKey="priority" value={form.priority} options={refs.priorities} onChange={v => set('priority', v)} onFocus={onFieldFocus}/>
-    <SelectField label="Ответственный" fieldKey="responsible" value={form.responsible} options={refs.responsibles} onChange={v => set('responsible', v)} onFocus={onFieldFocus}/><Field label="№ счёта / договора" fieldKey="document_number" value={form.document_number} onChange={v => set('document_number', v)} onFocus={onFieldFocus}/><label className="field wide"><span>Условия оплаты / заметка к документу</span><textarea rows="2" value={form.source_note} onChange={e => set('source_note', e.target.value)} onFocus={() => onFieldFocus?.('source_note', 'Условия оплаты / заметка к документу')} placeholder="Например: отсрочка 30 дней или оплата до 10 числа"/></label>
-    <Field label="Дата документа" fieldKey="document_date" type="date" value={form.document_date} onChange={v => set('document_date', v)} onFocus={onFieldFocus}/><Field label="Отсрочка, дней" fieldKey="deferment_days" type="number" value={form.deferment_days ?? ''} onChange={v => set('deferment_days', v)} onFocus={onFieldFocus}/><Field label="Сумма, ₽" fieldKey="amount" type="number" step="0.01" value={form.amount ?? ''} onChange={v => set('amount', v)} onFocus={onFieldFocus} required/><Field label="Плановая дата оплаты" fieldKey="planned_payment_date" type="date" value={form.planned_payment_date} onChange={v => set('planned_payment_date', v)} onFocus={onFieldFocus}/>
-    <SelectField label="Статус" fieldKey="status" value={form.status} options={refs.statuses} onChange={v => set('status', v)} onFocus={onFieldFocus}/><SelectField label="Срочность" fieldKey="urgency" value={form.urgency} options={refs.urgencies} onChange={v => set('urgency', v)} onFocus={onFieldFocus}/><Field label="Дата утверждения оплаты" fieldKey="approval_date" type="date" value={form.approval_date} onChange={v => set('approval_date', v)} onFocus={onFieldFocus}/><Field label="Фактическая дата оплаты" fieldKey="actual_payment_date" type="date" value={form.actual_payment_date} onChange={v => set('actual_payment_date', v)} onFocus={onFieldFocus}/><label className="field wide"><span>Комментарий</span><textarea rows="3" value={form.comment} onChange={e => set('comment', e.target.value)} onFocus={() => onFieldFocus?.('comment', 'Комментарий')}/></label>
-  </div><div className="modal-footer"><button type="button" className="secondary" onClick={onClose}>Отмена</button><button className="primary">{item.id ? 'Сохранить' : 'Добавить в реестр'}</button></div></form></div>
-}
-function Field({ label, fieldKey, value, onChange, onFocus, wide, ...props }) { return <label className={`field ${wide ? 'wide' : ''}`}><span>{label}</span><input value={value ?? ''} onChange={e => onChange(e.target.value)} onFocus={() => onFocus?.(fieldKey, label)} {...props}/></label> }
+function Field({ label, fieldKey, value, onChange, onFocus, wide, type, ...props }) { return <label className={`field ${wide ? 'wide' : ''}`}><span>{label}</span>{type === 'date' ? <DateInput value={value ?? ''} onChange={onChange} onFocus={() => onFocus?.(fieldKey, label)} {...props}/> : <input type={type} value={value ?? ''} onChange={e => onChange(e.target.value)} onFocus={() => onFocus?.(fieldKey, label)} {...props}/>}</label> }
 function SelectField({ label, fieldKey, value, options = [], onChange, onFocus, wide, editable }) { return <label className={`field ${wide ? 'wide' : ''}`}><span>{label}</span>{editable ? <><input list={`list-${label}`} value={value} onChange={e => onChange(e.target.value)} onFocus={() => onFocus?.(fieldKey, label)}/><datalist id={`list-${label}`}>{options.map(o => <option key={o.id ?? o.value} value={o.value}/>)}</datalist></> : <select value={value} onChange={e => onChange(e.target.value)} onFocus={() => onFocus?.(fieldKey, label)}><option value="">Не выбрано</option>{options.map(o => <option key={o.id ?? o.value} value={o.value}>{o.value}</option>)}</select>}</label> }
 function BulkModal({ count, refs, onClose, onSave }) { const [form,setForm]=useState({status:'',approval_date:'',actual_payment_date:''});return <div className="modal-backdrop"><div className="modal small-modal"><div className="modal-head"><div><p className="eyebrow">Массовое действие</p><h2>Изменить {count} строк</h2></div><button onClick={onClose}><X/></button></div><div className="modal-body stacked-fields"><SelectField label="Новый статус" value={form.status} options={refs.statuses} onChange={v=>setForm({...form,status:v})}/><Field label="Дата утверждения" type="date" value={form.approval_date} onChange={v=>setForm({...form,approval_date:v})}/><Field label="Фактическая дата оплаты" type="date" value={form.actual_payment_date} onChange={v=>setForm({...form,actual_payment_date:v})}/></div><div className="modal-footer"><button className="secondary" onClick={onClose}>Отмена</button><button className="primary" onClick={()=>onSave(form)}>Применить</button></div></div></div> }

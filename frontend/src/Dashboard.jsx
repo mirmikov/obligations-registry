@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { AlertTriangle, CalendarClock, CircleCheck, Landmark, RefreshCw, WalletCards } from 'lucide-react'
 import { request } from './api'
-import { money, PageHeader } from './App'
+import { DateInput, money, PageHeader } from './App'
 
 export default function Dashboard({ notify }) {
   const [data, setData] = useState(null)
@@ -12,7 +12,7 @@ export default function Dashboard({ notify }) {
   if (!data) return <div className="page"><PageHeader eyebrow="Управленческая панель" title="Сводка по обязательствам"/><div className="skeleton-grid"><i/><i/><i/><i/></div></div>
   const totals = data.totals
   return <div className="page dashboard-page">
-    <PageHeader eyebrow="Управленческая панель" title="Сводка по обязательствам" subtitle="Актуальная картина по всему реестру" actions={<><label className="date-control">На дату<input type="date" value={asOf} onChange={e => setAsOf(e.target.value)}/></label><button className="icon-button" onClick={load}><RefreshCw size={18}/></button></>}/>
+    <PageHeader eyebrow="Управленческая панель" title="Сводка по обязательствам" subtitle="Актуальная картина по всему реестру" actions={<><label className="date-control">На дату<DateInput value={asOf} onChange={setAsOf} aria-label="На дату"/></label><button className="icon-button" onClick={load}><RefreshCw size={18}/></button></>}/>
     <section className="kpi-grid">
       <KPI icon={WalletCards} label="Всего в реестре" value={money(totals.amount)} detail={`${totals.count.toLocaleString('ru-RU')} обязательств`} tone="ink"/>
       <KPI icon={AlertTriangle} label="Просрочено" value={money(totals.overdue_amount)} detail={`${totals.overdue_count} обязательств`} tone="danger"/>
