@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Check, ChevronDown, ChevronLeft, ChevronRight, Download, FileUp, Filter, LocateFixed, Plus, RotateCcw, Search, Trash2, X } from 'lucide-react'
+import { Check, ChevronDown, ChevronLeft, ChevronRight, Download, FileUp, Filter, LocateFixed, Maximize2, Minimize2, Plus, RotateCcw, Search, Trash2, X } from 'lucide-react'
 import { download, request } from './api'
 import { DateInput, money, PageHeader, roleLabel, shortDate } from './App'
 import usePresence from './usePresence'
@@ -20,6 +20,7 @@ export default function Registry({ user, notify }) {
   const [savingCells, setSavingCells] = useState(new Set())
   const [selected, setSelected] = useState([])
   const [bulkOpen, setBulkOpen] = useState(false)
+  const [tableFullscreen, setTableFullscreen] = useState(false)
   const importRef = useRef()
   const rowsRef = useRef(new Map())
   const saveQueues = useRef(new Map())
@@ -31,6 +32,12 @@ export default function Registry({ user, notify }) {
   const load = () => { setLoading(true); request(`/api/obligations?${query}`).then(result => { rowsRef.current = new Map(result.items.map(item => [item.id, item])); setData(result) }).catch(e => notify(e.message, 'error')).finally(() => setLoading(false)) }
   useEffect(() => { const timer = setTimeout(load, 220); return () => clearTimeout(timer) }, [query])
   useEffect(() => { const timer = setTimeout(() => request('/api/saved-view', { method: 'PUT', body: JSON.stringify(filters) }).catch(() => {}), 700); return () => clearTimeout(timer) }, [filters])
+  useEffect(() => {
+    if (!tableFullscreen) return
+    const exitFullscreen = event => { if (event.key === 'Escape') setTableFullscreen(false) }
+    document.addEventListener('keydown', exitFullscreen)
+    return () => document.removeEventListener('keydown', exitFullscreen)
+  }, [tableFullscreen])
   const setFilter = (key, value) => { setFilters(old => ({ ...old, [key]: value })); setPage(1) }
   const totalPages = Math.max(1, Math.ceil(data.total / data.page_size))
   const allSelected = data.items.length > 0 && data.items.every(item => selected.includes(item.id))
@@ -84,8 +91,8 @@ export default function Registry({ user, notify }) {
   const remove = async id => { if (!confirm('Удалить обязательство? Отменить это действие нельзя.')) return; try { await request(`/api/obligations/${id}`, { method: 'DELETE' }); notify('Запись удалена'); load() } catch (e) { notify(e.message, 'error') } }
   const importFile = async event => { const file = event.target.files?.[0]; if (!file) return; const body = new FormData(); body.append('file', file); try { const result = await request('/api/obligations/import.xlsx', { method: 'POST', body }); notify(`Импортировано строк: ${result.imported}`); load() } catch (e) { notify(e.message, 'error') } finally { event.target.value = '' } }
   const doSort = key => setSort(current => ({ key, order: current.key === key && current.order === 'asc' ? 'desc' : 'asc' }))
-  return <div className="page registry-page">
-    <PageHeader eyebrow="Рабочая область" title="Реестр обязательств" subtitle={`${data.total.toLocaleString('ru-RU')} записей с учётом фильтров`} actions={<><PresenceCluster users={activeUsers} currentSession={sessionId}/>{user.role === 'admin' && <><input ref={importRef} type="file" accept=".xlsx" hidden onChange={importFile}/><button className="secondary" onClick={() => importRef.current.click()}><FileUp size={17}/>Импорт</button></>}<button className="secondary" onClick={() => download(`/api/obligations/export.xlsx?${query}`, 'Реестр обязательств.xlsx')}><Download size={17}/>Excel</button></>}/>
+  return <div className={`page registry-page ${tableFullscreen ? 'is-table-fullscreen' : ''}`}>
+    <PageHeader eyebrow="Рабочая область" title="Реестр обязательств" subtitle={`${data.total.toLocaleString('ru-RU')} записей с учётом фильтров`} actions={<><PresenceCluster users={activeUsers} currentSession={sessionId}/>{user.role === 'admin' && <><input ref={importRef} type="file" accept=".xlsx" hidden onChange={importFile}/><button className="secondary" onClick={() => importRef.current.click()}><FileUp size={17}/>Импорт</button></>}<button className="secondary" onClick={() => download(`/api/obligations/export.xlsx?${query}`, 'Реестр обязательств.xlsx')}><Download size={17}/>Excel</button><button className="secondary registry-fullscreen-button" onClick={() => setTableFullscreen(true)} title="Открыть таблицу на весь экран" aria-label="Открыть таблицу на весь экран"><Maximize2 size={17}/></button></>}/>
     <section className="filter-panel">
       <div className="search-box"><Search size={18}/><input placeholder="Контрагент, счёт, комментарий…" value={filters.q} onChange={e => setFilter('q', e.target.value)}/>{filters.q && <button onClick={() => setFilter('q', '')}><X size={15}/></button>}</div>
       <label className="filter-date"><span>Срок с</span><DateInput value={filters.planned_from} onChange={value => setFilter('planned_from', value)} aria-label="Срок с"/></label>
@@ -94,6 +101,7 @@ export default function Registry({ user, notify }) {
       {Object.values(filters).some(Boolean) && <button className="reset-filters" onClick={() => { setFilters(emptyFilters); setPage(1) }}><RotateCcw size={15}/>Сбросить</button>}
     </section>
     <section className="table-card">
+      {tableFullscreen && <button type="button" className="registry-fullscreen-exit" onClick={() => setTableFullscreen(false)} title="Вернуться к обычному виду" aria-label="Вернуться к обычному виду"><Minimize2 size={17}/><span>Обычный вид</span></button>}
       {selected.length > 0 && <div className="selection-bar"><span><Check size={16}/>{selected.length} выбрано</span>{user.role !== 'viewer' && <button onClick={() => setBulkOpen(true)}>Изменить статус и даты</button>}<button onClick={() => setSelected([])}>Снять выбор</button></div>}
       <div className="registry-table-wrap"><table className="registry-table inline-registry"><colgroup>{registryColumnWidths.map((width, index) => <col key={index} style={{ width }}/>)}</colgroup><thead><tr><th className="check-col">{user.role !== 'viewer' ? <button type="button" className={`inline-add-row ${newRow ? 'active' : ''}`} onClick={addInlineRow} title={newRow ? 'Убрать новую строку' : 'Добавить строку'} aria-label={newRow ? 'Убрать новую строку' : 'Добавить строку'}><Plus size={16}/></button> : <input type="checkbox" checked={allSelected} onChange={toggleAll}/>}</th>
         <ColumnHead className="counterparty-head" label="Контрагент" field="counterparty" sort={sort} onSort={doSort} value={filters.counterparty} options={refs.counterparties} onFilter={value => setFilter('counterparty', value)}/>
