@@ -182,3 +182,45 @@ func (a *app) saveView(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 200, value)
 }
+
+type workspaceState struct {
+	Page             string `json:"page"`
+	SidebarCollapsed bool   `json:"sidebar_collapsed"`
+}
+
+func normalizeWorkspaceState(value workspaceState) workspaceState {
+	switch value.Page {
+	case "dashboard", "registry", "payments", "references", "users", "audit":
+	default:
+		value.Page = "dashboard"
+	}
+	return value
+}
+
+func (a *app) getWorkspaceState(w http.ResponseWriter, r *http.Request) {
+	user := currentUser(r)
+	var raw []byte
+	if err := a.db.QueryRowContext(r.Context(), `SELECT state FROM user_workspace_state WHERE user_id=$1`, user.ID).Scan(&raw); err != nil {
+		writeJSON(w, 200, workspaceState{Page: "dashboard"})
+		return
+	}
+	value := workspaceState{}
+	_ = json.Unmarshal(raw, &value)
+	writeJSON(w, 200, normalizeWorkspaceState(value))
+}
+
+func (a *app) saveWorkspaceState(w http.ResponseWriter, r *http.Request) {
+	user := currentUser(r)
+	value := workspaceState{}
+	if !decodeJSON(w, r, &value) {
+		return
+	}
+	value = normalizeWorkspaceState(value)
+	raw, _ := json.Marshal(value)
+	_, err := a.db.ExecContext(r.Context(), `INSERT INTO user_workspace_state(user_id,state,updated_at) VALUES($1,$2,now()) ON CONFLICT(user_id) DO UPDATE SET state=$2,updated_at=now()`, user.ID, raw)
+	if err != nil {
+		fail(w, 500, "Не удалось сохранить рабочее место")
+		return
+	}
+	writeJSON(w, 200, value)
+}

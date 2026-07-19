@@ -70,6 +70,13 @@ func TestBuildFiltersSupportsMultipleCounterparties(t *testing.T) {
 	}
 }
 
+func TestNormalizeWorkspaceStateRejectsUnknownPage(t *testing.T) {
+	value := normalizeWorkspaceState(workspaceState{Page: "users<script>", SidebarCollapsed: true})
+	if value.Page != "dashboard" || !value.SidebarCollapsed {
+		t.Fatalf("workspace state = %#v", value)
+	}
+}
+
 func TestExcelDateParsing(t *testing.T) {
 	for input, expected := range map[string]string{"18.07.2026": "2026-07-18", "2026-07-18": "2026-07-18"} {
 		if actual := parseDate(input); actual != expected {

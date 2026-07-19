@@ -17,6 +17,23 @@
 
 .registry-table-wrap{isolation:isolate}.inline-registry thead th:not(.check-col):not(.counterparty-head):not(.entry-date-head){z-index:1!important;overflow:hidden}.inline-registry thead th:has(.header-filter:not(.date-header-filter).is-open){z-index:110!important;overflow:visible}.inline-registry th.check-col,.inline-registry td.check-col{position:sticky!important;left:0!important;background:#fff;z-index:8!important}.inline-registry th.check-col{top:0;background:#f8faf9;z-index:103!important}.inline-registry .counterparty-head,.inline-registry .counterparty-cell{position:sticky!important;left:46px!important;background:#fff;z-index:7!important}.inline-registry .counterparty-head{top:0;background:#f8faf9;z-index:102!important;overflow:visible}.inline-registry .entry-date-head,.inline-registry .entry-date-cell{position:sticky!important;left:266px!important;background:#fff;z-index:6!important;box-shadow:7px 0 10px rgba(27,58,61,.12)}.inline-registry .entry-date-head{top:0;background:#f8faf9;z-index:101!important;overflow:visible;border-right:1px solid #d9e3df}.inline-registry tbody tr:hover .check-col,.inline-registry tbody tr:hover .counterparty-cell,.inline-registry tbody tr:hover .entry-date-cell{background:#f7faf8}.inline-registry .inline-new-row .check-col,.inline-registry .inline-new-row .counterparty-cell,.inline-registry .inline-new-row .entry-date-cell{background:#fffaf2!important}
 
+/* Four fixed business columns stay above the horizontally scrolling sheet. */
+.inline-registry .entry-date-head,.inline-registry .entry-date-cell{box-shadow:none;border-right:0}
+.inline-registry .account-type-head,.inline-registry .account-type-cell{position:sticky!important;left:396px!important;background:#fff;z-index:5!important}
+.app-shell .registry-page .inline-registry thead th.account-type-head{top:0;background:#f8faf9;z-index:100!important;overflow:visible}
+.inline-registry .legal-entity-head,.inline-registry .legal-entity-cell{position:sticky!important;left:526px!important;background:#fff;z-index:4!important;box-shadow:7px 0 10px rgba(27,58,61,.12)}
+.app-shell .registry-page .inline-registry thead th.legal-entity-head{top:0;background:#f8faf9;z-index:99!important;overflow:visible;border-right:1px solid #d9e3df}
+.inline-registry tbody tr:hover .account-type-cell,.inline-registry tbody tr:hover .legal-entity-cell{background:#f7faf8}
+.inline-registry .inline-new-row .account-type-cell,.inline-registry .inline-new-row .legal-entity-cell{background:#fffaf2!important}
+
+/* Status highlighting belongs to the whole row, including fixed cells. */
+.inline-registry .row-overdue>td{background:#fbe9e5!important}
+.inline-registry .row-soon>td{background:#fff3df!important}
+.inline-registry .row-to-pay>td{background:#f2eaf7!important}
+.inline-registry .row-overdue:hover>td{background:#f7ddd7!important}
+.inline-registry .row-soon:hover>td{background:#ffebca!important}
+.inline-registry .row-to-pay:hover>td{background:#eadef1!important}
+
 /* Keep the registry viewport stable when filtering leaves only a few rows. */
 .registry-page:not(.is-table-fullscreen) .registry-table-wrap{width:100%;height:calc(100vh - 300px);min-height:360px;max-height:none}
 .registry-page.is-table-fullscreen .registry-table-wrap{height:auto}

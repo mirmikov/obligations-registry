@@ -7,7 +7,7 @@ import usePresence from './usePresence'
 const emptyFilters = { q: '', counterparty: [], account_type: '', legal_entity: '', cost_category: '', priority: '', responsible: '', status: '', urgency: '', entry_date: '', document_date: '', planned_payment_date: '', approval_date: '', actual_payment_date: '', planned_from: '', planned_to: '', overdue: '' }
 const dateFields = new Set(['entry_date', 'document_date', 'planned_payment_date', 'approval_date', 'actual_payment_date'])
 const fieldLabels = { counterparty: 'Контрагент', entry_date: 'Дата внесения', document_number: 'Документ', document_date: 'Дата документа', legal_entity: 'Юрлицо', cost_category: 'Статья затрат', amount: 'Сумма, ₽', deferment_days: 'Отсрочка, дней', planned_payment_date: 'Плановая оплата', approval_date: 'Дата утверждения', actual_payment_date: 'Фактическая оплата', status: 'Статус', urgency: 'Срочность', responsible: 'Ответственный', priority: 'Приоритет', account_type: 'Признак учёта', comment: 'Комментарий', source_note: 'Условия оплаты' }
-const registryColumnWidths = [46, 220, 130, 180, 135, 180, 240, 120, 110, 145, 145, 145, 160, 135, 160, 120, 130, 240, 240, 52]
+const registryColumnWidths = [46, 220, 130, 130, 180, 180, 135, 240, 120, 110, 145, 145, 145, 160, 135, 160, 120, 240, 240, 52]
 
 export default function Registry({ user, notify }) {
   const [data, setData] = useState({ items: [], total: 0, page: 1, page_size: 50 })
@@ -21,13 +21,24 @@ export default function Registry({ user, notify }) {
   const [selected, setSelected] = useState([])
   const [bulkOpen, setBulkOpen] = useState(false)
   const [tableFullscreen, setTableFullscreen] = useState(false)
+  const [viewReady, setViewReady] = useState(false)
   const importRef = useRef()
+  const tableWrapRef = useRef()
   const rowsRef = useRef(new Map())
   const saveQueues = useRef(new Map())
   const creatingRef = useRef(false)
+  const scrollPositionRef = useRef({ left: 0, top: 0 })
+  const scrollSaveTimerRef = useRef()
+  const latestViewRef = useRef(null)
   const { activeUsers, updateLocation, sessionId } = usePresence({ page: 'registry', page_label: 'Реестр обязательств', mode: 'view' })
 
-  useEffect(() => { Promise.all([request('/api/references'), request('/api/saved-view')]).then(([r, saved]) => { setRefs(r); if (saved && Object.keys(saved).length) setFilters(normalizeSavedFilters(saved)) }).catch(e => notify(e.message, 'error')) }, [])
+  useEffect(() => {
+    Promise.all([request('/api/references'), request('/api/saved-view')]).then(([references, saved]) => {
+      const view = normalizeSavedView(saved)
+      setRefs(references); setFilters(view.filters); setPage(view.page); setSort(view.sort); setTableFullscreen(view.fullscreen)
+      scrollPositionRef.current = { left: view.scroll_left, top: view.scroll_top }
+    }).catch(error => notify(error.message, 'error')).finally(() => setViewReady(true))
+  }, [])
   const query = useMemo(() => {
     const params = new URLSearchParams({ page, page_size: 50, sort: sort.key, order: sort.order })
     Object.entries(filters).forEach(([key, value]) => {
@@ -36,9 +47,28 @@ export default function Registry({ user, notify }) {
     })
     return params.toString()
   }, [filters, page, sort])
-  const load = () => { setLoading(true); request(`/api/obligations?${query}`).then(result => { rowsRef.current = new Map(result.items.map(item => [item.id, item])); setData(result) }).catch(e => notify(e.message, 'error')).finally(() => setLoading(false)) }
-  useEffect(() => { const timer = setTimeout(load, 220); return () => clearTimeout(timer) }, [query])
-  useEffect(() => { const timer = setTimeout(() => request('/api/saved-view', { method: 'PUT', body: JSON.stringify(filters) }).catch(() => {}), 700); return () => clearTimeout(timer) }, [filters])
+  const load = () => { setLoading(true); request(`/api/obligations?${query}`).then(result => { const lastPage = Math.max(1, Math.ceil(result.total / result.page_size)); if (page > lastPage) { setPage(lastPage); return }; rowsRef.current = new Map(result.items.map(item => [item.id, item])); setData(result) }).catch(e => notify(e.message, 'error')).finally(() => setLoading(false)) }
+  useEffect(() => { if (!viewReady) return; const timer = setTimeout(load, 220); return () => clearTimeout(timer) }, [query, viewReady])
+  const viewPayload = () => ({ filters, page, sort, scroll_left: scrollPositionRef.current.left, scroll_top: scrollPositionRef.current.top, fullscreen: tableFullscreen })
+  latestViewRef.current = viewReady ? viewPayload() : null
+  useEffect(() => {
+    if (!viewReady) return
+    const timer = setTimeout(() => request('/api/saved-view', { method: 'PUT', body: JSON.stringify(viewPayload()) }).catch(() => {}), 300)
+    return () => clearTimeout(timer)
+  }, [filters, page, sort, tableFullscreen, viewReady])
+  useEffect(() => {
+    const flushView = () => {
+      clearTimeout(scrollSaveTimerRef.current)
+      if (latestViewRef.current) request('/api/saved-view', { method: 'PUT', body: JSON.stringify(latestViewRef.current), keepalive: true }).catch(() => {})
+    }
+    window.addEventListener('pagehide', flushView)
+    return () => { window.removeEventListener('pagehide', flushView); flushView() }
+  }, [])
+  useEffect(() => {
+    if (!viewReady || loading) return
+    const frame = requestAnimationFrame(() => tableWrapRef.current?.scrollTo(scrollPositionRef.current))
+    return () => cancelAnimationFrame(frame)
+  }, [viewReady, loading, data.items.length])
   useEffect(() => {
     if (!tableFullscreen) return
     const exitFullscreen = event => { if (event.key === 'Escape') setTableFullscreen(false) }
@@ -46,6 +76,12 @@ export default function Registry({ user, notify }) {
     return () => document.removeEventListener('keydown', exitFullscreen)
   }, [tableFullscreen])
   const setFilter = (key, value) => { setFilters(old => ({ ...old, [key]: value })); setPage(1) }
+  const rememberScroll = event => {
+    scrollPositionRef.current = { left: event.currentTarget.scrollLeft, top: event.currentTarget.scrollTop }
+    if (latestViewRef.current) latestViewRef.current = { ...latestViewRef.current, scroll_left: scrollPositionRef.current.left, scroll_top: scrollPositionRef.current.top }
+    clearTimeout(scrollSaveTimerRef.current)
+    scrollSaveTimerRef.current = setTimeout(() => request('/api/saved-view', { method: 'PUT', body: JSON.stringify(viewPayload()) }).catch(() => {}), 350)
+  }
   const totalPages = Math.max(1, Math.ceil(data.total / data.page_size))
   const allSelected = data.items.length > 0 && data.items.every(item => selected.includes(item.id))
   const toggleAll = () => setSelected(allSelected ? selected.filter(id => !data.items.some(i => i.id === id)) : [...new Set([...selected, ...data.items.map(i => i.id)])])
@@ -110,11 +146,12 @@ export default function Registry({ user, notify }) {
     <section className="table-card">
       {tableFullscreen && <button type="button" className="registry-fullscreen-exit" onClick={() => setTableFullscreen(false)} title="Вернуться к обычному виду" aria-label="Вернуться к обычному виду"><Minimize2 size={17}/><span>Обычный вид</span></button>}
       {selected.length > 0 && <div className="selection-bar"><span><Check size={16}/>{selected.length} выбрано</span>{user.role !== 'viewer' && <button onClick={() => setBulkOpen(true)}>Изменить статус и даты</button>}<button onClick={() => setSelected([])}>Снять выбор</button></div>}
-      <div className="registry-table-wrap"><table className="registry-table inline-registry"><colgroup>{registryColumnWidths.map((width, index) => <col key={index} style={{ width }}/>)}</colgroup><thead><tr><th className="check-col">{user.role !== 'viewer' ? <button type="button" className={`inline-add-row ${newRow ? 'active' : ''}`} onClick={addInlineRow} title={newRow ? 'Убрать новую строку' : 'Добавить строку'} aria-label={newRow ? 'Убрать новую строку' : 'Добавить строку'}><Plus size={16}/></button> : <input type="checkbox" checked={allSelected} onChange={toggleAll}/>}</th>
+      <div ref={tableWrapRef} className="registry-table-wrap" onScroll={rememberScroll}><table className="registry-table inline-registry"><colgroup>{registryColumnWidths.map((width, index) => <col key={index} style={{ width }}/>)}</colgroup><thead><tr><th className="check-col">{user.role !== 'viewer' ? <button type="button" className={`inline-add-row ${newRow ? 'active' : ''}`} onClick={addInlineRow} title={newRow ? 'Убрать новую строку' : 'Добавить строку'} aria-label={newRow ? 'Убрать новую строку' : 'Добавить строку'}><Plus size={16}/></button> : <input type="checkbox" checked={allSelected} onChange={toggleAll}/>}</th>
         <ColumnHead className="counterparty-head" label="Контрагент" field="counterparty" sort={sort} onSort={doSort} value={filters.counterparty} options={refs.counterparties} onFilter={value => setFilter('counterparty', value)} multiple/>
         <ColumnHead className="entry-date-head" label="Дата внесения" field="entry_date" sort={sort} onSort={doSort} dateValue={filters.entry_date} onDateFilter={value => setFilter('entry_date', value)}/>
+        <ColumnHead className="account-type-head" label="Признак" value={filters.account_type} options={refs.account_types} onFilter={value => setFilter('account_type', value)}/>
+        <ColumnHead className="legal-entity-head" label="Юрлицо" field="legal_entity" sort={sort} onSort={doSort} value={filters.legal_entity} options={refs.legal_entities} onFilter={value => setFilter('legal_entity', value)}/>
         <th>Документ</th><ColumnHead label="Дата документа" dateValue={filters.document_date} onDateFilter={value => setFilter('document_date', value)}/>
-        <ColumnHead label="Юрлицо" field="legal_entity" sort={sort} onSort={doSort} value={filters.legal_entity} options={refs.legal_entities} onFilter={value => setFilter('legal_entity', value)}/>
         <ColumnHead label="Статья затрат" value={filters.cost_category} options={refs.cost_categories} onFilter={value => setFilter('cost_category', value)}/>
         <ColumnHead label="Сумма" field="amount" sort={sort} onSort={doSort}/>
         <th>Отсрочка, дней</th>
@@ -125,7 +162,6 @@ export default function Registry({ user, notify }) {
         <ColumnHead label="Срочность" value={filters.urgency} options={refs.urgencies} onFilter={value => setFilter('urgency', value)}/>
         <ColumnHead label="Ответственный" value={filters.responsible} options={refs.responsibles} onFilter={value => setFilter('responsible', value)}/>
         <ColumnHead label="Приоритет" value={filters.priority} options={refs.priorities} onFilter={value => setFilter('priority', value)}/>
-        <ColumnHead label="Признак" value={filters.account_type} options={refs.account_types} onFilter={value => setFilter('account_type', value)}/>
         <th>Комментарий</th><th>Условия оплаты</th><th className="action-col"/></tr></thead>
       <tbody>{newRow && <RegistryRow item={newRow} refs={refs} editable isNew savingCells={savingCells} onCommit={commitNewCell} onStartEdit={startCellEdit} onFinishEdit={finishCellEdit} onDelete={() => setNewRow(null)}/>} {loading ? <SkeletonRows/> : data.items.length === 0 && !newRow ? <tr><td colSpan="20"><div className="empty-state"><Search size={27}/><strong>Ничего не найдено</strong><span>Измените или сбросьте фильтры</span></div></td></tr> : data.items.map(item => <RegistryRow key={item.id} item={item} refs={refs} editable={user.role !== 'viewer'} selected={selected.includes(item.id)} savingCells={savingCells} onToggle={() => setSelected(s => s.includes(item.id) ? s.filter(id => id !== item.id) : [...s, item.id])} onCommit={commitCell} onStartEdit={startCellEdit} onFinishEdit={finishCellEdit} onDelete={user.role === 'admin' ? () => remove(item.id) : null}/>)}</tbody></table></div>
       <footer className="table-footer"><span>Показано {data.items.length} из {data.total.toLocaleString('ru-RU')}</span><div><button disabled={page === 1} onClick={() => setPage(p => p - 1)}><ChevronLeft size={17}/></button><span>Страница <b>{page}</b> из {totalPages}</span><button disabled={page === totalPages} onClick={() => setPage(p => p + 1)}><ChevronRight size={17}/></button></div></footer>
@@ -195,6 +231,24 @@ function normalizeSavedFilters(saved) {
   return { ...emptyFilters, ...saved, counterparty }
 }
 
+function normalizeSavedView(saved) {
+  const structured = saved && typeof saved.filters === 'object' && !Array.isArray(saved.filters)
+  const filters = normalizeSavedFilters(structured ? saved.filters : (saved || {}))
+  const savedPage = structured ? Number(saved.page) : 1
+  const savedSort = structured && saved.sort && typeof saved.sort === 'object' ? saved.sort : {}
+  const sortKeys = ['entry_date', 'counterparty', 'legal_entity', 'amount', 'planned_payment_date', 'approval_date', 'status', 'priority', 'updated_at']
+  const sortKey = sortKeys.includes(savedSort.key) ? savedSort.key : 'updated_at'
+  const order = savedSort.order === 'asc' ? 'asc' : 'desc'
+  return {
+    filters,
+    page: Number.isInteger(savedPage) && savedPage > 0 ? savedPage : 1,
+    sort: { key: sortKey, order },
+    scroll_left: structured ? Math.max(0, Number(saved.scroll_left) || 0) : 0,
+    scroll_top: structured ? Math.max(0, Number(saved.scroll_top) || 0) : 0,
+    fullscreen: structured && saved.fullscreen === true,
+  }
+}
+
 function hasActiveFilters(filters) {
   return Object.values(filters).some(value => Array.isArray(value) ? value.length > 0 : Boolean(value))
 }
@@ -206,9 +260,10 @@ function RegistryRow({ item, refs, editable, isNew = false, selected, savingCell
     <td className="check-col">{isNew ? <button type="button" className="cancel-inline-row" onClick={onDelete} title="Отменить новую строку"><X size={14}/></button> : <input type="checkbox" checked={selected} onChange={onToggle}/>}</td>
     {cell('counterparty', { className: 'counterparty-cell', options: refs.counterparties, allowCustom: true })}
     {cell('entry_date', { type: 'date', className: 'entry-date-cell' })}
+    {cell('account_type', { options: refs.account_types, className: 'account-type-cell' })}
+    {cell('legal_entity', { options: refs.legal_entities, className: 'legal-entity-cell' })}
     {cell('document_number')}
     {cell('document_date', { type: 'date' })}
-    {cell('legal_entity', { options: refs.legal_entities })}
     {cell('cost_category', { options: refs.cost_categories, className: 'category-cell' })}
     {cell('amount', { type: 'number', className: 'money-cell', render: value => value == null || value === '' ? '—' : money(value) })}
     {cell('deferment_days', { type: 'number' })}
@@ -219,7 +274,6 @@ function RegistryRow({ item, refs, editable, isNew = false, selected, savingCell
     {cell('urgency', { options: refs.urgencies, render: value => <Urgency value={value}/> })}
     {cell('responsible', { options: refs.responsibles })}
     {cell('priority', { options: refs.priorities })}
-    {cell('account_type', { options: refs.account_types })}
     {cell('comment', { className: 'comment-cell' })}
     {cell('source_note', { className: 'comment-cell' })}
     <td className="action-col">{onDelete && !isNew && <div className="row-actions"><button className="danger-button" onClick={onDelete} title="Удалить"><Trash2 size={16}/></button></div>}</td>

@@ -74,6 +74,8 @@ func main() {
 	mux.Handle("GET /api/payment-register", a.authorize(http.HandlerFunc(a.paymentRegister)))
 	mux.Handle("GET /api/saved-view", a.authorize(http.HandlerFunc(a.getSavedView)))
 	mux.Handle("PUT /api/saved-view", a.authorize(http.HandlerFunc(a.saveView)))
+	mux.Handle("GET /api/workspace-state", a.authorize(http.HandlerFunc(a.getWorkspaceState)))
+	mux.Handle("PUT /api/workspace-state", a.authorize(http.HandlerFunc(a.saveWorkspaceState)))
 	mux.Handle("GET /api/users", a.authorize(a.requireRole("admin")(http.HandlerFunc(a.listUsers))))
 	mux.Handle("POST /api/users", a.authorize(a.requireRole("admin")(http.HandlerFunc(a.createUser))))
 	mux.Handle("PATCH /api/users/{id}", a.authorize(a.requireRole("admin")(http.HandlerFunc(a.updateUser))))

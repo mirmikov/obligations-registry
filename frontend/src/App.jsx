@@ -24,23 +24,38 @@ export default function App() {
   const [page, setPage] = useState('dashboard')
   const [collapsed, setCollapsed] = useState(false)
   const [toast, setToast] = useState(null)
+  const [workspaceReady, setWorkspaceReady] = useState(false)
+
+  const enterWorkspace = (nextUser, state = {}) => {
+    setUser(nextUser)
+    setPage(isAllowedPage(state.page, nextUser) ? state.page : 'dashboard')
+    setCollapsed(Boolean(state.sidebar_collapsed))
+    setWorkspaceReady(true)
+  }
 
   useEffect(() => {
     if (!checking) return
-    request('/api/auth/me').then(setUser).catch(() => setUser(null)).finally(() => setChecking(false))
+    Promise.all([request('/api/auth/me'), request('/api/workspace-state').catch(() => ({}))])
+      .then(([nextUser, state]) => enterWorkspace(nextUser, state))
+      .catch(() => { setUser(null); setWorkspaceReady(false) })
+      .finally(() => setChecking(false))
   }, [])
   useEffect(() => {
-    const logout = () => { setUser(null); setChecking(false) }
+    const logout = () => { setUser(null); setChecking(false); setWorkspaceReady(false) }
     window.addEventListener('registry:logout', logout)
     return () => window.removeEventListener('registry:logout', logout)
   }, [])
+  useEffect(() => {
+    if (!user || !workspaceReady) return
+    request('/api/workspace-state', { method: 'PUT', body: JSON.stringify({ page, sidebar_collapsed: collapsed }), keepalive: true }).catch(() => {})
+  }, [page, collapsed, user?.id, workspaceReady])
 
   const notify = (message, type = 'success') => {
     setToast({ message, type }); window.setTimeout(() => setToast(null), 3500)
   }
-  const logout = () => { localStorage.removeItem('registry_token'); setUser(null) }
+  const logout = () => { localStorage.removeItem('registry_token'); setUser(null); setWorkspaceReady(false) }
   if (checking) return <div className="splash"><ReceiptText size={42}/><span>Загружаем реестр…</span></div>
-  if (!user) return <Login onLogin={setUser} />
+  if (!user) return <Login onLogin={enterWorkspace} />
 
   const pages = {
     dashboard: <Dashboard notify={notify} />,
@@ -72,7 +87,12 @@ function Login({ onLogin }) {
   const [loading, setLoading] = useState(false)
   const submit = async event => {
     event.preventDefault(); setError(''); setLoading(true)
-    try { const result = await request('/api/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) }); localStorage.setItem('registry_token', result.token); onLogin(result.user) }
+    try {
+      const result = await request('/api/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) })
+      localStorage.setItem('registry_token', result.token)
+      const workspace = await request('/api/workspace-state').catch(() => ({}))
+      onLogin(result.user, workspace)
+    }
     catch (err) { setError(err.message) } finally { setLoading(false) }
   }
   return <div className="login-page">
@@ -82,6 +102,7 @@ function Login({ onLogin }) {
 }
 
 export function PageHeader({ eyebrow, title, subtitle, actions }) { return <header className="page-header"><div><p className="eyebrow">{eyebrow}</p><h1>{title}</h1>{subtitle && <span>{subtitle}</span>}</div>{actions && <div className="header-actions">{actions}</div>}</header> }
+function isAllowedPage(page, user) { return nav.some(item => item.id === page && (!item.admin || user?.role === 'admin')) }
 export const roleLabel = role => ({ admin: 'Администратор', editor: 'Редактор', viewer: 'Зритель' }[role] || role)
 export const money = value => new Intl.NumberFormat('ru-RU', {
   style: 'currency',
