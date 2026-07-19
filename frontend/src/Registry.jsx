@@ -4,7 +4,7 @@ import { download, request } from './api'
 import { DateInput, money, PageHeader, roleLabel, shortDate } from './App'
 import usePresence from './usePresence'
 
-const emptyFilters = { q: '', counterparty: '', account_type: '', legal_entity: '', cost_category: '', priority: '', responsible: '', status: '', urgency: '', entry_date: '', document_date: '', planned_payment_date: '', approval_date: '', actual_payment_date: '', planned_from: '', planned_to: '', overdue: '' }
+const emptyFilters = { q: '', counterparty: [], account_type: '', legal_entity: '', cost_category: '', priority: '', responsible: '', status: '', urgency: '', entry_date: '', document_date: '', planned_payment_date: '', approval_date: '', actual_payment_date: '', planned_from: '', planned_to: '', overdue: '' }
 const dateFields = new Set(['entry_date', 'document_date', 'planned_payment_date', 'approval_date', 'actual_payment_date'])
 const fieldLabels = { counterparty: 'Контрагент', entry_date: 'Дата внесения', document_number: 'Документ', document_date: 'Дата документа', legal_entity: 'Юрлицо', cost_category: 'Статья затрат', amount: 'Сумма, ₽', deferment_days: 'Отсрочка, дней', planned_payment_date: 'Плановая оплата', approval_date: 'Дата утверждения', actual_payment_date: 'Фактическая оплата', status: 'Статус', urgency: 'Срочность', responsible: 'Ответственный', priority: 'Приоритет', account_type: 'Признак учёта', comment: 'Комментарий', source_note: 'Условия оплаты' }
 const registryColumnWidths = [46, 220, 130, 180, 135, 180, 240, 120, 110, 145, 145, 145, 160, 135, 160, 120, 130, 240, 240, 52]
@@ -27,8 +27,15 @@ export default function Registry({ user, notify }) {
   const creatingRef = useRef(false)
   const { activeUsers, updateLocation, sessionId } = usePresence({ page: 'registry', page_label: 'Реестр обязательств', mode: 'view' })
 
-  useEffect(() => { Promise.all([request('/api/references'), request('/api/saved-view')]).then(([r, saved]) => { setRefs(r); if (saved && Object.keys(saved).length) setFilters({ ...emptyFilters, ...saved }) }).catch(e => notify(e.message, 'error')) }, [])
-  const query = useMemo(() => { const params = new URLSearchParams({ page, page_size: 50, sort: sort.key, order: sort.order }); Object.entries(filters).forEach(([k, v]) => v && params.set(k, v)); return params.toString() }, [filters, page, sort])
+  useEffect(() => { Promise.all([request('/api/references'), request('/api/saved-view')]).then(([r, saved]) => { setRefs(r); if (saved && Object.keys(saved).length) setFilters(normalizeSavedFilters(saved)) }).catch(e => notify(e.message, 'error')) }, [])
+  const query = useMemo(() => {
+    const params = new URLSearchParams({ page, page_size: 50, sort: sort.key, order: sort.order })
+    Object.entries(filters).forEach(([key, value]) => {
+      if (Array.isArray(value)) value.filter(Boolean).forEach(item => params.append(key, item))
+      else if (value) params.set(key, value)
+    })
+    return params.toString()
+  }, [filters, page, sort])
   const load = () => { setLoading(true); request(`/api/obligations?${query}`).then(result => { rowsRef.current = new Map(result.items.map(item => [item.id, item])); setData(result) }).catch(e => notify(e.message, 'error')).finally(() => setLoading(false)) }
   useEffect(() => { const timer = setTimeout(load, 220); return () => clearTimeout(timer) }, [query])
   useEffect(() => { const timer = setTimeout(() => request('/api/saved-view', { method: 'PUT', body: JSON.stringify(filters) }).catch(() => {}), 700); return () => clearTimeout(timer) }, [filters])
@@ -98,13 +105,13 @@ export default function Registry({ user, notify }) {
       <label className="filter-date"><span>Срок с</span><DateInput value={filters.planned_from} onChange={value => setFilter('planned_from', value)} aria-label="Срок с"/></label>
       <label className="filter-date"><span>по</span><DateInput value={filters.planned_to} onChange={value => setFilter('planned_to', value)} aria-label="Срок по"/></label>
       <button className={`overdue-toggle ${filters.overdue ? 'active' : ''}`} onClick={() => setFilter('overdue', filters.overdue ? '' : 'true')}><Filter size={15}/>Только просроченные</button>
-      {Object.values(filters).some(Boolean) && <button className="reset-filters" onClick={() => { setFilters(emptyFilters); setPage(1) }}><RotateCcw size={15}/>Сбросить</button>}
+      {hasActiveFilters(filters) && <button className="reset-filters" onClick={() => { setFilters(emptyFilters); setPage(1) }}><RotateCcw size={15}/>Сбросить</button>}
     </section>
     <section className="table-card">
       {tableFullscreen && <button type="button" className="registry-fullscreen-exit" onClick={() => setTableFullscreen(false)} title="Вернуться к обычному виду" aria-label="Вернуться к обычному виду"><Minimize2 size={17}/><span>Обычный вид</span></button>}
       {selected.length > 0 && <div className="selection-bar"><span><Check size={16}/>{selected.length} выбрано</span>{user.role !== 'viewer' && <button onClick={() => setBulkOpen(true)}>Изменить статус и даты</button>}<button onClick={() => setSelected([])}>Снять выбор</button></div>}
       <div className="registry-table-wrap"><table className="registry-table inline-registry"><colgroup>{registryColumnWidths.map((width, index) => <col key={index} style={{ width }}/>)}</colgroup><thead><tr><th className="check-col">{user.role !== 'viewer' ? <button type="button" className={`inline-add-row ${newRow ? 'active' : ''}`} onClick={addInlineRow} title={newRow ? 'Убрать новую строку' : 'Добавить строку'} aria-label={newRow ? 'Убрать новую строку' : 'Добавить строку'}><Plus size={16}/></button> : <input type="checkbox" checked={allSelected} onChange={toggleAll}/>}</th>
-        <ColumnHead className="counterparty-head" label="Контрагент" field="counterparty" sort={sort} onSort={doSort} value={filters.counterparty} options={refs.counterparties} onFilter={value => setFilter('counterparty', value)}/>
+        <ColumnHead className="counterparty-head" label="Контрагент" field="counterparty" sort={sort} onSort={doSort} value={filters.counterparty} options={refs.counterparties} onFilter={value => setFilter('counterparty', value)} multiple/>
         <ColumnHead className="entry-date-head" label="Дата внесения" field="entry_date" sort={sort} onSort={doSort} dateValue={filters.entry_date} onDateFilter={value => setFilter('entry_date', value)}/>
         <th>Документ</th><ColumnHead label="Дата документа" dateValue={filters.document_date} onDateFilter={value => setFilter('document_date', value)}/>
         <ColumnHead label="Юрлицо" field="legal_entity" sort={sort} onSort={doSort} value={filters.legal_entity} options={refs.legal_entities} onFilter={value => setFilter('legal_entity', value)}/>
@@ -129,11 +136,12 @@ export default function Registry({ user, notify }) {
   </div>
 }
 
-function ColumnHead({ label, field, sort, onSort, value = '', options, onFilter, dateValue = '', onDateFilter, className = '' }) {
+function ColumnHead({ label, field, sort, onSort, value = '', options, onFilter, dateValue = '', onDateFilter, className = '', multiple = false }) {
   const sorted = field && sort?.key === field
-  return <th className={`${className} ${sorted ? 'sorted' : ''} ${value || dateValue ? 'filtered' : ''}`}><div className="column-head-inner">
+  const filtered = (Array.isArray(value) ? value.length > 0 : Boolean(value)) || Boolean(dateValue)
+  return <th className={`${className} ${sorted ? 'sorted' : ''} ${filtered ? 'filtered' : ''}`}><div className="column-head-inner">
     {field ? <button type="button" className="column-sort" onClick={() => onSort(field)}>{label}<i>{sorted ? (sort.order === 'asc' ? '↑' : '↓') : '↕'}</i></button> : <span className="column-label">{label}</span>}
-    {onFilter && <HeaderFilter label={label} value={value} options={options} onChange={onFilter}/>}
+    {onFilter && <HeaderFilter label={label} value={value} options={options} onChange={onFilter} multiple={multiple}/>}
     {onDateFilter && <DateHeaderFilter label={label} value={dateValue} onChange={onDateFilter}/>}
   </div></th>
 }
@@ -147,13 +155,14 @@ function DateHeaderFilter({ label, value, onChange }) {
   </div>
 }
 
-function HeaderFilter({ label, value, options = [], onChange }) {
+function HeaderFilter({ label, value, options = [], onChange, multiple = false }) {
   const [open, setOpen] = useState(false)
   const [search, setSearch] = useState('')
   const rootRef = useRef(null)
   const inputRef = useRef(null)
   const values = useMemo(() => [...new Set(options.map(option => typeof option === 'string' ? option : option.value).filter(Boolean))], [options])
   const visible = useMemo(() => { const term = search.trim().toLocaleLowerCase('ru-RU'); return term ? values.filter(option => option.toLocaleLowerCase('ru-RU').includes(term)) : values }, [search, values])
+  const selectedValues = multiple ? (Array.isArray(value) ? value : value ? [value] : []) : value ? [value] : []
   useEffect(() => {
     if (!open) return
     const closeOutside = event => { if (!rootRef.current?.contains(event.target)) setOpen(false) }
@@ -163,18 +172,31 @@ function HeaderFilter({ label, value, options = [], onChange }) {
     requestAnimationFrame(() => inputRef.current?.focus())
     return () => { document.removeEventListener('mousedown', closeOutside); document.removeEventListener('keydown', closeEscape) }
   }, [open])
-  const select = next => { onChange(next); setSearch(''); setOpen(false) }
-  return <div ref={rootRef} className={`header-filter ${open ? 'is-open' : ''} ${value ? 'has-value' : ''}`}>
-    <button type="button" className="header-filter-trigger" aria-label={`Фильтр: ${label}`} aria-expanded={open} onClick={() => { setSearch(''); setOpen(current => !current) }}><ChevronDown size={13}/>{value && <i/>}</button>
+  const select = next => {
+    if (!multiple) { onChange(next); setSearch(''); setOpen(false); return }
+    if (!next) { onChange([]); return }
+    onChange(selectedValues.includes(next) ? selectedValues.filter(item => item !== next) : [...selectedValues, next])
+  }
+  return <div ref={rootRef} className={`header-filter ${open ? 'is-open' : ''} ${selectedValues.length ? 'has-value' : ''}`}>
+    <button type="button" className="header-filter-trigger" aria-label={`Фильтр: ${label}${multiple && selectedValues.length ? `, выбрано ${selectedValues.length}` : ''}`} aria-expanded={open} onClick={() => { setSearch(''); setOpen(current => !current) }}><ChevronDown size={13}/>{selectedValues.length > 0 && <i/>}</button>
     {open && <div className="header-filter-menu">
       <div className="header-filter-search"><Search size={15}/><input ref={inputRef} value={search} onChange={event => setSearch(event.target.value)} placeholder="Поиск по наименованию" aria-label={`Поиск: ${label}`}/>{search && <button type="button" onClick={() => setSearch('')} aria-label="Очистить поиск"><X size={13}/></button>}</div>
-      <div className="header-filter-options" role="listbox" aria-label={`Значения: ${label}`}>
-        <button type="button" className={!value ? 'selected' : ''} onClick={() => select('')}><span>Все значения</span>{!value && <Check size={14}/>}</button>
-        {visible.map(option => <button type="button" key={option} className={option === value ? 'selected' : ''} onClick={() => select(option)} title={option}><span>{option}</span>{option === value && <Check size={14}/>}</button>)}
+      <div className="header-filter-options" role="listbox" aria-multiselectable={multiple || undefined} aria-label={`Значения: ${label}`}>
+        <button type="button" className={!selectedValues.length ? 'selected' : ''} onClick={() => select('')}><span>Все значения</span>{!selectedValues.length && <Check size={14}/>}</button>
+        {visible.map(option => { const selected = selectedValues.includes(option); return <button type="button" key={option} className={selected ? 'selected' : ''} onClick={() => select(option)} title={option} role="option" aria-selected={selected}><span>{option}</span>{selected && <Check size={14}/>}</button> })}
         {!visible.length && <p>Ничего не найдено</p>}
       </div>
     </div>}
   </div>
+}
+
+function normalizeSavedFilters(saved) {
+  const counterparty = Array.isArray(saved.counterparty) ? saved.counterparty.filter(Boolean) : saved.counterparty ? [saved.counterparty] : []
+  return { ...emptyFilters, ...saved, counterparty }
+}
+
+function hasActiveFilters(filters) {
+  return Object.values(filters).some(value => Array.isArray(value) ? value.length > 0 : Boolean(value))
 }
 
 function RegistryRow({ item, refs, editable, isNew = false, selected, savingCells, onToggle, onCommit, onStartEdit, onFinishEdit, onDelete }) {

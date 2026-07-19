@@ -60,11 +60,23 @@ func buildFilters(r *http.Request, start int) (string, []any) {
 		clauses = append(clauses, fmt.Sprintf(sqlPart, start+len(args)-1))
 	}
 	for _, filter := range []struct{ param, column string }{
-		{"account_type", "account_type"}, {"legal_entity", "legal_entity"}, {"cost_category", "cost_category"}, {"priority", "priority"}, {"responsible", "responsible"}, {"status", "status"}, {"urgency", "urgency"}, {"counterparty", "counterparty"},
+		{"account_type", "account_type"}, {"legal_entity", "legal_entity"}, {"cost_category", "cost_category"}, {"priority", "priority"}, {"responsible", "responsible"}, {"status", "status"}, {"urgency", "urgency"},
 	} {
 		if value := strings.TrimSpace(query.Get(filter.param)); value != "" {
 			add(filter.column+"=$%d", value)
 		}
+	}
+	counterparties := []string{}
+	seenCounterparties := map[string]bool{}
+	for _, raw := range query["counterparty"] {
+		value := strings.TrimSpace(raw)
+		if value != "" && !seenCounterparties[value] {
+			counterparties = append(counterparties, value)
+			seenCounterparties[value] = true
+		}
+	}
+	if len(counterparties) > 0 {
+		add("counterparty=ANY($%d::text[])", counterparties)
 	}
 	if q := strings.TrimSpace(query.Get("q")); q != "" {
 		add(`concat_ws(' ',counterparty,document_number,comment,responsible,legal_entity,cost_category) ILIKE '%%'||$%d||'%%'`, q)

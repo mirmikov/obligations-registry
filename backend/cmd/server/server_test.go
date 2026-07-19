@@ -58,6 +58,18 @@ func TestBuildFiltersUsesBoundParameters(t *testing.T) {
 	}
 }
 
+func TestBuildFiltersSupportsMultipleCounterparties(t *testing.T) {
+	r := httptest.NewRequest("GET", "/?counterparty=Альфа&counterparty=Бета&counterparty=Альфа", nil)
+	where, args := buildFilters(r, 1)
+	if !strings.Contains(where, "counterparty=ANY($1::text[])") {
+		t.Fatalf("filter SQL %q does not use a text array", where)
+	}
+	values, ok := args[0].([]string)
+	if !ok || len(values) != 2 || values[0] != "Альфа" || values[1] != "Бета" {
+		t.Fatalf("counterparty args = %#v, want [Альфа Бета]", args[0])
+	}
+}
+
 func TestExcelDateParsing(t *testing.T) {
 	for input, expected := range map[string]string{"18.07.2026": "2026-07-18", "2026-07-18": "2026-07-18"} {
 		if actual := parseDate(input); actual != expected {
