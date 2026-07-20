@@ -37,12 +37,17 @@ CREATE TABLE IF NOT EXISTS obligations (
 );
 
 ALTER TABLE obligations ADD COLUMN IF NOT EXISTS source_note TEXT;
+ALTER TABLE obligations ADD COLUMN IF NOT EXISTS split_group_id TEXT;
+ALTER TABLE obligations ADD COLUMN IF NOT EXISTS split_parent_id BIGINT;
+ALTER TABLE obligations ADD COLUMN IF NOT EXISTS installment_number INTEGER;
+ALTER TABLE obligations ADD COLUMN IF NOT EXISTS installment_count INTEGER;
 
 CREATE INDEX IF NOT EXISTS obligations_status_idx ON obligations(status);
 CREATE INDEX IF NOT EXISTS obligations_planned_idx ON obligations(planned_payment_date);
 CREATE INDEX IF NOT EXISTS obligations_approval_idx ON obligations(approval_date);
 CREATE INDEX IF NOT EXISTS obligations_entity_idx ON obligations(legal_entity);
 CREATE INDEX IF NOT EXISTS obligations_counterparty_idx ON obligations(counterparty);
+CREATE INDEX IF NOT EXISTS obligations_split_group_idx ON obligations(split_group_id);
 
 CREATE TABLE IF NOT EXISTS reference_values (
   id BIGSERIAL PRIMARY KEY,

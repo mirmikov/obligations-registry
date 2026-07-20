@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, Download, FileUp, Filter, LocateFixed, Maximize2, Minimize2, Plus, RotateCcw, Search, Trash2, X } from 'lucide-react'
+import { CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, Download, FileUp, Filter, LocateFixed, Maximize2, Minimize2, Plus, RotateCcw, Scissors, Search, Trash2, X } from 'lucide-react'
 import { download, request } from './api'
 import { DateInput, money, PageHeader, roleLabel, shortDate } from './App'
 import usePresence from './usePresence'
@@ -7,7 +7,7 @@ import usePresence from './usePresence'
 const emptyFilters = { q: '', counterparty: [], account_type: '', legal_entity: '', cost_category: '', priority: '', responsible: '', status: '', urgency: '', entry_date: '', document_date: '', planned_payment_date: '', approval_date: '', actual_payment_date: '', planned_from: '', planned_to: '', overdue: '' }
 const dateFields = new Set(['entry_date', 'document_date', 'planned_payment_date', 'approval_date', 'actual_payment_date'])
 const fieldLabels = { counterparty: 'Контрагент', entry_date: 'Дата внесения', document_number: 'Документ', document_date: 'Дата документа', legal_entity: 'Юрлицо', cost_category: 'Статья затрат', amount: 'Сумма, ₽', deferment_days: 'Отсрочка, дней', planned_payment_date: 'Плановая оплата', approval_date: 'Дата утверждения', actual_payment_date: 'Фактическая оплата', status: 'Статус', urgency: 'Срочность', responsible: 'Ответственный', priority: 'Приоритет', account_type: 'Признак учёта', comment: 'Комментарий', source_note: 'Условия оплаты' }
-const registryColumnWidths = [46, 220, 130, 130, 180, 180, 135, 240, 120, 110, 145, 145, 145, 160, 135, 160, 120, 240, 240, 52]
+const registryColumnWidths = [46, 220, 130, 130, 180, 180, 135, 240, 120, 110, 145, 145, 145, 160, 135, 160, 120, 240, 240, 86]
 
 export default function Registry({ user, notify }) {
   const [data, setData] = useState({ items: [], total: 0, page: 1, page_size: 50 })
@@ -20,6 +20,7 @@ export default function Registry({ user, notify }) {
   const [savingCells, setSavingCells] = useState(new Set())
   const [selected, setSelected] = useState([])
   const [bulkOpen, setBulkOpen] = useState(false)
+  const [splitItem, setSplitItem] = useState(null)
   const [tableFullscreen, setTableFullscreen] = useState(false)
   const [viewReady, setViewReady] = useState(false)
   const importRef = useRef()
@@ -84,6 +85,7 @@ export default function Registry({ user, notify }) {
   }
   const totalPages = Math.max(1, Math.ceil(data.total / data.page_size))
   const allSelected = data.items.length > 0 && data.items.every(item => selected.includes(item.id))
+  const selectedItem = selected.length === 1 ? rowsRef.current.get(selected[0]) : null
   const toggleAll = () => setSelected(allSelected ? selected.filter(id => !data.items.some(i => i.id === id)) : [...new Set([...selected, ...data.items.map(i => i.id)])])
   const markSaving = (key, active) => setSavingCells(current => { const next = new Set(current); active ? next.add(key) : next.delete(key); return next })
   const startCellEdit = (item, field) => updateLocation({ mode: 'edit', record_id: item.id || 0, source_row: item.source_row || 0, field, field_label: fieldLabels[field] || field })
@@ -132,6 +134,13 @@ export default function Registry({ user, notify }) {
     finally { creatingRef.current = false; markSaving(`new:${field}`, false) }
   }
   const remove = async id => { if (!confirm('Удалить обязательство? Отменить это действие нельзя.')) return; try { await request(`/api/obligations/${id}`, { method: 'DELETE' }); notify('Запись удалена'); load() } catch (e) { notify(e.message, 'error') } }
+  const splitPayment = async (item, values) => {
+    try {
+      const result = await request(`/api/obligations/${item.id}/split`, { method: 'POST', body: JSON.stringify(values) })
+      notify(`Платёж разбит на ${result.installments.length} ${partWord(result.installments.length)} без изменения общей суммы`)
+      setSplitItem(null); setSelected([]); load()
+    } catch (error) { notify(error.message, 'error'); throw error }
+  }
   const importFile = async event => { const file = event.target.files?.[0]; if (!file) return; const body = new FormData(); body.append('file', file); try { const result = await request('/api/obligations/import.xlsx', { method: 'POST', body }); notify(`Импортировано строк: ${result.imported}`); load() } catch (e) { notify(e.message, 'error') } finally { event.target.value = '' } }
   const doSort = key => setSort(current => ({ key, order: current.key === key && current.order === 'asc' ? 'desc' : 'asc' }))
   return <div className={`page registry-page ${tableFullscreen ? 'is-table-fullscreen' : ''}`}>
@@ -145,7 +154,7 @@ export default function Registry({ user, notify }) {
     </section>
     <section className="table-card">
       {tableFullscreen && <button type="button" className="registry-fullscreen-exit" onClick={() => setTableFullscreen(false)} title="Вернуться к обычному виду" aria-label="Вернуться к обычному виду"><Minimize2 size={17}/><span>Обычный вид</span></button>}
-      {selected.length > 0 && <div className="selection-bar"><span><Check size={16}/>{selected.length} выбрано</span>{user.role !== 'viewer' && <button onClick={() => setBulkOpen(true)}>Изменить статус и даты</button>}<button onClick={() => setSelected([])}>Снять выбор</button></div>}
+      {selected.length > 0 && <div className="selection-bar"><span><Check size={16}/>{selected.length} выбрано</span>{user.role !== 'viewer' && selectedItem && canSplitPayment(selectedItem) && <button onClick={() => setSplitItem(selectedItem)}><Scissors size={15}/>Разбить платёж</button>}{user.role !== 'viewer' && <button onClick={() => setBulkOpen(true)}>Изменить статус и даты</button>}<button onClick={() => setSelected([])}>Снять выбор</button></div>}
       <div ref={tableWrapRef} className="registry-table-wrap" onScroll={rememberScroll}><table className="registry-table inline-registry"><colgroup>{registryColumnWidths.map((width, index) => <col key={index} style={{ width }}/>)}</colgroup><thead><tr><th className="check-col">{user.role !== 'viewer' ? <button type="button" className={`inline-add-row ${newRow ? 'active' : ''}`} onClick={addInlineRow} title={newRow ? 'Убрать новую строку' : 'Добавить строку'} aria-label={newRow ? 'Убрать новую строку' : 'Добавить строку'}><Plus size={16}/></button> : <input type="checkbox" checked={allSelected} onChange={toggleAll}/>}</th>
         <ColumnHead className="counterparty-head" label="Контрагент" field="counterparty" sort={sort} onSort={doSort} value={filters.counterparty} options={refs.counterparties} onFilter={value => setFilter('counterparty', value)} multiple/>
         <ColumnHead className="entry-date-head" label="Дата внесения" field="entry_date" sort={sort} onSort={doSort} dateValue={filters.entry_date} onDateFilter={value => setFilter('entry_date', value)}/>
@@ -163,12 +172,13 @@ export default function Registry({ user, notify }) {
         <ColumnHead label="Ответственный" value={filters.responsible} options={refs.responsibles} onFilter={value => setFilter('responsible', value)}/>
         <ColumnHead label="Приоритет" value={filters.priority} options={refs.priorities} onFilter={value => setFilter('priority', value)}/>
         <th>Комментарий</th><th>Условия оплаты</th><th className="action-col"/></tr></thead>
-      <tbody>{newRow && <RegistryRow item={newRow} refs={refs} editable isNew savingCells={savingCells} onCommit={commitNewCell} onStartEdit={startCellEdit} onFinishEdit={finishCellEdit} onDelete={() => setNewRow(null)}/>} {loading ? <SkeletonRows/> : data.items.length === 0 && !newRow ? <tr><td colSpan="20"><div className="empty-state"><Search size={27}/><strong>Ничего не найдено</strong><span>Измените или сбросьте фильтры</span></div></td></tr> : data.items.map(item => <RegistryRow key={item.id} item={item} refs={refs} editable={user.role !== 'viewer'} selected={selected.includes(item.id)} savingCells={savingCells} onToggle={() => setSelected(s => s.includes(item.id) ? s.filter(id => id !== item.id) : [...s, item.id])} onCommit={commitCell} onStartEdit={startCellEdit} onFinishEdit={finishCellEdit} onDelete={user.role === 'admin' ? () => remove(item.id) : null}/>)}</tbody></table></div>
+      <tbody>{newRow && <RegistryRow item={newRow} refs={refs} editable isNew savingCells={savingCells} onCommit={commitNewCell} onStartEdit={startCellEdit} onFinishEdit={finishCellEdit} onDelete={() => setNewRow(null)}/>} {loading ? <SkeletonRows/> : data.items.length === 0 && !newRow ? <tr><td colSpan="20"><div className="empty-state"><Search size={27}/><strong>Ничего не найдено</strong><span>Измените или сбросьте фильтры</span></div></td></tr> : data.items.map(item => <RegistryRow key={item.id} item={item} refs={refs} editable={user.role !== 'viewer'} selected={selected.includes(item.id)} savingCells={savingCells} onToggle={() => setSelected(s => s.includes(item.id) ? s.filter(id => id !== item.id) : [...s, item.id])} onCommit={commitCell} onStartEdit={startCellEdit} onFinishEdit={finishCellEdit} onSplit={user.role !== 'viewer' && canSplitPayment(item) ? () => setSplitItem(item) : null} onDelete={user.role === 'admin' ? () => remove(item.id) : null}/>)}</tbody></table></div>
       <footer className="table-footer"><span>Показано {data.items.length} из {data.total.toLocaleString('ru-RU')}</span><div><button disabled={page === 1} onClick={() => setPage(p => p - 1)}><ChevronLeft size={17}/></button><span>Страница <b>{page}</b> из {totalPages}</span><button disabled={page === totalPages} onClick={() => setPage(p => p + 1)}><ChevronRight size={17}/></button></div></footer>
     </section>
     {bulkOpen && (
       <BulkModal count={selected.length} refs={refs} onClose={() => setBulkOpen(false)} onSave={async values => { try { await request('/api/obligations/bulk', { method: 'POST', body: JSON.stringify({ ids: selected, ...values }) }); notify('Выбранные строки обновлены'); setBulkOpen(false); setSelected([]); load() } catch (e) { notify(e.message, 'error') } }}/>
     )}
+    {splitItem && <SplitPaymentModal item={splitItem} onClose={() => setSplitItem(null)} onSave={values => splitPayment(splitItem, values)}/>}
   </div>
 }
 
@@ -253,7 +263,7 @@ function hasActiveFilters(filters) {
   return Object.values(filters).some(value => Array.isArray(value) ? value.length > 0 : Boolean(value))
 }
 
-function RegistryRow({ item, refs, editable, isNew = false, selected, savingCells, onToggle, onCommit, onStartEdit, onFinishEdit, onDelete }) {
+function RegistryRow({ item, refs, editable, isNew = false, selected, savingCells, onToggle, onCommit, onStartEdit, onFinishEdit, onSplit, onDelete }) {
   const saving = field => savingCells.has(`${isNew ? 'new' : item.id}:${field}`)
   const cell = (field, props = {}) => <EditableCell item={item} field={field} label={fieldLabels[field]} editable={editable} saving={saving(field)} onCommit={onCommit} onStartEdit={onStartEdit} onFinishEdit={onFinishEdit} {...props}/>
   return <tr className={`${isNew ? 'inline-new-row' : rowTone(item)}`}>
@@ -265,7 +275,7 @@ function RegistryRow({ item, refs, editable, isNew = false, selected, savingCell
     {cell('document_number')}
     {cell('document_date', { type: 'date' })}
     {cell('cost_category', { options: refs.cost_categories, className: 'category-cell' })}
-    {cell('amount', { type: 'number', className: 'money-cell', render: value => value == null || value === '' ? '—' : money(value) })}
+    {cell('amount', { type: 'number', className: 'money-cell', render: value => value == null || value === '' ? '—' : <span className="installment-amount"><span>{money(value)}</span>{item.installment_count > 1 && <small>Платёж {item.installment_number} из {item.installment_count}</small>}</span> })}
     {cell('deferment_days', { type: 'number' })}
     {cell('planned_payment_date', { type: 'date', className: item.overdue ? 'date-overdue' : '' })}
     {cell('approval_date', { type: 'date' })}
@@ -276,7 +286,7 @@ function RegistryRow({ item, refs, editable, isNew = false, selected, savingCell
     {cell('priority', { options: refs.priorities })}
     {cell('comment', { className: 'comment-cell' })}
     {cell('source_note', { className: 'comment-cell' })}
-    <td className="action-col">{onDelete && !isNew && <div className="row-actions"><button className="danger-button" onClick={onDelete} title="Удалить"><Trash2 size={16}/></button></div>}</td>
+    <td className="action-col">{!isNew && (onSplit || onDelete) && <div className="row-actions">{onSplit && <button className="split-button" onClick={onSplit} title="Разбить платёж"><Scissors size={16}/></button>}{onDelete && <button className="danger-button" onClick={onDelete} title="Удалить"><Trash2 size={16}/></button>}</div>}</td>
   </tr>
 }
 
@@ -393,4 +403,83 @@ function presenceLocation(person) {
 
 function Field({ label, fieldKey, value, onChange, onFocus, wide, type, ...props }) { return <label className={`field ${wide ? 'wide' : ''}`}><span>{label}</span>{type === 'date' ? <DateInput value={value ?? ''} onChange={onChange} onFocus={() => onFocus?.(fieldKey, label)} {...props}/> : <input type={type} value={value ?? ''} onChange={e => onChange(e.target.value)} onFocus={() => onFocus?.(fieldKey, label)} {...props}/>}</label> }
 function SelectField({ label, fieldKey, value, options = [], onChange, onFocus, wide, editable }) { return <label className={`field ${wide ? 'wide' : ''}`}><span>{label}</span>{editable ? <><input list={`list-${label}`} value={value} onChange={e => onChange(e.target.value)} onFocus={() => onFocus?.(fieldKey, label)}/><datalist id={`list-${label}`}>{options.map(o => <option key={o.id ?? o.value} value={o.value}/>)}</datalist></> : <select value={value} onChange={e => onChange(e.target.value)} onFocus={() => onFocus?.(fieldKey, label)}><option value="">Не выбрано</option>{options.map(o => <option key={o.id ?? o.value} value={o.value}>{o.value}</option>)}</select>}</label> }
+
+function SplitPaymentModal({ item, onClose, onSave }) {
+  const [form, setForm] = useState({ mode: 'count', count: 3, payment_amount: '', start_date: item.planned_payment_date || todayISO(), period_unit: 'month', period_value: 1 })
+  const [saving, setSaving] = useState(false)
+  const preview = useMemo(() => buildSplitPreview(Number(item.amount), form), [item.amount, form])
+  const update = (key, value) => setForm(current => ({ ...current, [key]: value }))
+  const submit = async () => {
+    if (preview.error || saving) return
+    setSaving(true)
+    try {
+      await onSave({ ...form, count: Number(form.count), payment_amount: form.mode === 'amount' ? Number(form.payment_amount) : null, period_value: Number(form.period_value) })
+    } finally { setSaving(false) }
+  }
+  return <div className="modal-backdrop"><div className="modal split-payment-modal">
+    <div className="modal-head"><div><p className="eyebrow">График оплаты</p><h2>Разбить платёж</h2></div><button onClick={onClose} aria-label="Закрыть"><X/></button></div>
+    <div className="modal-body split-payment-body">
+      <div className="split-source-card"><div><span>Контрагент</span><strong>{item.counterparty || 'Не указан'}</strong><small>{item.document_number ? `Документ ${item.document_number}` : 'Без номера документа'}</small></div><div><span>Общая сумма</span><strong>{money(item.amount)}</strong><small>Сумма графика останется неизменной</small></div></div>
+      <div className="split-mode-tabs" role="tablist"><button type="button" className={form.mode === 'count' ? 'active' : ''} onClick={() => update('mode', 'count')}>Равными частями</button><button type="button" className={form.mode === 'amount' ? 'active' : ''} onClick={() => update('mode', 'amount')}>Заданная сумма</button></div>
+      <div className="split-settings-grid">
+        {form.mode === 'count' ? <label className="field"><span>Количество платежей</span><input type="number" min="2" max="60" value={form.count} onChange={event => update('count', event.target.value)}/></label> : <label className="field"><span>Сумма одного платежа, ₽</span><input type="number" min="0.01" step="0.01" value={form.payment_amount} onChange={event => update('payment_amount', event.target.value)} placeholder="Например, 50 000"/></label>}
+        <label className="field"><span>Дата первого платежа</span><DateInput value={form.start_date} onChange={value => update('start_date', value)} aria-label="Дата первого платежа"/></label>
+        <label className="field"><span>Повторять каждые</span><input type="number" min="1" max="365" value={form.period_value} onChange={event => update('period_value', event.target.value)}/></label>
+        <label className="field"><span>Период</span><select value={form.period_unit} onChange={event => update('period_unit', event.target.value)}><option value="month">Месяц</option><option value="week">Неделя</option><option value="day">День</option></select></label>
+      </div>
+      {preview.error ? <div className="split-error">{preview.error}</div> : <div className="split-preview">
+        <div className="split-preview-head"><div><strong>Предварительный график</strong><span>{preview.items.length} {paymentWord(preview.items.length)}</span></div><div><span>Итого</span><strong>{money(preview.total)}</strong></div></div>
+        <div className="split-preview-scroll"><table><thead><tr><th>№</th><th>Плановая дата</th><th>Сумма</th></tr></thead><tbody>{preview.items.map(part => <tr key={part.number}><td>{part.number}</td><td>{shortDate(part.date)}</td><td>{money(part.amount)}</td></tr>)}</tbody></table></div>
+        {preview.hasRemainder && <p>Последний платёж скорректирован на остаток, поэтому общая сумма совпадает до копейки.</p>}
+      </div>}
+    </div>
+    <div className="modal-footer"><button className="secondary" onClick={onClose} disabled={saving}>Отмена</button><button className="primary" onClick={submit} disabled={Boolean(preview.error) || saving}>{saving ? 'Создаём график…' : `Разбить на ${preview.items.length || 0} платежа`}</button></div>
+  </div></div>
+}
+
+function canSplitPayment(item) {
+  return Number(item?.amount) > 0 && Number(item?.installment_count || 0) <= 1 && !item?.split_group_id && !item?.actual_payment_date && !['Оплачено', 'Отменено'].includes(item?.status)
+}
+
+function buildSplitPreview(amount, form) {
+  const totalCents = Math.round(Number(amount) * 100)
+  const interval = Number(form.period_value)
+  if (!Number.isFinite(totalCents) || totalCents <= 0) return { error: 'У платежа должна быть положительная сумма.', items: [], total: 0 }
+  if (!form.start_date || !/^\d{4}-\d{2}-\d{2}$/.test(form.start_date)) return { error: 'Выберите дату первого платежа.', items: [], total: 0 }
+  if (!Number.isInteger(interval) || interval < 1 || interval > 365) return { error: 'Период должен быть целым числом от 1 до 365.', items: [], total: 0 }
+  let amounts = []
+  if (form.mode === 'count') {
+    const count = Number(form.count)
+    if (!Number.isInteger(count) || count < 2 || count > 60) return { error: 'Количество платежей должно быть от 2 до 60.', items: [], total: 0 }
+    const base = Math.floor(totalCents / count)
+    if (base < 1) return { error: 'Сумма слишком мала для выбранного количества платежей.', items: [], total: 0 }
+    amounts = Array.from({ length: count }, (_, index) => index === count - 1 ? totalCents - base * (count - 1) : base)
+  } else {
+    const paymentCents = Math.round(Number(form.payment_amount) * 100)
+    if (!Number.isFinite(paymentCents) || paymentCents < 1 || paymentCents >= totalCents) return { error: 'Сумма части должна быть больше нуля и меньше общей суммы.', items: [], total: 0 }
+    const count = Math.ceil(totalCents / paymentCents)
+    if (count > 60) return { error: 'Получается больше 60 платежей — увеличьте сумму части.', items: [], total: 0 }
+    let remainder = totalCents
+    while (remainder > 0) { const part = Math.min(paymentCents, remainder); amounts.push(part); remainder -= part }
+  }
+  const items = amounts.map((cents, index) => ({ number: index + 1, date: splitDate(form.start_date, index, form.period_unit, interval), amount: cents / 100 }))
+  return { items, total: amounts.reduce((sum, cents) => sum + cents, 0) / 100, hasRemainder: amounts.length > 1 && amounts.at(-1) !== amounts[0], error: '' }
+}
+
+function splitDate(startValue, index, unit, interval) {
+  const [year, month, day] = startValue.split('-').map(Number)
+  const step = index * interval
+  if (unit === 'month') {
+    const monthStart = new Date(Date.UTC(year, month - 1 + step, 1))
+    const lastDay = new Date(Date.UTC(monthStart.getUTCFullYear(), monthStart.getUTCMonth() + 1, 0)).getUTCDate()
+    return isoDate(new Date(Date.UTC(monthStart.getUTCFullYear(), monthStart.getUTCMonth(), Math.min(day, lastDay))))
+  }
+  const date = new Date(Date.UTC(year, month - 1, day))
+  date.setUTCDate(date.getUTCDate() + step * (unit === 'week' ? 7 : 1))
+  return isoDate(date)
+}
+
+function isoDate(date) { return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-${String(date.getUTCDate()).padStart(2, '0')}` }
+function paymentWord(value) { const lastTwo = value % 100; const last = value % 10; return lastTwo >= 11 && lastTwo <= 14 ? 'платежей' : last === 1 ? 'платёж' : last >= 2 && last <= 4 ? 'платежа' : 'платежей' }
+function partWord(value) { const lastTwo = value % 100; const last = value % 10; return lastTwo >= 11 && lastTwo <= 14 ? 'частей' : last === 1 ? 'часть' : last >= 2 && last <= 4 ? 'части' : 'частей' }
 function BulkModal({ count, refs, onClose, onSave }) { const [form,setForm]=useState({status:'',approval_date:'',actual_payment_date:''});return <div className="modal-backdrop"><div className="modal small-modal"><div className="modal-head"><div><p className="eyebrow">Массовое действие</p><h2>Изменить {count} строк</h2></div><button onClick={onClose}><X/></button></div><div className="modal-body stacked-fields"><SelectField label="Новый статус" value={form.status} options={refs.statuses} onChange={v=>setForm({...form,status:v})}/><Field label="Дата утверждения" type="date" value={form.approval_date} onChange={v=>setForm({...form,approval_date:v})}/><Field label="Фактическая дата оплаты" type="date" value={form.actual_payment_date} onChange={v=>setForm({...form,actual_payment_date:v})}/></div><div className="modal-footer"><button className="secondary" onClick={onClose}>Отмена</button><button className="primary" onClick={()=>onSave(form)}>Применить</button></div></div></div> }

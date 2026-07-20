@@ -65,6 +65,7 @@ func main() {
 	mux.Handle("PATCH /api/obligations/{id}", a.authorize(a.requireRole("admin", "editor")(http.HandlerFunc(a.updateObligation))))
 	mux.Handle("DELETE /api/obligations/{id}", a.authorize(a.requireRole("admin")(http.HandlerFunc(a.deleteObligation))))
 	mux.Handle("POST /api/obligations/bulk", a.authorize(a.requireRole("admin", "editor")(http.HandlerFunc(a.bulkUpdate))))
+	mux.Handle("POST /api/obligations/{id}/split", a.authorize(a.requireRole("admin", "editor")(http.HandlerFunc(a.splitObligation))))
 	mux.Handle("GET /api/obligations/export.xlsx", a.authorize(http.HandlerFunc(a.exportXLSX)))
 	mux.Handle("POST /api/obligations/import.xlsx", a.authorize(a.requireRole("admin")(http.HandlerFunc(a.importXLSX))))
 	mux.Handle("GET /api/references", a.authorize(http.HandlerFunc(a.listReferences)))

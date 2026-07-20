@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"net/http/httptest"
 	"strconv"
 	"strings"
@@ -109,5 +110,56 @@ func TestReferenceKindWhitelist(t *testing.T) {
 	}
 	if normalizeReferenceKind("anything'); DROP TABLE users; --") != "" {
 		t.Fatal("unknown reference kind accepted")
+	}
+}
+
+func TestBuildPaymentPlanKeepsExactTotalAndMonthlyAnchor(t *testing.T) {
+	start := time.Date(2027, time.January, 31, 0, 0, 0, 0, time.UTC)
+	plan, err := buildPaymentPlan(10000, start, paymentSplitInput{Mode: "count", Count: 3, PeriodUnit: "month", PeriodValue: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantCents := []int64{3333, 3333, 3334}
+	wantDates := []string{"2027-01-31", "2027-02-28", "2027-03-31"}
+	var total int64
+	for index, installment := range plan {
+		if installment.cents != wantCents[index] || installment.Date != wantDates[index] {
+			t.Fatalf("installment %d = %#v, want %d cents on %s", index+1, installment, wantCents[index], wantDates[index])
+		}
+		total += installment.cents
+	}
+	if total != 10000 {
+		t.Fatalf("plan total = %d cents, want 10000", total)
+	}
+}
+
+func TestBuildPaymentPlanByFixedAmountUsesRemainder(t *testing.T) {
+	payment := json.Number("30.00")
+	plan, err := buildPaymentPlan(10000, time.Date(2026, time.July, 20, 0, 0, 0, 0, time.UTC), paymentSplitInput{Mode: "amount", PaymentAmount: &payment, PeriodUnit: "week", PeriodValue: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantCents := []int64{3000, 3000, 3000, 1000}
+	wantDates := []string{"2026-07-20", "2026-08-03", "2026-08-17", "2026-08-31"}
+	if len(plan) != len(wantCents) {
+		t.Fatalf("plan length = %d, want %d", len(plan), len(wantCents))
+	}
+	for index, installment := range plan {
+		if installment.cents != wantCents[index] || installment.Date != wantDates[index] {
+			t.Fatalf("installment %d = %#v, want %d cents on %s", index+1, installment, wantCents[index], wantDates[index])
+		}
+	}
+}
+
+func TestMoneyTextToCentsDoesNotLoseLargeAmountKopecks(t *testing.T) {
+	cents, err := moneyTextToCents("9999999999999999.99")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cents != 999999999999999999 {
+		t.Fatalf("cents = %d, want 999999999999999999", cents)
+	}
+	if _, err := moneyTextToCents("10.001"); err == nil {
+		t.Fatal("amount with fractions of a kopeck must be rejected")
 	}
 }

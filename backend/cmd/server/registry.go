@@ -35,19 +35,23 @@ type obligationInput struct {
 type obligation struct {
 	ID int64 `json:"id"`
 	obligationInput
-	CreatedAt string `json:"created_at"`
-	UpdatedAt string `json:"updated_at"`
-	Overdue   bool   `json:"overdue"`
-	DueSoon   bool   `json:"due_soon"`
+	CreatedAt         string `json:"created_at"`
+	UpdatedAt         string `json:"updated_at"`
+	Overdue           bool   `json:"overdue"`
+	DueSoon           bool   `json:"due_soon"`
+	SplitGroupID      string `json:"split_group_id"`
+	SplitParentID     *int64 `json:"split_parent_id"`
+	InstallmentNumber int    `json:"installment_number"`
+	InstallmentCount  int    `json:"installment_count"`
 }
 
-const obligationColumns = `id,COALESCE(source_row,0),COALESCE(account_type,''),COALESCE(to_char(entry_date,'YYYY-MM-DD'),''),COALESCE(counterparty,''),COALESCE(legal_entity,''),COALESCE(cost_category,''),COALESCE(priority,''),COALESCE(responsible,''),COALESCE(document_number,''),deferment_days,COALESCE(to_char(document_date,'YYYY-MM-DD'),''),amount::float8,COALESCE(to_char(planned_payment_date,'YYYY-MM-DD'),''),COALESCE(to_char(approval_date,'YYYY-MM-DD'),''),COALESCE(to_char(actual_payment_date,'YYYY-MM-DD'),''),COALESCE(status,''),COALESCE(urgency,''),COALESCE(comment,''),COALESCE(source_note,''),to_char(created_at,'YYYY-MM-DD HH24:MI'),to_char(updated_at,'YYYY-MM-DD HH24:MI'),COALESCE(planned_payment_date<CURRENT_DATE AND COALESCE(status,'') NOT IN ('Оплачено','Отменено'),false),COALESCE(planned_payment_date BETWEEN CURRENT_DATE AND CURRENT_DATE+3 AND COALESCE(status,'') NOT IN ('Оплачено','Отменено'),false)`
+const obligationColumns = `id,COALESCE(source_row,0),COALESCE(account_type,''),COALESCE(to_char(entry_date,'YYYY-MM-DD'),''),COALESCE(counterparty,''),COALESCE(legal_entity,''),COALESCE(cost_category,''),COALESCE(priority,''),COALESCE(responsible,''),COALESCE(document_number,''),deferment_days,COALESCE(to_char(document_date,'YYYY-MM-DD'),''),amount::float8,COALESCE(to_char(planned_payment_date,'YYYY-MM-DD'),''),COALESCE(to_char(approval_date,'YYYY-MM-DD'),''),COALESCE(to_char(actual_payment_date,'YYYY-MM-DD'),''),COALESCE(status,''),COALESCE(urgency,''),COALESCE(comment,''),COALESCE(source_note,''),to_char(created_at,'YYYY-MM-DD HH24:MI'),to_char(updated_at,'YYYY-MM-DD HH24:MI'),COALESCE(planned_payment_date<CURRENT_DATE AND COALESCE(status,'') NOT IN ('Оплачено','Отменено'),false),COALESCE(planned_payment_date BETWEEN CURRENT_DATE AND CURRENT_DATE+3 AND COALESCE(status,'') NOT IN ('Оплачено','Отменено'),false),COALESCE(split_group_id,''),split_parent_id,COALESCE(installment_number,0),COALESCE(installment_count,0)`
 
 type scanner interface{ Scan(...any) error }
 
 func scanObligation(row scanner) (obligation, error) {
 	var item obligation
-	err := row.Scan(&item.ID, &item.SourceRow, &item.AccountType, &item.EntryDate, &item.Counterparty, &item.LegalEntity, &item.CostCategory, &item.Priority, &item.Responsible, &item.DocumentNumber, &item.DefermentDays, &item.DocumentDate, &item.Amount, &item.PlannedPaymentDate, &item.ApprovalDate, &item.ActualPaymentDate, &item.Status, &item.Urgency, &item.Comment, &item.SourceNote, &item.CreatedAt, &item.UpdatedAt, &item.Overdue, &item.DueSoon)
+	err := row.Scan(&item.ID, &item.SourceRow, &item.AccountType, &item.EntryDate, &item.Counterparty, &item.LegalEntity, &item.CostCategory, &item.Priority, &item.Responsible, &item.DocumentNumber, &item.DefermentDays, &item.DocumentDate, &item.Amount, &item.PlannedPaymentDate, &item.ApprovalDate, &item.ActualPaymentDate, &item.Status, &item.Urgency, &item.Comment, &item.SourceNote, &item.CreatedAt, &item.UpdatedAt, &item.Overdue, &item.DueSoon, &item.SplitGroupID, &item.SplitParentID, &item.InstallmentNumber, &item.InstallmentCount)
 	return item, err
 }
 
