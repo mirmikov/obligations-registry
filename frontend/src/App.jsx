@@ -85,14 +85,14 @@ export default function App() {
 }
 
 function Login({ onLogin }) {
-  const [email, setEmail] = useState('admin@registry.local')
-  const [password, setPassword] = useState('Admin123!')
+  const [login, setLogin] = useState('')
+  const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const submit = async event => {
     event.preventDefault(); setError(''); setLoading(true)
     try {
-      const result = await request('/api/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) })
+      const result = await request('/api/auth/login', { method: 'POST', body: JSON.stringify({ email: login, password }) })
       localStorage.setItem('registry_token', result.token)
       const workspace = await request('/api/workspace-state').catch(() => ({}))
       onLogin(result.user, workspace)
@@ -101,7 +101,7 @@ function Login({ onLogin }) {
   }
   return <div className="login-page">
     <div className="login-visual"><div className="login-badge"><ReceiptText size={25}/><span>ФинРеестр</span></div><div className="login-copy"><p>ЕДИНЫЙ РЕЕСТР</p><h1>Обязательства<br/>под контролем.</h1><span>Фильтры не сбрасываются. Справочники работают. Каждое изменение сохраняется в журнале.</span></div><div className="visual-card"><span>Всегда актуально</span><strong>Одна версия данных для всей команды</strong><div><i/><i/><i/><i/><i/></div></div></div>
-    <div className="login-form-wrap"><form onSubmit={submit}><div className="form-logo"><div className="brand-mark"><ReceiptText size={22}/></div></div><p className="eyebrow">Добро пожаловать</p><h2>Войдите в реестр</h2><span className="muted">Используйте рабочую учётную запись</span><label>Электронная почта<input type="email" value={email} onChange={e => setEmail(e.target.value)} autoFocus/></label><label>Пароль<input type="password" value={password} onChange={e => setPassword(e.target.value)}/></label>{error && <div className="form-error">{error}</div>}<button className="primary wide" disabled={loading}>{loading ? 'Входим…' : 'Войти'}</button><div className="demo-hint"><strong>Демо-доступ</strong><span>admin@registry.local · Admin123!</span></div></form></div>
+    <div className="login-form-wrap"><form onSubmit={submit}><div className="form-logo"><div className="brand-mark"><ReceiptText size={22}/></div></div><p className="eyebrow">Добро пожаловать</p><h2>Войдите в реестр</h2><span className="muted">Используйте рабочую учётную запись</span><label>Логин<input type="text" value={login} onChange={e => setLogin(e.target.value)} autoComplete="username" autoFocus required/></label><label>Пароль<input type="password" value={password} onChange={e => setPassword(e.target.value)} autoComplete="current-password" required/></label>{error && <div className="form-error">{error}</div>}<button className="primary wide" disabled={loading}>{loading ? 'Входим…' : 'Войти'}</button></form></div>
   </div>
 }
 

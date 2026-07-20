@@ -71,9 +71,7 @@ func (a *app) migrateAndSeed(ctx context.Context) error {
 
 func (a *app) seedUsers(ctx context.Context) error {
 	users := []struct{ name, email, password, role string }{
-		{"Администратор", getenv("ADMIN_EMAIL", "admin@registry.local"), getenv("ADMIN_PASSWORD", "Admin123!"), "admin"},
-		{"Редактор", getenv("EDITOR_EMAIL", "editor@registry.local"), getenv("EDITOR_PASSWORD", "Editor123!"), "editor"},
-		{"Зритель", getenv("VIEWER_EMAIL", "viewer@registry.local"), getenv("VIEWER_PASSWORD", "Viewer123!"), "viewer"},
+		{"Администратор", getenv("ADMIN_EMAIL", "admin"), getenv("ADMIN_PASSWORD", "Qazxsw21"), "admin"},
 	}
 	for _, user := range users {
 		hash, err := bcrypt.GenerateFromPassword([]byte(user.password), bcrypt.DefaultCost)
