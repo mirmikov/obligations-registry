@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { BarChart3, BookOpen, ChevronLeft, ChevronRight, CircleDollarSign, FileClock, LogOut, Menu, ReceiptText, Settings, Users } from 'lucide-react'
+import { BarChart3, BookOpen, ChevronDown, ChevronLeft, ChevronRight, CircleDollarSign, FileClock, Landmark, LogOut, Menu, ReceiptText, Settings, Users } from 'lucide-react'
 import { request } from './api'
 import Dashboard from './Dashboard'
 import Registry from './Registry'
@@ -8,10 +8,11 @@ import Payments from './Payments'
 import References from './References'
 import UsersPage from './UsersPage'
 import Audit from './Audit'
+import CreditsLeasing from './CreditsLeasing'
 
 const nav = [
   { id: 'dashboard', label: 'Сводка', icon: BarChart3 },
-  { id: 'registry', label: 'Реестр', icon: BookOpen },
+  { id: 'registry', label: 'Реестр', icon: BookOpen, children: [{ id: 'credits-leasing', label: 'Кредиты и лизинги', icon: Landmark }] },
   { id: 'payments', label: 'К оплате', icon: CircleDollarSign },
   { id: 'references', label: 'Справочники', icon: Settings, admin: true },
   { id: 'users', label: 'Пользователи', icon: Users, admin: true },
@@ -25,10 +26,12 @@ export default function App() {
   const [collapsed, setCollapsed] = useState(false)
   const [toast, setToast] = useState(null)
   const [workspaceReady, setWorkspaceReady] = useState(false)
+  const [registryOpen, setRegistryOpen] = useState(false)
 
   const enterWorkspace = (nextUser, state = {}) => {
     setUser(nextUser)
     setPage(isAllowedPage(state.page, nextUser) ? state.page : 'dashboard')
+    setRegistryOpen(state.page === 'credits-leasing')
     setCollapsed(Boolean(state.sidebar_collapsed))
     setWorkspaceReady(true)
   }
@@ -60,6 +63,7 @@ export default function App() {
   const pages = {
     dashboard: <Dashboard notify={notify} />,
     registry: <Registry user={user} notify={notify} />,
+    'credits-leasing': <CreditsLeasing notify={notify} />,
     payments: <Payments user={user} notify={notify} />,
     references: <References notify={notify} />,
     users: <UsersPage notify={notify} />,
@@ -69,7 +73,7 @@ export default function App() {
   return <div className={`app-shell ${collapsed ? 'is-collapsed' : ''}`}>
     <aside className="sidebar">
       <div className="brand"><div className="brand-mark"><ReceiptText size={23}/></div><div><strong>ФинРеестр</strong><span>обязательства</span></div></div>
-      <nav>{nav.filter(item => !item.admin || user.role === 'admin').map(item => <button key={item.id} className={page === item.id ? 'active' : ''} onClick={() => setPage(item.id)} title={item.label}><item.icon size={19}/><span>{item.label}</span>{item.id === 'payments' && <i/>}</button>)}</nav>
+      <nav>{nav.filter(item => !item.admin || user.role === 'admin').map(item => item.children ? <div className={`nav-group ${registryOpen ? 'is-open' : ''}`} key={item.id}><div className="nav-parent"><button className={page === item.id ? 'active' : ''} onClick={() => setPage(item.id)} title={item.label}><item.icon size={19}/><span>{item.label}</span></button><button type="button" className="nav-expand" onClick={() => setRegistryOpen(value => !value)} title={registryOpen ? 'Свернуть раздел' : 'Развернуть раздел'} aria-label={registryOpen ? 'Свернуть раздел Реестр' : 'Развернуть раздел Реестр'} aria-expanded={registryOpen}><ChevronDown size={16}/></button></div>{registryOpen && <div className="nav-children">{item.children.map(child => <button key={child.id} className={page === child.id ? 'active' : ''} onClick={() => setPage(child.id)} title={child.label}><child.icon size={17}/><span>{child.label}</span></button>)}</div>}</div> : <button key={item.id} className={page === item.id ? 'active' : ''} onClick={() => setPage(item.id)} title={item.label}><item.icon size={19}/><span>{item.label}</span>{item.id === 'payments' && <i/>}</button>)}</nav>
       <div className="sidebar-bottom">
         <button className="collapse" onClick={() => setCollapsed(v => !v)}>{collapsed ? <ChevronRight size={18}/> : <ChevronLeft size={18}/>}<span>Свернуть</span></button>
         <div className="profile"><div className="avatar">{user.name.slice(0, 1)}</div><div><strong>{user.name}</strong><span>{roleLabel(user.role)}</span></div><button onClick={logout} title="Выйти"><LogOut size={17}/></button></div>
@@ -102,7 +106,7 @@ function Login({ onLogin }) {
 }
 
 export function PageHeader({ eyebrow, title, subtitle, actions }) { return <header className="page-header"><div><p className="eyebrow">{eyebrow}</p><h1>{title}</h1>{subtitle && <span>{subtitle}</span>}</div>{actions && <div className="header-actions">{actions}</div>}</header> }
-function isAllowedPage(page, user) { return nav.some(item => item.id === page && (!item.admin || user?.role === 'admin')) }
+function isAllowedPage(page, user) { return nav.some(item => (item.id === page || item.children?.some(child => child.id === page)) && (!item.admin || user?.role === 'admin')) }
 export const roleLabel = role => ({ admin: 'Администратор', editor: 'Редактор', viewer: 'Зритель' }[role] || role)
 export const money = value => new Intl.NumberFormat('ru-RU', {
   style: 'currency',

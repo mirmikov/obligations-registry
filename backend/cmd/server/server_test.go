@@ -78,6 +78,13 @@ func TestNormalizeWorkspaceStateRejectsUnknownPage(t *testing.T) {
 	}
 }
 
+func TestNormalizeWorkspaceStateAcceptsCreditsLeasingReport(t *testing.T) {
+	value := normalizeWorkspaceState(workspaceState{Page: "credits-leasing"})
+	if value.Page != "credits-leasing" {
+		t.Fatalf("workspace state = %#v", value)
+	}
+}
+
 func TestExcelDateParsing(t *testing.T) {
 	for input, expected := range map[string]string{"18.07.2026": "2026-07-18", "2026-07-18": "2026-07-18"} {
 		if actual := parseDate(input); actual != expected {
