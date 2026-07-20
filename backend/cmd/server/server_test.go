@@ -113,6 +113,18 @@ func TestReferenceKindWhitelist(t *testing.T) {
 	}
 }
 
+func TestObligationUpdateAcceptsReadOnlySplitMetadata(t *testing.T) {
+	req := httptest.NewRequest("PATCH", "/api/obligations/42", strings.NewReader(`{"status":"К оплате","split_group_id":"split-test","split_parent_id":12,"installment_number":2,"installment_count":3}`))
+	recorder := httptest.NewRecorder()
+	var payload obligationUpdateInput
+	if !decodeJSON(recorder, req, &payload) {
+		t.Fatalf("split metadata was rejected: status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if payload.Status != "К оплате" || payload.SplitGroupID != "split-test" || payload.InstallmentNumber != 2 || payload.InstallmentCount != 3 {
+		t.Fatalf("decoded payload = %#v", payload)
+	}
+}
+
 func TestBuildPaymentPlanKeepsExactTotalAndMonthlyAnchor(t *testing.T) {
 	start := time.Date(2027, time.January, 31, 0, 0, 0, 0, time.UTC)
 	plan, err := buildPaymentPlan(10000, start, paymentSplitInput{Mode: "count", Count: 3, PeriodUnit: "month", PeriodValue: 1})

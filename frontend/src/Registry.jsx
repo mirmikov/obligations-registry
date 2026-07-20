@@ -343,7 +343,11 @@ function Urgency({ value }) { return value ? <span className={`urgency urgency-$
 function slug(value = '') { return ({ 'Оплачено':'paid','К оплате':'to-pay','Зарегистрирован':'registered','Частично оплачено':'partial','Отменено':'cancelled','Критическая':'critical','Срочная':'urgent','Обычная':'normal' }[value] || 'empty') }
 function rowTone(item) { return item.overdue ? 'row-overdue' : item.due_soon ? 'row-soon' : item.status === 'К оплате' ? 'row-to-pay' : '' }
 function SkeletonRows() { return <>{Array.from({ length: 8 }).map((_, i) => <tr className="skeleton-row" key={i}>{Array.from({ length: 20 }).map((__, j) => <td key={j}><i/></td>)}</tr>)}</> }
-function strip(values) { const result = { ...values }; delete result.id; delete result.created_at; delete result.updated_at; delete result.overdue; delete result.due_soon; return result }
+function strip(values) {
+  const result = { ...values }
+  for (const field of ['id', 'created_at', 'updated_at', 'overdue', 'due_soon', 'split_group_id', 'split_parent_id', 'installment_number', 'installment_count']) delete result[field]
+  return result
+}
 function blankObligation() { return { account_type:'',entry_date:todayISO(),counterparty:'',legal_entity:'',cost_category:'',priority:'',responsible:'',document_number:'',deferment_days:null,document_date:'',amount:null,planned_payment_date:'',approval_date:'',actual_payment_date:'',status:'Зарегистрирован',urgency:'',comment:'',source_note:'' } }
 function todayISO() { const date = new Date(); const offset = date.getTimezoneOffset() * 60000; return new Date(date.getTime() - offset).toISOString().slice(0, 10) }
 function sameCellValue(left, right) { return (left ?? '') === (right ?? '') }

@@ -32,6 +32,17 @@ type obligationInput struct {
 	SourceNote         string   `json:"source_note"`
 }
 
+// obligationUpdateInput accepts read-only schedule metadata returned by the API.
+// Older open frontend tabs can send it back while editing a regular cell; the
+// values are intentionally ignored so clients cannot alter schedule links.
+type obligationUpdateInput struct {
+	obligationInput
+	SplitGroupID      string `json:"split_group_id"`
+	SplitParentID     *int64 `json:"split_parent_id"`
+	InstallmentNumber int    `json:"installment_number"`
+	InstallmentCount  int    `json:"installment_count"`
+}
+
 type obligation struct {
 	ID int64 `json:"id"`
 	obligationInput
@@ -162,10 +173,11 @@ func (a *app) updateObligation(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, "Некорректный ID")
 		return
 	}
-	var input obligationInput
-	if !decodeJSON(w, r, &input) {
+	var payload obligationUpdateInput
+	if !decodeJSON(w, r, &payload) {
 		return
 	}
+	input := payload.obligationInput
 	input.normalize()
 	user := currentUser(r)
 	result, err := a.db.ExecContext(r.Context(), `UPDATE obligations SET account_type=$1,entry_date=NULLIF($2,'')::date,counterparty=$3,legal_entity=$4,cost_category=$5,priority=$6,responsible=$7,document_number=$8,deferment_days=$9,document_date=NULLIF($10,'')::date,amount=$11,planned_payment_date=NULLIF($12,'')::date,approval_date=NULLIF($13,'')::date,actual_payment_date=NULLIF($14,'')::date,status=$15,urgency=$16,comment=$17,source_note=$18,updated_by=$19,updated_at=now() WHERE id=$20`, nullable(input.AccountType), nullable(input.EntryDate), nullable(input.Counterparty), nullable(input.LegalEntity), nullable(input.CostCategory), nullable(input.Priority), nullable(input.Responsible), nullable(input.DocumentNumber), input.DefermentDays, nullable(input.DocumentDate), input.Amount, nullable(input.PlannedPaymentDate), nullable(input.ApprovalDate), nullable(input.ActualPaymentDate), nullable(input.Status), nullable(input.Urgency), nullable(input.Comment), nullable(input.SourceNote), user.ID, id)
