@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Check, ChevronLeft, MessageCircle, Plus, Search, Send, UserPlus, Users, X } from 'lucide-react'
+import { BellRing, Check, ChevronLeft, MessageCircle, Plus, Search, Send, UserPlus, Users, X } from 'lucide-react'
 import { request } from './api'
 import { roleLabel } from './App'
 
-export default function Chat({ user, notify, compact = false }) {
+export default function Chat({ user, notify, compact = false, notificationPermission, onEnableNotifications }) {
   const [contacts, setContacts] = useState([])
   const [conversations, setConversations] = useState([])
   const [selectedID, setSelectedID] = useState(null)
@@ -68,7 +68,7 @@ export default function Chat({ user, notify, compact = false }) {
 
   return <div className={`chat-page ${compact ? 'chat-page-compact' : ''} ${selected ? 'has-room' : ''}`}>
     <aside className="chat-list-panel">
-      <header><div><p>Команда</p><h1>Сообщения</h1></div><button type="button" onClick={() => setCreating(true)} aria-label="Начать новый чат" title="Начать новый чат"><Plus size={19}/></button></header>
+      <header><div><p>Команда</p><h1>Сообщения</h1></div><div className="chat-list-actions">{notificationPermission === 'default' && <button type="button" className="chat-enable-bell" onClick={onEnableNotifications} aria-label="Включить уведомления" title="Включить уведомления"><BellRing size={17}/></button>}<button type="button" onClick={() => setCreating(true)} aria-label="Начать новый чат" title="Начать новый чат"><Plus size={19}/></button></div></header>
       <label className="chat-search"><Search size={16}/><input value={search} onChange={event => setSearch(event.target.value)} placeholder="Поиск диалогов"/></label>
       <div className="chat-conversations">
         {filtered.map(item => <button type="button" key={item.id} className={item.id === selectedID ? 'active' : ''} onClick={() => setSelectedID(item.id)}>

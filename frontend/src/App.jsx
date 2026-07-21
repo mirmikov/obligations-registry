@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { BarChart3, BookOpen, ChevronDown, ChevronLeft, ChevronRight, CircleDollarSign, FileClock, Landmark, LogOut, Maximize2, Menu, MessageCircle, Minus, ReceiptText, Settings, Users } from 'lucide-react'
+import { BarChart3, BellRing, BookOpen, ChevronDown, ChevronLeft, ChevronRight, CircleDollarSign, FileClock, Landmark, LogOut, Maximize2, Menu, MessageCircle, Minus, ReceiptText, Settings, Users } from 'lucide-react'
 import { request } from './api'
 import Dashboard from './Dashboard'
 import Registry from './Registry'
@@ -10,6 +10,7 @@ import UsersPage from './UsersPage'
 import Audit from './Audit'
 import CreditsLeasing from './CreditsLeasing'
 import Chat from './Chat'
+import useChatNotifications from './useChatNotifications'
 
 const nav = [
   { id: 'dashboard', label: 'Сводка', icon: BarChart3 },
@@ -58,6 +59,7 @@ export default function App() {
   const notify = (message, type = 'success') => {
     setToast({ message, type }); window.setTimeout(() => setToast(null), 3500)
   }
+  const chatNotifications = useChatNotifications({ user, page, onOpenChat: () => setPage('chat'), notify })
   const logout = () => { localStorage.removeItem('registry_token'); setUser(null); setWorkspaceReady(false) }
   if (checking) return <div className="splash"><ReceiptText size={42}/><span>Загружаем реестр…</span></div>
   if (!user) return <Login onLogin={enterWorkspace} />
@@ -67,7 +69,7 @@ export default function App() {
     registry: <Registry user={user} notify={notify} />,
     'credits-leasing': <CreditsLeasing notify={notify} />,
     payments: <Payments user={user} notify={notify} />,
-    chat: <Chat user={user} notify={notify} />,
+    chat: <Chat user={user} notify={notify} notificationPermission={chatNotifications.permission} onEnableNotifications={chatNotifications.requestPermission} />,
     references: <References notify={notify} />,
     users: <UsersPage notify={notify} />,
     audit: <Audit notify={notify} />,
@@ -83,18 +85,18 @@ export default function App() {
       </div>
     </aside>
     <main className="main"><button className="mobile-menu" onClick={() => setCollapsed(v => !v)}><Menu/></button>{pages[page]}</main>
-    {page !== 'chat' && <ChatWidget user={user} notify={notify} onOpenFull={() => setPage('chat')}/>}
+    {page !== 'chat' && <ChatWidget user={user} notify={notify} unread={chatNotifications.unread} notificationPermission={chatNotifications.permission} onEnableNotifications={chatNotifications.requestPermission} onOpenFull={() => setPage('chat')}/>}
     {toast && <div className={`toast ${toast.type}`}>{toast.message}</div>}
   </div>
 }
 
-function ChatWidget({ user, notify, onOpenFull }) {
+function ChatWidget({ user, notify, unread, notificationPermission, onEnableNotifications, onOpenFull }) {
   const [open, setOpen] = useState(false)
   return <div className={`chat-widget ${open ? 'is-open' : ''}`}>
     {open ? <section className="chat-widget-panel">
       <header className="chat-widget-bar"><div><MessageCircle size={16}/><strong>Чат команды</strong></div><div><button type="button" onClick={onOpenFull} title="Открыть чат на всю страницу" aria-label="Открыть чат на всю страницу"><Maximize2 size={16}/></button><button type="button" onClick={() => setOpen(false)} title="Свернуть чат" aria-label="Свернуть чат"><Minus size={18}/></button></div></header>
-      <Chat user={user} notify={notify} compact/>
-    </section> : <button type="button" className="chat-widget-launcher" onClick={() => setOpen(true)} title="Открыть чат" aria-label="Открыть чат"><MessageCircle size={24}/><span>Чат</span></button>}
+      <Chat user={user} notify={notify} compact notificationPermission={notificationPermission} onEnableNotifications={onEnableNotifications}/>
+    </section> : <div className="chat-widget-closed">{notificationPermission === 'default' && <button type="button" className="chat-notification-enable" onClick={onEnableNotifications} title="Включить уведомления о сообщениях"><BellRing size={16}/><span>Включить уведомления</span></button>}<button type="button" className="chat-widget-launcher" onClick={() => setOpen(true)} title="Открыть чат" aria-label="Открыть чат"><MessageCircle size={24}/><span>Чат</span>{unread > 0 && <b>{unread > 99 ? '99+' : unread}</b>}</button></div>}
   </div>
 }
 
