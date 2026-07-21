@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Check, MessageCircle, Plus, Search, Send, UserPlus, Users, X } from 'lucide-react'
+import { Check, ChevronLeft, MessageCircle, Plus, Search, Send, UserPlus, Users, X } from 'lucide-react'
 import { request } from './api'
 import { roleLabel } from './App'
 
-export default function Chat({ user, notify }) {
+export default function Chat({ user, notify, compact = false }) {
   const [contacts, setContacts] = useState([])
   const [conversations, setConversations] = useState([])
   const [selectedID, setSelectedID] = useState(null)
@@ -25,8 +25,9 @@ export default function Chat({ user, notify }) {
 
   useEffect(() => {
     if (!conversations.length) { setSelectedID(null); return }
-    if (!selectedID || !conversations.some(item => item.id === selectedID)) setSelectedID(conversations[0].id)
-  }, [conversations, selectedID])
+    if (selectedID && !conversations.some(item => item.id === selectedID)) setSelectedID(null)
+    else if (!compact && !selectedID) setSelectedID(conversations[0].id)
+  }, [conversations, selectedID, compact])
 
   useEffect(() => {
     if (!selectedID) { setMessages([]); return undefined }
@@ -65,7 +66,7 @@ export default function Chat({ user, notify }) {
     setSelectedID(id)
   }
 
-  return <div className="chat-page">
+  return <div className={`chat-page ${compact ? 'chat-page-compact' : ''} ${selected ? 'has-room' : ''}`}>
     <aside className="chat-list-panel">
       <header><div><p>Команда</p><h1>Сообщения</h1></div><button type="button" onClick={() => setCreating(true)} aria-label="Начать новый чат" title="Начать новый чат"><Plus size={19}/></button></header>
       <label className="chat-search"><Search size={16}/><input value={search} onChange={event => setSearch(event.target.value)} placeholder="Поиск диалогов"/></label>
@@ -81,7 +82,7 @@ export default function Chat({ user, notify }) {
 
     <main className="chat-room">
       {selected ? <>
-        <header className="chat-room-head"><ConversationAvatar item={selected} currentUser={user}/><div><strong>{selected.title}</strong><span>{conversationSubtitle(selected, user)}</span></div></header>
+        <header className="chat-room-head">{compact && <button type="button" className="chat-room-back" onClick={() => setSelectedID(null)} aria-label="Назад к диалогам"><ChevronLeft size={19}/></button>}<ConversationAvatar item={selected} currentUser={user}/><div><strong>{selected.title}</strong><span>{conversationSubtitle(selected, user)}</span></div></header>
         <div className="chat-messages">
           {!messages.length && <div className="chat-welcome"><div><MessageCircle size={30}/></div><strong>Начните разговор</strong><span>Сообщения доступны только участникам этого диалога.</span></div>}
           {messages.map((message, index) => {

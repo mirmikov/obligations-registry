@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { BarChart3, BookOpen, ChevronDown, ChevronLeft, ChevronRight, CircleDollarSign, FileClock, Landmark, LogOut, Menu, MessageCircle, ReceiptText, Settings, Users } from 'lucide-react'
+import { BarChart3, BookOpen, ChevronDown, ChevronLeft, ChevronRight, CircleDollarSign, FileClock, Landmark, LogOut, Maximize2, Menu, MessageCircle, Minus, ReceiptText, Settings, Users } from 'lucide-react'
 import { request } from './api'
 import Dashboard from './Dashboard'
 import Registry from './Registry'
@@ -83,7 +83,18 @@ export default function App() {
       </div>
     </aside>
     <main className="main"><button className="mobile-menu" onClick={() => setCollapsed(v => !v)}><Menu/></button>{pages[page]}</main>
+    {page !== 'chat' && <ChatWidget user={user} notify={notify} onOpenFull={() => setPage('chat')}/>}
     {toast && <div className={`toast ${toast.type}`}>{toast.message}</div>}
+  </div>
+}
+
+function ChatWidget({ user, notify, onOpenFull }) {
+  const [open, setOpen] = useState(false)
+  return <div className={`chat-widget ${open ? 'is-open' : ''}`}>
+    {open ? <section className="chat-widget-panel">
+      <header className="chat-widget-bar"><div><MessageCircle size={16}/><strong>Чат команды</strong></div><div><button type="button" onClick={onOpenFull} title="Открыть чат на всю страницу" aria-label="Открыть чат на всю страницу"><Maximize2 size={16}/></button><button type="button" onClick={() => setOpen(false)} title="Свернуть чат" aria-label="Свернуть чат"><Minus size={18}/></button></div></header>
+      <Chat user={user} notify={notify} compact/>
+    </section> : <button type="button" className="chat-widget-launcher" onClick={() => setOpen(true)} title="Открыть чат" aria-label="Открыть чат"><MessageCircle size={24}/><span>Чат</span></button>}
   </div>
 }
 
