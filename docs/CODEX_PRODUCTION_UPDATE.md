@@ -28,6 +28,17 @@ RUN_DATABASE_MIGRATIONS=false
 
 > Обнови production-платформу из `origin/main`, не изменяя рабочую базу. Сначала прочитай `AGENTS.md`, проверь чистоту Git, текущий коммит, наличие `.env` и `RUN_DATABASE_MIGRATIONS=false`. Затем выполни `./ops/production/update-from-github.sh main`. Не запускай `docker compose down`, не используй флаг `-v`, не импортируй Excel и не изменяй PostgreSQL вручную. После обновления сообщи старый и новый commit, путь к проверенному backup, состояние контейнеров, health-check и контрольные показатели базы до/после.
 
+## Одноразовое добавление отсутствующей схемы
+
+Если production был создан до появления чата или истории отмены, обычное обновление остановится до сборки и перечислит отсутствующие таблицы. После отдельного явного разрешения пользователя выполните:
+
+```bash
+CONFIRM_ADDITIVE_SCHEMA_MIGRATION=YES ./ops/production/migrate-additive-schema.sh
+./ops/production/deploy-platform.sh
+```
+
+Первый скрипт создаёт отдельный проверенный backup, а затем в одной SQL-транзакции выполняет только `CREATE TABLE IF NOT EXISTS` и `CREATE INDEX IF NOT EXISTS` для `undo_operations`, `chat_conversations`, `chat_members` и `chat_messages`. Он проверяет, что количество обязательств, их сумма, пользователи и справочники не изменились, новые таблицы пусты, а контейнер и том PostgreSQL остались прежними. Начальное заполнение и полный `migrations.sql` не запускаются.
+
 Скрипт автоматически:
 
 1. остановится, если на сервере остались незакоммиченные исправления;

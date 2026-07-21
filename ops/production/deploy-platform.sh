@@ -21,6 +21,9 @@ db_container_before="$(docker compose ps -q db)"
 [[ -n "$db_container_before" ]] || fail "контейнер PostgreSQL не запущен"
 docker compose exec -T db pg_isready -U registry -d registry >/dev/null || fail "PostgreSQL не готов"
 
+missing_schema="$(docker compose exec -T db psql -U registry -d registry -At -c "SELECT name FROM unnest(ARRAY['undo_operations','chat_conversations','chat_members','chat_messages']) AS name WHERE to_regclass('public.'||name) IS NULL ORDER BY name")"
+[[ -z "$missing_schema" ]] || fail "отсутствуют обязательные таблицы: $missing_schema. После отдельного подтверждения выполните CONFIRM_ADDITIVE_SCHEMA_MIGRATION=YES ./ops/production/migrate-additive-schema.sh"
+
 db_mount_before="$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/var/lib/postgresql/data"}}{{.Name}}|{{.Source}}{{end}}{{end}}' "$db_container_before")"
 [[ -n "$db_mount_before" ]] || fail "не найден постоянный том PostgreSQL"
 
