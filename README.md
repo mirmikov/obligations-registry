@@ -39,6 +39,18 @@ docker compose exec -T db pg_dump -U registry registry > registry-backup.sql
 
 Восстановление выполняется в пустую базу командой `psql -U registry registry < registry-backup.sql`.
 
+## Безопасное обновление production без изменения базы
+
+После первого развёртывания установите в рабочем `.env` значение `RUN_DATABASE_MIGRATIONS=false`. Оно отключает автоматический запуск миграций и начального заполнения при перезапуске backend.
+
+Для обновления кода из GitHub используйте:
+
+```bash
+./ops/production/update-from-github.sh main
+```
+
+Скрипт создаёт проверенный backup и пересоздаёт только frontend/backend, не останавливая и не пересоздавая PostgreSQL. Подробный процесс и готовые инструкции для Codex находятся в [docs/CODEX_PRODUCTION_UPDATE.md](docs/CODEX_PRODUCTION_UPDATE.md).
+
 ## Локальная разработка
 
 Backend:

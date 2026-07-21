@@ -24,6 +24,7 @@ services:
       JWT_SECRET: ${JWT_SECRET:-replace-this-secret-before-production}
       ADMIN_EMAIL: ${ADMIN_EMAIL:-admin}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-Qazxsw21}
+      RUN_DATABASE_MIGRATIONS: ${RUN_DATABASE_MIGRATIONS:-true}
       TZ: Europe/Moscow
     depends_on:
       db:

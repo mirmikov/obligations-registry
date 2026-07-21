@@ -92,6 +92,17 @@ func TestNormalizeWorkspaceStateAcceptsChat(t *testing.T) {
 	}
 }
 
+func TestDatabaseMigrationsCanBeDisabledForProductionCodeDeploy(t *testing.T) {
+	t.Setenv("RUN_DATABASE_MIGRATIONS", "false")
+	if databaseMigrationsEnabled() {
+		t.Fatal("database migrations must be disabled")
+	}
+	t.Setenv("RUN_DATABASE_MIGRATIONS", "true")
+	if !databaseMigrationsEnabled() {
+		t.Fatal("database migrations must be enabled")
+	}
+}
+
 func TestDirectChatKeyIsStable(t *testing.T) {
 	if directChatKey(12, 3) != "3:12" || directChatKey(3, 12) != "3:12" {
 		t.Fatal("direct chat key depends on participant order")

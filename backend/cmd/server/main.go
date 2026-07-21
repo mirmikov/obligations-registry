@@ -49,8 +49,12 @@ func main() {
 	}
 
 	a := &app{db: db, jwtSecret: []byte(getenv("JWT_SECRET", "change-me-in-production")), presence: newPresenceHub()}
-	if err := a.migrateAndSeed(context.Background()); err != nil {
-		log.Fatal(err)
+	if databaseMigrationsEnabled() {
+		if err := a.migrateAndSeed(context.Background()); err != nil {
+			log.Fatal(err)
+		}
+	} else {
+		log.Print("database migrations and seed are disabled")
 	}
 
 	mux := http.NewServeMux()
@@ -111,6 +115,11 @@ func main() {
 	shutdown, done := context.WithTimeout(context.Background(), 15*time.Second)
 	defer done()
 	_ = server.Shutdown(shutdown)
+}
+
+func databaseMigrationsEnabled() bool {
+	value := strings.ToLower(strings.TrimSpace(getenv("RUN_DATABASE_MIGRATIONS", "true")))
+	return value != "false" && value != "0" && value != "no" && value != "off"
 }
 
 func getenv(key, fallback string) string {
