@@ -14,7 +14,7 @@ const nav = [
   { id: 'dashboard', label: 'Сводка', icon: BarChart3 },
   { id: 'registry', label: 'Реестр', icon: BookOpen, children: [{ id: 'credits-leasing', label: 'Кредиты и лизинги', icon: Landmark }] },
   { id: 'payments', label: 'К оплате', icon: CircleDollarSign },
-  { id: 'references', label: 'Справочники', icon: Settings, admin: true },
+  { id: 'references', label: 'Справочники', icon: Settings, roles: ['admin', 'editor'] },
   { id: 'users', label: 'Пользователи', icon: Users, admin: true },
   { id: 'audit', label: 'Журнал действий', icon: FileClock, admin: true },
 ]
@@ -65,7 +65,7 @@ export default function App() {
     registry: <Registry user={user} notify={notify} />,
     'credits-leasing': <CreditsLeasing notify={notify} />,
     payments: <Payments user={user} notify={notify} />,
-    references: <References notify={notify} />,
+    references: <References user={user} notify={notify} />,
     users: <UsersPage notify={notify} />,
     audit: <Audit notify={notify} />,
   }
@@ -73,7 +73,7 @@ export default function App() {
   return <div className={`app-shell ${collapsed ? 'is-collapsed' : ''}`}>
     <aside className="sidebar">
       <div className="brand"><div className="brand-mark"><ReceiptText size={23}/></div><div><strong>ФинРеестр</strong><span>обязательства</span></div></div>
-      <nav>{nav.filter(item => !item.admin || user.role === 'admin').map(item => item.children ? <div className={`nav-group ${registryOpen ? 'is-open' : ''}`} key={item.id}><div className="nav-parent"><button className={page === item.id ? 'active' : ''} onClick={() => setPage(item.id)} title={item.label}><item.icon size={19}/><span>{item.label}</span></button><button type="button" className="nav-expand" onClick={() => setRegistryOpen(value => !value)} title={registryOpen ? 'Свернуть раздел' : 'Развернуть раздел'} aria-label={registryOpen ? 'Свернуть раздел Реестр' : 'Развернуть раздел Реестр'} aria-expanded={registryOpen}><ChevronDown size={16}/></button></div>{registryOpen && <div className="nav-children">{item.children.map(child => <button key={child.id} className={page === child.id ? 'active' : ''} onClick={() => setPage(child.id)} title={child.label}><child.icon size={17}/><span>{child.label}</span></button>)}</div>}</div> : <button key={item.id} className={page === item.id ? 'active' : ''} onClick={() => setPage(item.id)} title={item.label}><item.icon size={19}/><span>{item.label}</span>{item.id === 'payments' && <i/>}</button>)}</nav>
+      <nav>{nav.filter(item => isAllowedNavItem(item, user)).map(item => item.children ? <div className={`nav-group ${registryOpen ? 'is-open' : ''}`} key={item.id}><div className="nav-parent"><button className={page === item.id ? 'active' : ''} onClick={() => setPage(item.id)} title={item.label}><item.icon size={19}/><span>{item.label}</span></button><button type="button" className="nav-expand" onClick={() => setRegistryOpen(value => !value)} title={registryOpen ? 'Свернуть раздел' : 'Развернуть раздел'} aria-label={registryOpen ? 'Свернуть раздел Реестр' : 'Развернуть раздел Реестр'} aria-expanded={registryOpen}><ChevronDown size={16}/></button></div>{registryOpen && <div className="nav-children">{item.children.map(child => <button key={child.id} className={page === child.id ? 'active' : ''} onClick={() => setPage(child.id)} title={child.label}><child.icon size={17}/><span>{child.label}</span></button>)}</div>}</div> : <button key={item.id} className={page === item.id ? 'active' : ''} onClick={() => setPage(item.id)} title={item.label}><item.icon size={19}/><span>{item.label}</span>{item.id === 'payments' && <i/>}</button>)}</nav>
       <div className="sidebar-bottom">
         <button className="collapse" onClick={() => setCollapsed(v => !v)}>{collapsed ? <ChevronRight size={18}/> : <ChevronLeft size={18}/>}<span>Свернуть</span></button>
         <div className="profile"><div className="avatar">{user.name.slice(0, 1)}</div><div><strong>{user.name}</strong><span>{roleLabel(user.role)}</span></div><button onClick={logout} title="Выйти"><LogOut size={17}/></button></div>
@@ -85,8 +85,8 @@ export default function App() {
 }
 
 function Login({ onLogin }) {
-  const [email, setEmail] = useState('admin@registry.local')
-  const [password, setPassword] = useState('Admin123!')
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const submit = async event => {
@@ -101,12 +101,13 @@ function Login({ onLogin }) {
   }
   return <div className="login-page">
     <div className="login-visual"><div className="login-badge"><ReceiptText size={25}/><span>ФинРеестр</span></div><div className="login-copy"><p>ЕДИНЫЙ РЕЕСТР</p><h1>Обязательства<br/>под контролем.</h1><span>Фильтры не сбрасываются. Справочники работают. Каждое изменение сохраняется в журнале.</span></div><div className="visual-card"><span>Всегда актуально</span><strong>Одна версия данных для всей команды</strong><div><i/><i/><i/><i/><i/></div></div></div>
-    <div className="login-form-wrap"><form onSubmit={submit}><div className="form-logo"><div className="brand-mark"><ReceiptText size={22}/></div></div><p className="eyebrow">Добро пожаловать</p><h2>Войдите в реестр</h2><span className="muted">Используйте рабочую учётную запись</span><label>Электронная почта<input type="email" value={email} onChange={e => setEmail(e.target.value)} autoFocus/></label><label>Пароль<input type="password" value={password} onChange={e => setPassword(e.target.value)}/></label>{error && <div className="form-error">{error}</div>}<button className="primary wide" disabled={loading}>{loading ? 'Входим…' : 'Войти'}</button><div className="demo-hint"><strong>Демо-доступ</strong><span>admin@registry.local · Admin123!</span></div></form></div>
+    <div className="login-form-wrap"><form onSubmit={submit}><div className="form-logo"><div className="brand-mark"><ReceiptText size={22}/></div></div><p className="eyebrow">Добро пожаловать</p><h2>Войдите в реестр</h2><span className="muted">Используйте рабочую учётную запись</span><label>Электронная почта<input type="email" value={email} onChange={e => setEmail(e.target.value)} autoFocus/></label><label>Пароль<input type="password" value={password} onChange={e => setPassword(e.target.value)}/></label>{error && <div className="form-error">{error}</div>}<button className="primary wide" disabled={loading}>{loading ? 'Входим…' : 'Войти'}</button></form></div>
   </div>
 }
 
 export function PageHeader({ eyebrow, title, subtitle, actions }) { return <header className="page-header"><div><p className="eyebrow">{eyebrow}</p><h1>{title}</h1>{subtitle && <span>{subtitle}</span>}</div>{actions && <div className="header-actions">{actions}</div>}</header> }
-function isAllowedPage(page, user) { return nav.some(item => (item.id === page || item.children?.some(child => child.id === page)) && (!item.admin || user?.role === 'admin')) }
+function isAllowedNavItem(item, user) { return (!item.admin || user?.role === 'admin') && (!item.roles || item.roles.includes(user?.role)) }
+function isAllowedPage(page, user) { return nav.some(item => (item.id === page || item.children?.some(child => child.id === page)) && isAllowedNavItem(item, user)) }
 export const roleLabel = role => ({ admin: 'Администратор', editor: 'Редактор', viewer: 'Зритель' }[role] || role)
 export const money = value => new Intl.NumberFormat('ru-RU', {
   style: 'currency',
@@ -179,3 +180,4 @@ function monthFromValue(value) { const match = String(value || '').match(/^(\d{4
 function localISO(date) { return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}` }
 function parseDateDraft(draft) { if (!String(draft).trim()) return ''; const match = String(draft).trim().match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{4})$/); if (!match) return null; const day = Number(match[1]); const month = Number(match[2]); const year = Number(match[3]); const date = new Date(year, month - 1, day); return date.getFullYear() === year && date.getMonth() === month - 1 && date.getDate() === day ? localISO(date) : null }
 function capitalizeMonth(value) { return value ? value[0].toUpperCase() + value.slice(1) : value }
+
