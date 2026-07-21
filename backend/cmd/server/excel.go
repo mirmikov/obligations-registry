@@ -175,10 +175,22 @@ func parseIntPtr(value string) *int {
 	return &number
 }
 func parseFloatPtr(value string) *float64 {
-	value = strings.ReplaceAll(strings.ReplaceAll(strings.TrimSpace(value), " ", ""), " ", "")
-	value = strings.ReplaceAll(value, ",", ".")
+	value = strings.NewReplacer(" ", "", " ", "", "₽", "", "руб.", "", "RUB", "").Replace(strings.TrimSpace(value))
 	if value == "" {
 		return nil
+	}
+	comma := strings.LastIndex(value, ",")
+	dot := strings.LastIndex(value, ".")
+	switch {
+	case comma >= 0 && dot >= 0 && comma > dot:
+		value = strings.ReplaceAll(value, ".", "")
+		value = strings.ReplaceAll(value, ",", ".")
+	case comma >= 0 && dot >= 0:
+		value = strings.ReplaceAll(value, ",", "")
+	case comma >= 0 && len(value)-comma-1 <= 2:
+		value = strings.ReplaceAll(value, ",", ".")
+	case comma >= 0:
+		value = strings.ReplaceAll(value, ",", "")
 	}
 	number, err := strconv.ParseFloat(value, 64)
 	if err != nil {
@@ -191,7 +203,7 @@ func parseDate(value string) string {
 	if value == "" {
 		return ""
 	}
-	for _, layout := range []string{"2006-01-02", "02.01.2006", "02/01/2006", "2006-01-02 00:00:00", "1/2/06", "1/2/2006"} {
+	for _, layout := range []string{"2006-01-02", "02.01.2006", "02.01.06", "02/01/2006", "2006-01-02 00:00:00", "1/2/06", "1/2/2006"} {
 		if parsed, err := time.Parse(layout, value); err == nil {
 			return parsed.Format("2006-01-02")
 		}
@@ -203,3 +215,4 @@ func parseDate(value string) string {
 	}
 	return value
 }
+
