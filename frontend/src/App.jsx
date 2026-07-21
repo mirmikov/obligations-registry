@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { BarChart3, BookOpen, ChevronDown, ChevronLeft, ChevronRight, CircleDollarSign, FileClock, Landmark, LogOut, Menu, ReceiptText, Settings, Users } from 'lucide-react'
+import { BarChart3, BookOpen, ChevronDown, ChevronLeft, ChevronRight, CircleDollarSign, FileClock, Landmark, LogOut, Menu, MessageCircle, ReceiptText, Settings, Users } from 'lucide-react'
 import { request } from './api'
 import Dashboard from './Dashboard'
 import Registry from './Registry'
@@ -9,11 +9,13 @@ import References from './References'
 import UsersPage from './UsersPage'
 import Audit from './Audit'
 import CreditsLeasing from './CreditsLeasing'
+import Chat from './Chat'
 
 const nav = [
   { id: 'dashboard', label: 'Сводка', icon: BarChart3 },
   { id: 'registry', label: 'Реестр', icon: BookOpen, children: [{ id: 'credits-leasing', label: 'Кредиты и лизинги', icon: Landmark }] },
   { id: 'payments', label: 'К оплате', icon: CircleDollarSign },
+  { id: 'chat', label: 'Чаты', icon: MessageCircle },
   { id: 'references', label: 'Справочники', icon: Settings, admin: true },
   { id: 'users', label: 'Пользователи', icon: Users, admin: true },
   { id: 'audit', label: 'Журнал действий', icon: FileClock, admin: true },
@@ -65,6 +67,7 @@ export default function App() {
     registry: <Registry user={user} notify={notify} />,
     'credits-leasing': <CreditsLeasing notify={notify} />,
     payments: <Payments user={user} notify={notify} />,
+    chat: <Chat user={user} notify={notify} />,
     references: <References notify={notify} />,
     users: <UsersPage notify={notify} />,
     audit: <Audit notify={notify} />,

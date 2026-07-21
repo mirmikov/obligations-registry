@@ -85,6 +85,26 @@ func TestNormalizeWorkspaceStateAcceptsCreditsLeasingReport(t *testing.T) {
 	}
 }
 
+func TestNormalizeWorkspaceStateAcceptsChat(t *testing.T) {
+	value := normalizeWorkspaceState(workspaceState{Page: "chat"})
+	if value.Page != "chat" {
+		t.Fatalf("workspace state = %#v", value)
+	}
+}
+
+func TestDirectChatKeyIsStable(t *testing.T) {
+	if directChatKey(12, 3) != "3:12" || directChatKey(3, 12) != "3:12" {
+		t.Fatal("direct chat key depends on participant order")
+	}
+}
+
+func TestUniqueChatMembersIncludesCurrentAndRemovesDuplicates(t *testing.T) {
+	values := uniqueChatMembers([]int64{7, 3, 7, 0, -1}, 3)
+	if len(values) != 2 || values[0] != 3 || values[1] != 7 {
+		t.Fatalf("members = %#v, want [3 7]", values)
+	}
+}
+
 func TestExcelDateParsing(t *testing.T) {
 	for input, expected := range map[string]string{"18.07.2026": "2026-07-18", "2026-07-18": "2026-07-18"} {
 		if actual := parseDate(input); actual != expected {
