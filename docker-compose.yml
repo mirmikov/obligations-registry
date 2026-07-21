@@ -29,6 +29,8 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    volumes:
+      - chat_uploads:/data/chat_uploads
     restart: unless-stopped
 
   frontend:
@@ -41,3 +43,4 @@ services:
 
 volumes:
   registry_db:
+  chat_uploads:

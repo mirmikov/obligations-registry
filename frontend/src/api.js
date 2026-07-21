@@ -18,6 +18,17 @@ export async function request(path, options = {}) {
   return response.json()
 }
 
+export async function requestBlob(path) {
+  const token = localStorage.getItem('registry_token')
+  const response = await fetch(`${API}${path}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
+  if (response.status === 401) {
+    localStorage.removeItem('registry_token')
+    window.dispatchEvent(new Event('registry:logout'))
+  }
+  if (!response.ok) throw new Error('Не удалось загрузить изображение')
+  return response.blob()
+}
+
 export async function download(path, filename) {
   const token = localStorage.getItem('registry_token')
   const response = await fetch(`${API}${path}`, { headers: { Authorization: `Bearer ${token}` } })

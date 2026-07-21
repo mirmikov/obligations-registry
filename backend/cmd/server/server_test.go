@@ -1,8 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
+	"mime/multipart"
+	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -113,6 +118,83 @@ func TestUniqueChatMembersIncludesCurrentAndRemovesDuplicates(t *testing.T) {
 	values := uniqueChatMembers([]int64{7, 3, 7, 0, -1}, 3)
 	if len(values) != 2 || values[0] != 3 || values[1] != 7 {
 		t.Fatalf("members = %#v, want [3 7]", values)
+	}
+}
+
+func TestChatImageMessageRoundTrip(t *testing.T) {
+	name := "0123456789abcdef0123456789abcdef.png"
+	stored := encodeChatMessageBody("Подпись к снимку", name)
+	body, decodedName := decodeChatMessageBody(stored)
+	if body != "Подпись к снимку" || decodedName != name {
+		t.Fatalf("decoded image message = %q, %q", body, decodedName)
+	}
+	body, imageURL := chatMessagePresentation(stored, 42)
+	if body != "Подпись к снимку" || imageURL != "/api/chat/conversations/42/images/"+name {
+		t.Fatalf("image presentation = %q, %q", body, imageURL)
+	}
+}
+
+func TestChatImageValidationRejectsPathsAndUnknownTypes(t *testing.T) {
+	for _, name := range []string{"../0123456789abcdef0123456789abcdef.png", "0123456789abcdef0123456789abcdef.svg", "0123456789abcdef0123456789abcdef.jp"} {
+		if validChatImageName(name) {
+			t.Fatalf("unsafe image name accepted: %q", name)
+		}
+	}
+	if extension, ok := chatImageExtension([]byte("<svg><script>alert(1)</script></svg>")); ok || extension != "" {
+		t.Fatalf("SVG payload accepted as %q", extension)
+	}
+	if extension, ok := chatImageExtension([]byte("\x89PNG\r\n\x1a\ncontent")); !ok || extension != ".png" {
+		t.Fatalf("PNG payload rejected: %q", extension)
+	}
+}
+
+func TestSaveChatImagePersistsInConversationDirectory(t *testing.T) {
+	directory := t.TempDir()
+	t.Setenv("CHAT_UPLOAD_DIR", directory)
+	payload := []byte("\x89PNG\r\n\x1a\ncontent")
+	name, err := saveChatImage(27, ".png", payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !validChatImageName(name) {
+		t.Fatalf("generated unsafe image name: %q", name)
+	}
+	stored, err := os.ReadFile(filepath.Join(directory, "27", name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(stored, payload) {
+		t.Fatalf("stored image = %q, want %q", stored, payload)
+	}
+}
+
+func TestReadChatMessageInputAcceptsClipboardPNG(t *testing.T) {
+	directory := t.TempDir()
+	t.Setenv("CHAT_UPLOAD_DIR", directory)
+	var payload bytes.Buffer
+	writer := multipart.NewWriter(&payload)
+	if err := writer.WriteField("body", "  Подпись  "); err != nil {
+		t.Fatal(err)
+	}
+	part, err := writer.CreateFormFile("image", "clipboard.png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = part.Write([]byte("\x89PNG\r\n\x1a\ncontent")); err != nil {
+		t.Fatal(err)
+	}
+	if err = writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/chat/conversations/9/messages", &payload)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	recorder := httptest.NewRecorder()
+	body, name, ok := (&app{}).readChatMessageInput(recorder, req, 9)
+	if !ok || body != "Подпись" || !validChatImageName(name) {
+		t.Fatalf("parsed image input = ok:%v body:%q name:%q response:%s", ok, body, name, recorder.Body.String())
+	}
+	if _, err := os.Stat(filepath.Join(directory, "9", name)); err != nil {
+		t.Fatal(err)
 	}
 }
 

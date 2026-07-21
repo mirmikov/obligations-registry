@@ -7,6 +7,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /registry-ap
 
 FROM alpine:3.22
 RUN addgroup -S registry && adduser -S registry -G registry && apk add --no-cache ca-certificates tzdata
+RUN mkdir -p /data/chat_uploads && chown registry:registry /data/chat_uploads
 USER registry
 COPY --from=build /registry-api /usr/local/bin/registry-api
 EXPOSE 8080

@@ -8,6 +8,11 @@ const emptyFilters = { q: '', counterparty: [], account_type: '', legal_entity: 
 const dateFields = new Set(['entry_date', 'document_date', 'planned_payment_date', 'approval_date', 'actual_payment_date'])
 const fieldLabels = { counterparty: 'Контрагент', entry_date: 'Дата внесения', document_number: 'Документ', document_date: 'Дата документа', legal_entity: 'Юрлицо', cost_category: 'Статья затрат', amount: 'Сумма, ₽', deferment_days: 'Отсрочка, дней', planned_payment_date: 'Плановая оплата', approval_date: 'Дата утверждения', actual_payment_date: 'Фактическая оплата', status: 'Статус', urgency: 'Срочность', responsible: 'Ответственный', priority: 'Приоритет', account_type: 'Признак учёта', comment: 'Комментарий', source_note: 'Условия оплаты' }
 const registryColumnWidths = [46, 220, 130, 130, 180, 180, 135, 240, 120, 110, 145, 145, 145, 160, 135, 160, 120, 240, 240, 86]
+const registryLargeFontKey = 'registry-table-large-font'
+
+function readLargeFontPreference() {
+  try { return window.localStorage.getItem(registryLargeFontKey) === 'true' } catch { return false }
+}
 
 export default function Registry({ user, notify }) {
   const [data, setData] = useState({ items: [], total: 0, page: 1, page_size: 50 })
@@ -22,6 +27,7 @@ export default function Registry({ user, notify }) {
   const [bulkOpen, setBulkOpen] = useState(false)
   const [splitItem, setSplitItem] = useState(null)
   const [tableFullscreen, setTableFullscreen] = useState(false)
+  const [largeTableFont, setLargeTableFont] = useState(readLargeFontPreference)
   const [viewReady, setViewReady] = useState(false)
   const importRef = useRef()
   const tableWrapRef = useRef()
@@ -72,10 +78,13 @@ export default function Registry({ user, notify }) {
   }, [viewReady, loading, data.items.length])
   useEffect(() => {
     if (!tableFullscreen) return
-    const exitFullscreen = event => { if (event.key === 'Escape') setTableFullscreen(false) }
+    const exitFullscreen = event => { if (event.key === 'Escape' && !event.defaultPrevented) setTableFullscreen(false) }
     document.addEventListener('keydown', exitFullscreen)
     return () => document.removeEventListener('keydown', exitFullscreen)
   }, [tableFullscreen])
+  useEffect(() => {
+    try { window.localStorage.setItem(registryLargeFontKey, String(largeTableFont)) } catch {}
+  }, [largeTableFont])
   const setFilter = (key, value) => { setFilters(old => ({ ...old, [key]: value })); setPage(1) }
   const rememberScroll = event => {
     scrollPositionRef.current = { left: event.currentTarget.scrollLeft, top: event.currentTarget.scrollTop }
@@ -144,7 +153,7 @@ export default function Registry({ user, notify }) {
   const importFile = async event => { const file = event.target.files?.[0]; if (!file) return; const body = new FormData(); body.append('file', file); try { const result = await request('/api/obligations/import.xlsx', { method: 'POST', body }); notify(`Импортировано строк: ${result.imported}`); load() } catch (e) { notify(e.message, 'error') } finally { event.target.value = '' } }
   const doSort = key => setSort(current => ({ key, order: current.key === key && current.order === 'asc' ? 'desc' : 'asc' }))
   return <div className={`page registry-page ${tableFullscreen ? 'is-table-fullscreen' : ''}`}>
-    <PageHeader eyebrow="Рабочая область" title="Реестр обязательств" subtitle={`${data.total.toLocaleString('ru-RU')} записей с учётом фильтров`} actions={<><PresenceCluster users={activeUsers} currentSession={sessionId}/>{user.role === 'admin' && <><input ref={importRef} type="file" accept=".xlsx" hidden onChange={importFile}/><button className="secondary" onClick={() => importRef.current.click()}><FileUp size={17}/>Импорт</button></>}<button className="secondary" onClick={() => download(`/api/obligations/export.xlsx?${query}`, 'Реестр обязательств.xlsx')}><Download size={17}/>Excel</button><button className="secondary registry-fullscreen-button" onClick={() => setTableFullscreen(true)} title="Открыть таблицу на весь экран" aria-label="Открыть таблицу на весь экран"><Maximize2 size={17}/></button></>}/>
+    <PageHeader eyebrow="Рабочая область" title="Реестр обязательств" subtitle={`${data.total.toLocaleString('ru-RU')} записей с учётом фильтров`} actions={<><PresenceCluster users={activeUsers} currentSession={sessionId}/>{user.role === 'admin' && <><input ref={importRef} type="file" accept=".xlsx" hidden onChange={importFile}/><button className="secondary" onClick={() => importRef.current.click()}><FileUp size={17}/>Импорт</button></>}<button className="secondary" onClick={() => download(`/api/obligations/export.xlsx?${query}`, 'Реестр обязательств.xlsx')}><Download size={17}/>Excel</button><FontSizeButton large={largeTableFont} onToggle={() => setLargeTableFont(value => !value)}/><button className="secondary registry-fullscreen-button" onClick={() => setTableFullscreen(true)} title="Открыть таблицу на весь экран" aria-label="Открыть таблицу на весь экран"><Maximize2 size={17}/></button></>}/>
     <section className="filter-panel">
       <div className="search-box"><Search size={18}/><input placeholder="Контрагент, счёт, комментарий…" value={filters.q} onChange={e => setFilter('q', e.target.value)}/>{filters.q && <button onClick={() => setFilter('q', '')}><X size={15}/></button>}</div>
       <label className="filter-date"><span>Срок с</span><DateInput value={filters.planned_from} onChange={value => setFilter('planned_from', value)} aria-label="Срок с"/></label>
@@ -153,9 +162,9 @@ export default function Registry({ user, notify }) {
       {hasActiveFilters(filters) && <button className="reset-filters" onClick={() => { setFilters(emptyFilters); setPage(1) }}><RotateCcw size={15}/>Сбросить</button>}
     </section>
     <section className="table-card">
-      {tableFullscreen && <button type="button" className="registry-fullscreen-exit" onClick={() => setTableFullscreen(false)} title="Вернуться к обычному виду" aria-label="Вернуться к обычному виду"><Minimize2 size={17}/><span>Обычный вид</span></button>}
+      {tableFullscreen && <div className="registry-fullscreen-controls"><FontSizeButton large={largeTableFont} onToggle={() => setLargeTableFont(value => !value)}/><button type="button" className="registry-fullscreen-exit" onClick={() => setTableFullscreen(false)} title="Вернуться к обычному виду" aria-label="Вернуться к обычному виду"><Minimize2 size={17}/><span>Обычный вид</span></button></div>}
       {selected.length > 0 && <div className="selection-bar"><span><Check size={16}/>{selected.length} выбрано</span>{user.role !== 'viewer' && selectedItem && canSplitPayment(selectedItem) && <button onClick={() => setSplitItem(selectedItem)}><Scissors size={15}/>Разбить платёж</button>}{user.role !== 'viewer' && <button onClick={() => setBulkOpen(true)}>Изменить статус и даты</button>}<button onClick={() => setSelected([])}>Снять выбор</button></div>}
-      <div ref={tableWrapRef} className="registry-table-wrap" onScroll={rememberScroll}><table className="registry-table inline-registry"><colgroup>{registryColumnWidths.map((width, index) => <col key={index} style={{ width }}/>)}</colgroup><thead><tr><th className="check-col">{user.role !== 'viewer' ? <button type="button" className={`inline-add-row ${newRow ? 'active' : ''}`} onClick={addInlineRow} title={newRow ? 'Убрать новую строку' : 'Добавить строку'} aria-label={newRow ? 'Убрать новую строку' : 'Добавить строку'}><Plus size={16}/></button> : <input type="checkbox" checked={allSelected} onChange={toggleAll}/>}</th>
+      <div ref={tableWrapRef} className="registry-table-wrap" onScroll={rememberScroll}><table className={`registry-table inline-registry ${largeTableFont ? 'registry-font-large' : ''}`}><colgroup>{registryColumnWidths.map((width, index) => <col key={index} style={{ width }}/>)}</colgroup><thead><tr><th className="check-col">{user.role !== 'viewer' ? <button type="button" className={`inline-add-row ${newRow ? 'active' : ''}`} onClick={addInlineRow} title={newRow ? 'Убрать новую строку' : 'Добавить строку'} aria-label={newRow ? 'Убрать новую строку' : 'Добавить строку'}><Plus size={16}/></button> : <input type="checkbox" checked={allSelected} onChange={toggleAll}/>}</th>
         <ColumnHead className="counterparty-head" label="Контрагент" field="counterparty" sort={sort} onSort={doSort} value={filters.counterparty} options={refs.counterparties} onFilter={value => setFilter('counterparty', value)} multiple/>
         <ColumnHead className="entry-date-head" label="Дата внесения" field="entry_date" sort={sort} onSort={doSort} dateValue={filters.entry_date} onDateFilter={value => setFilter('entry_date', value)}/>
         <ColumnHead className="account-type-head" label="Признак" value={filters.account_type} options={refs.account_types} onFilter={value => setFilter('account_type', value)}/>
@@ -180,6 +189,10 @@ export default function Registry({ user, notify }) {
     )}
     {splitItem && <SplitPaymentModal item={splitItem} onClose={() => setSplitItem(null)} onSave={values => splitPayment(splitItem, values)}/>}
   </div>
+}
+
+function FontSizeButton({ large, onToggle }) {
+  return <button type="button" className={`secondary registry-font-button ${large ? 'active' : ''}`} onClick={onToggle} aria-pressed={large} aria-label={large ? 'Вернуть обычный размер шрифта в таблице' : 'Увеличить размер шрифта в таблице'} title={large ? 'Обычный шрифт' : 'Увеличить шрифт'}><span aria-hidden="true">A<sup>+</sup></span><b>{large ? 'Обычный' : 'Крупнее'}</b></button>
 }
 
 function ColumnHead({ label, field, sort, onSort, value = '', options, onFilter, dateValue = '', onDateFilter, className = '', multiple = false }) {
@@ -304,8 +317,9 @@ function EditableCell({ item, field, label, editable, saving, type = 'text', opt
     if (event.key === 'Escape') { event.preventDefault(); cancel() }
   }
   const display = render ? render(item[field]) : type === 'date' ? shortDate(item[field]) : (item[field] ?? '') || '—'
-  return <td className={`editable-cell ${className} ${editing ? 'is-editing' : ''} ${saving ? 'is-saving' : ''}`} aria-label={`${label}: ${cellAriaValue(field, item[field])}`} onClick={begin} title={editable && !editing ? `Изменить: ${label}` : undefined}>
-    {editing ? options ? <InlineCellSelect label={label} value={item[field] || ''} options={options} allowCustom={allowCustom} onChoose={value => { setDraft(value); onCommit(item, field, value).then(ok => ok && setEditing(false)) }} onCancel={cancel}/> : type === 'date' ? <DateInput className="inline-cell-input" value={item[field] || ''} onChange={value => onCommit(item, field, value).then(ok => ok && setEditing(false))} onClose={() => { setEditing(false); onFinishEdit(item) }} aria-label={label} autoFocus/> : <input className="inline-cell-input" type={type === 'number' ? 'number' : 'text'} placeholder="Введите значение" value={draft} onChange={event => setDraft(event.target.value)} onBlur={commit} onKeyDown={keyDown} autoFocus/> : <div className="cell-display">{display}</div>}
+  const ariaValue = cellAriaValue(field, item[field])
+  return <td className={`editable-cell ${className} ${editing ? 'is-editing' : ''} ${saving ? 'is-saving' : ''}`} aria-label={`${label}: ${ariaValue}`} onClick={begin} title={!editing ? `${label}: ${ariaValue}${editable ? '\nНажмите, чтобы изменить' : ''}` : undefined}>
+    {editing ? options ? <InlineCellSelect label={label} value={item[field] || ''} options={options} allowCustom={allowCustom} onChoose={value => { setDraft(value); onCommit(item, field, value).then(ok => ok && setEditing(false)) }} onCancel={cancel}/> : type === 'date' ? <DateInput className="inline-cell-input" value={item[field] || ''} onChange={value => onCommit(item, field, value).then(ok => ok && setEditing(false))} onClose={() => { setEditing(false); onFinishEdit(item) }} aria-label={label} autoFocus/> : <input className="inline-cell-input" type={type === 'number' ? 'number' : 'text'} placeholder="Введите значение" value={draft} onChange={event => setDraft(event.target.value)} onBlur={commit} onKeyDown={keyDown} autoFocus/> : <div className="cell-display"><div className="cell-display-value">{display}</div></div>}
     {saving && <i className="cell-saving-dot"/>}
   </td>
 }

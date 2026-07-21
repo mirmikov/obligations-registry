@@ -1,8 +1,14 @@
 package main
 
 import (
+	"bytes"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
+	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -36,8 +42,14 @@ type chatMessage struct {
 	SenderID       int64  `json:"sender_id"`
 	SenderName     string `json:"sender_name"`
 	Body           string `json:"body"`
+	ImageURL       string `json:"image_url,omitempty"`
 	CreatedAt      string `json:"created_at"`
 }
+
+const (
+	chatImageMarker  = "[[chat-image:"
+	maxChatImageSize = 8 << 20
+)
 
 func (a *app) listChatUsers(w http.ResponseWriter, r *http.Request) {
 	rows, err := a.db.QueryContext(r.Context(), `SELECT id,name,email,role FROM users WHERE active ORDER BY name,email`)
@@ -94,6 +106,9 @@ func (a *app) listChatConversations(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			fail(w, http.StatusInternalServerError, "Не удалось загрузить участников")
 			return
+		}
+		if body, imageName := decodeChatMessageBody(item.LastMessage); imageName != "" {
+			item.LastMessage = strings.TrimSpace("Изображение " + body)
 		}
 		items = append(items, item)
 	}
@@ -228,6 +243,7 @@ func (a *app) listChatMessages(w http.ResponseWriter, r *http.Request) {
 			fail(w, http.StatusInternalServerError, "Ошибка истории сообщений")
 			return
 		}
+		item.Body, item.ImageURL = chatMessagePresentation(item.Body, conversationID)
 		items = append(items, item)
 	}
 	_, _ = a.db.ExecContext(r.Context(), `UPDATE chat_members SET last_read_at=now() WHERE conversation_id=$1 AND user_id=$2`, conversationID, currentUser(r).ID)
@@ -239,15 +255,16 @@ func (a *app) sendChatMessage(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	var input struct {
-		Body string `json:"body"`
-	}
-	if !decodeJSON(w, r, &input) {
+	body, imageName, ok := a.readChatMessageInput(w, r, conversationID)
+	if !ok {
 		return
 	}
-	input.Body = strings.TrimSpace(input.Body)
-	if input.Body == "" || utf8.RuneCountInString(input.Body) > 4000 {
-		fail(w, http.StatusBadRequest, "Сообщение должно содержать от 1 до 4000 символов")
+	storedBody := encodeChatMessageBody(body, imageName)
+	if storedBody == "" || utf8.RuneCountInString(storedBody) > 4000 {
+		if imageName != "" {
+			_ = os.Remove(filepath.Join(chatImageDirectory(), strconv.FormatInt(conversationID, 10), imageName))
+		}
+		fail(w, http.StatusBadRequest, "Сообщение должно содержать не больше 4000 символов")
 		return
 	}
 	user := currentUser(r)
@@ -257,16 +274,198 @@ func (a *app) sendChatMessage(w http.ResponseWriter, r *http.Request) {
 			INSERT INTO chat_messages(conversation_id,sender_id,body) VALUES($1,$2,$3)
 			RETURNING id,conversation_id,sender_id,body,created_at
 		)
-		SELECT i.id,i.conversation_id,i.sender_id,$4,i.body,to_char(i.created_at,'YYYY-MM-DD HH24:MI:SS') FROM inserted i`, conversationID, user.ID, input.Body, user.Name).Scan(
+			SELECT i.id,i.conversation_id,i.sender_id,$4,i.body,to_char(i.created_at,'YYYY-MM-DD HH24:MI:SS') FROM inserted i`, conversationID, user.ID, storedBody, user.Name).Scan(
 		&item.ID, &item.ConversationID, &item.SenderID, &item.SenderName, &item.Body, &item.CreatedAt,
 	)
 	if err != nil {
+		if imageName != "" {
+			_ = os.Remove(filepath.Join(chatImageDirectory(), strconv.FormatInt(conversationID, 10), imageName))
+		}
 		fail(w, http.StatusInternalServerError, "Не удалось отправить сообщение")
 		return
 	}
 	_, _ = a.db.ExecContext(r.Context(), `UPDATE chat_conversations SET updated_at=now() WHERE id=$1`, conversationID)
 	_, _ = a.db.ExecContext(r.Context(), `UPDATE chat_members SET last_read_at=now() WHERE conversation_id=$1 AND user_id=$2`, conversationID, user.ID)
+	item.Body, item.ImageURL = chatMessagePresentation(item.Body, conversationID)
 	writeJSON(w, http.StatusCreated, item)
+}
+
+func (a *app) readChatMessageInput(w http.ResponseWriter, r *http.Request, conversationID int64) (string, string, bool) {
+	if !strings.HasPrefix(strings.ToLower(r.Header.Get("Content-Type")), "multipart/form-data") {
+		var input struct {
+			Body string `json:"body"`
+		}
+		if !decodeJSON(w, r, &input) {
+			return "", "", false
+		}
+		body := strings.TrimSpace(input.Body)
+		if body == "" || utf8.RuneCountInString(body) > 4000 {
+			fail(w, http.StatusBadRequest, "Сообщение должно содержать от 1 до 4000 символов")
+			return "", "", false
+		}
+		return body, "", true
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxChatImageSize+(128<<10))
+	if err := r.ParseMultipartForm(maxChatImageSize + (64 << 10)); err != nil {
+		fail(w, http.StatusBadRequest, "Не удалось прочитать изображение")
+		return "", "", false
+	}
+	defer r.MultipartForm.RemoveAll()
+	body := strings.TrimSpace(r.FormValue("body"))
+	if utf8.RuneCountInString(body) > 3900 {
+		fail(w, http.StatusBadRequest, "Подпись к изображению слишком длинная")
+		return "", "", false
+	}
+	file, _, err := r.FormFile("image")
+	if err != nil {
+		fail(w, http.StatusBadRequest, "Вставьте изображение")
+		return "", "", false
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, maxChatImageSize+1))
+	if err != nil || len(data) == 0 || len(data) > maxChatImageSize {
+		fail(w, http.StatusBadRequest, "Изображение должно быть не больше 8 МБ")
+		return "", "", false
+	}
+	extension, ok := chatImageExtension(data)
+	if !ok {
+		fail(w, http.StatusBadRequest, "Поддерживаются PNG, JPEG, GIF и WebP")
+		return "", "", false
+	}
+	name, err := saveChatImage(conversationID, extension, data)
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Не удалось сохранить изображение")
+		return "", "", false
+	}
+	return body, name, true
+}
+
+func (a *app) serveChatImage(w http.ResponseWriter, r *http.Request) {
+	conversationID, ok := a.chatConversationAccess(w, r)
+	if !ok {
+		return
+	}
+	name := r.PathValue("name")
+	if !validChatImageName(name) {
+		fail(w, http.StatusBadRequest, "Некорректное изображение")
+		return
+	}
+	marker := chatImageMarker + name + "]]"
+	var exists bool
+	if err := a.db.QueryRowContext(r.Context(), `SELECT EXISTS(SELECT 1 FROM chat_messages WHERE conversation_id=$1 AND body LIKE $2)`, conversationID, marker+"%").Scan(&exists); err != nil || !exists {
+		fail(w, http.StatusNotFound, "Изображение не найдено")
+		return
+	}
+	path := filepath.Join(chatImageDirectory(), strconv.FormatInt(conversationID, 10), name)
+	file, err := os.Open(path)
+	if err != nil {
+		fail(w, http.StatusNotFound, "Изображение не найдено")
+		return
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		fail(w, http.StatusNotFound, "Изображение не найдено")
+		return
+	}
+	w.Header().Set("Cache-Control", "private, max-age=3600")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Content-Type", chatImageContentType(filepath.Ext(name)))
+	http.ServeContent(w, r, name, info.ModTime(), file)
+}
+
+func chatImageDirectory() string { return getenv("CHAT_UPLOAD_DIR", "/data/chat_uploads") }
+
+func chatImageExtension(data []byte) (string, bool) {
+	switch {
+	case bytes.HasPrefix(data, []byte("\x89PNG\r\n\x1a\n")):
+		return ".png", true
+	case bytes.HasPrefix(data, []byte("\xff\xd8\xff")):
+		return ".jpg", true
+	case bytes.HasPrefix(data, []byte("GIF87a")) || bytes.HasPrefix(data, []byte("GIF89a")):
+		return ".gif", true
+	case len(data) >= 12 && string(data[:4]) == "RIFF" && string(data[8:12]) == "WEBP":
+		return ".webp", true
+	default:
+		return "", false
+	}
+}
+
+func saveChatImage(conversationID int64, extension string, data []byte) (string, error) {
+	random := make([]byte, 16)
+	if _, err := rand.Read(random); err != nil {
+		return "", err
+	}
+	name := hex.EncodeToString(random) + extension
+	directory := filepath.Join(chatImageDirectory(), strconv.FormatInt(conversationID, 10))
+	if err := os.MkdirAll(directory, 0750); err != nil {
+		return "", err
+	}
+	path := filepath.Join(directory, name)
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0640)
+	if err != nil {
+		return "", err
+	}
+	if _, err = file.Write(data); err != nil {
+		file.Close()
+		_ = os.Remove(path)
+		return "", err
+	}
+	if err := file.Close(); err != nil {
+		_ = os.Remove(path)
+		return "", err
+	}
+	return name, nil
+}
+
+func encodeChatMessageBody(body, imageName string) string {
+	body = strings.TrimSpace(body)
+	if imageName == "" {
+		return body
+	}
+	if body == "" {
+		return chatImageMarker + imageName + "]]"
+	}
+	return chatImageMarker + imageName + "]]\n" + body
+}
+
+func decodeChatMessageBody(stored string) (string, string) {
+	if !strings.HasPrefix(stored, chatImageMarker) {
+		return stored, ""
+	}
+	end := strings.Index(stored, "]]")
+	if end < len(chatImageMarker) {
+		return stored, ""
+	}
+	name := stored[len(chatImageMarker):end]
+	if !validChatImageName(name) {
+		return stored, ""
+	}
+	return strings.TrimSpace(stored[end+2:]), name
+}
+
+func chatMessagePresentation(stored string, conversationID int64) (string, string) {
+	body, imageName := decodeChatMessageBody(stored)
+	if imageName == "" {
+		return body, ""
+	}
+	return body, fmt.Sprintf("/api/chat/conversations/%d/images/%s", conversationID, imageName)
+}
+
+func validChatImageName(name string) bool {
+	if len(name) < 36 || filepath.Base(name) != name {
+		return false
+	}
+	base, extension := strings.TrimSuffix(name, filepath.Ext(name)), strings.ToLower(filepath.Ext(name))
+	if len(base) != 32 || (extension != ".png" && extension != ".jpg" && extension != ".gif" && extension != ".webp") {
+		return false
+	}
+	_, err := hex.DecodeString(base)
+	return err == nil
+}
+
+func chatImageContentType(extension string) string {
+	return map[string]string{".png": "image/png", ".jpg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp"}[strings.ToLower(extension)]
 }
 
 func (a *app) markChatRead(w http.ResponseWriter, r *http.Request) {
