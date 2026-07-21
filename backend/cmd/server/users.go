@@ -1,6 +1,8 @@
 package main
 
 import (
+	"database/sql"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -40,13 +42,28 @@ func (a *app) createUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	hash, _ := bcrypt.GenerateFromPassword([]byte(input.Password), bcrypt.DefaultCost)
+	user := currentUser(r)
+	tx, err := a.db.BeginTx(r.Context(), nil)
+	if err != nil {
+		fail(w, 500, "Не удалось начать сохранение")
+		return
+	}
+	defer tx.Rollback()
 	var id int64
-	err := a.db.QueryRowContext(r.Context(), `INSERT INTO users(name,email,password_hash,role) VALUES($1,lower($2),$3,$4) RETURNING id`, strings.TrimSpace(input.Name), strings.TrimSpace(input.Email), string(hash), input.Role).Scan(&id)
+	err = tx.QueryRowContext(r.Context(), `INSERT INTO users(name,email,password_hash,role) VALUES($1,lower($2),$3,$4) RETURNING id`, strings.TrimSpace(input.Name), strings.TrimSpace(input.Email), string(hash), input.Role).Scan(&id)
 	if err != nil {
 		fail(w, 400, "Пользователь с такой почтой уже существует")
 		return
 	}
-	user := currentUser(r)
+	after, err := snapshotRows(r.Context(), tx, "users", []int64{id})
+	if err != nil || a.recordUndo(r.Context(), tx, user.ID, "create", "Создание пользователя «"+strings.TrimSpace(input.Name)+"»", undoPayload{Users: &undoChange{Before: emptySnapshot(), After: after}}) != nil {
+		fail(w, 500, "Не удалось записать историю отмены")
+		return
+	}
+	if err = tx.Commit(); err != nil {
+		fail(w, 500, "Не удалось завершить сохранение")
+		return
+	}
 	a.audit(r.Context(), user.ID, "create", "user", &id, map[string]any{"email": input.Email, "role": input.Role})
 	writeJSON(w, 201, map[string]any{"id": id})
 }
@@ -68,21 +85,48 @@ func (a *app) updateUser(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, "Некорректная роль")
 		return
 	}
+	user := currentUser(r)
+	tx, err := a.db.BeginTx(r.Context(), nil)
+	if err != nil {
+		fail(w, 500, "Не удалось начать сохранение")
+		return
+	}
+	defer tx.Rollback()
+	if err = tx.QueryRowContext(r.Context(), `SELECT id FROM users WHERE id=$1 FOR UPDATE`, id).Scan(&id); err == sql.ErrNoRows {
+		fail(w, 404, "Пользователь не найден")
+		return
+	} else if err != nil {
+		fail(w, 500, "Не удалось подготовить историю отмены")
+		return
+	}
+	before, err := snapshotRows(r.Context(), tx, "users", []int64{id})
+	if err != nil {
+		fail(w, 500, "Не удалось подготовить историю отмены")
+		return
+	}
 	if input.Password != "" {
 		if len(input.Password) < 8 {
 			fail(w, 400, "Пароль должен быть не короче 8 символов")
 			return
 		}
 		hash, _ := bcrypt.GenerateFromPassword([]byte(input.Password), bcrypt.DefaultCost)
-		_, err = a.db.ExecContext(r.Context(), `UPDATE users SET name=$1,role=$2,active=COALESCE($3,active),password_hash=$4,updated_at=now() WHERE id=$5`, input.Name, input.Role, input.Active, string(hash), id)
+		_, err = tx.ExecContext(r.Context(), `UPDATE users SET name=$1,role=$2,active=COALESCE($3,active),password_hash=$4,updated_at=now() WHERE id=$5`, input.Name, input.Role, input.Active, string(hash), id)
 	} else {
-		_, err = a.db.ExecContext(r.Context(), `UPDATE users SET name=$1,role=$2,active=COALESCE($3,active),updated_at=now() WHERE id=$4`, input.Name, input.Role, input.Active, id)
+		_, err = tx.ExecContext(r.Context(), `UPDATE users SET name=$1,role=$2,active=COALESCE($3,active),updated_at=now() WHERE id=$4`, input.Name, input.Role, input.Active, id)
 	}
 	if err != nil {
 		fail(w, 400, "Не удалось обновить пользователя")
 		return
 	}
-	user := currentUser(r)
+	after, err := snapshotRows(r.Context(), tx, "users", []int64{id})
+	if err != nil || a.recordUndo(r.Context(), tx, user.ID, "update", fmt.Sprintf("Изменение пользователя №%d", id), undoPayload{Users: &undoChange{Before: before, After: after}}) != nil {
+		fail(w, 500, "Не удалось записать историю отмены")
+		return
+	}
+	if err = tx.Commit(); err != nil {
+		fail(w, 500, "Не удалось завершить сохранение")
+		return
+	}
 	a.audit(r.Context(), user.ID, "update", "user", &id, map[string]any{"role": input.Role, "active": input.Active})
 	writeJSON(w, 200, map[string]any{"id": id})
 }

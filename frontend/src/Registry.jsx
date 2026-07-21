@@ -150,7 +150,7 @@ export default function Registry({ user, notify }) {
       setSplitItem(null); setSelected([]); load()
     } catch (error) { notify(error.message, 'error'); throw error }
   }
-  const importFile = async event => { const file = event.target.files?.[0]; if (!file) return; const body = new FormData(); body.append('file', file); try { const result = await request('/api/obligations/import.xlsx', { method: 'POST', body }); notify(`Импортировано строк: ${result.imported}`); load() } catch (e) { notify(e.message, 'error') } finally { event.target.value = '' } }
+  const importFile = async event => { const file = event.target.files?.[0]; if (!file) return; const body = new FormData(); body.append('file', file); try { const result = await request('/api/obligations/import.xlsx', { method: 'POST', body }); notify(`База обновлена: ${result.updated} изменено, ${result.created} добавлено`); load(); request('/api/references').then(setRefs).catch(e => notify(e.message, 'error')) } catch (e) { notify(e.message, 'error') } finally { event.target.value = '' } }
   const doSort = key => setSort(current => ({ key, order: current.key === key && current.order === 'asc' ? 'desc' : 'asc' }))
   return <div className={`page registry-page ${tableFullscreen ? 'is-table-fullscreen' : ''}`}>
     <PageHeader eyebrow="Рабочая область" title="Реестр обязательств" subtitle={`${data.total.toLocaleString('ru-RU')} записей с учётом фильтров`} actions={<><PresenceCluster users={activeUsers} currentSession={sessionId}/>{user.role === 'admin' && <><input ref={importRef} type="file" accept=".xlsx" hidden onChange={importFile}/><button className="secondary" onClick={() => importRef.current.click()}><FileUp size={17}/>Импорт</button></>}<button className="secondary" onClick={() => download(`/api/obligations/export.xlsx?${query}`, 'Реестр обязательств.xlsx')}><Download size={17}/>Excel</button><FontSizeButton large={largeTableFont} onToggle={() => setLargeTableFont(value => !value)}/><button className="secondary registry-fullscreen-button" onClick={() => setTableFullscreen(true)} title="Открыть таблицу на весь экран" aria-label="Открыть таблицу на весь экран"><Maximize2 size={17}/></button></>}/>
@@ -187,7 +187,7 @@ export default function Registry({ user, notify }) {
     {bulkOpen && (
       <BulkModal count={selected.length} refs={refs} onClose={() => setBulkOpen(false)} onSave={async values => { try { await request('/api/obligations/bulk', { method: 'POST', body: JSON.stringify({ ids: selected, ...values }) }); notify('Выбранные строки обновлены'); setBulkOpen(false); setSelected([]); load() } catch (e) { notify(e.message, 'error') } }}/>
     )}
-    {splitItem && <SplitPaymentModal item={splitItem} onClose={() => setSplitItem(null)} onSave={values => splitPayment(splitItem, values)}/>}
+    {splitItem && <SplitPaymentModal item={splitItem} refs={refs} onClose={() => setSplitItem(null)} onSave={values => splitPayment(splitItem, values)}/>}
   </div>
 }
 
@@ -422,32 +422,51 @@ function presenceLocation(person) {
 function Field({ label, fieldKey, value, onChange, onFocus, wide, type, ...props }) { return <label className={`field ${wide ? 'wide' : ''}`}><span>{label}</span>{type === 'date' ? <DateInput value={value ?? ''} onChange={onChange} onFocus={() => onFocus?.(fieldKey, label)} {...props}/> : <input type={type} value={value ?? ''} onChange={e => onChange(e.target.value)} onFocus={() => onFocus?.(fieldKey, label)} {...props}/>}</label> }
 function SelectField({ label, fieldKey, value, options = [], onChange, onFocus, wide, editable }) { return <label className={`field ${wide ? 'wide' : ''}`}><span>{label}</span>{editable ? <><input list={`list-${label}`} value={value} onChange={e => onChange(e.target.value)} onFocus={() => onFocus?.(fieldKey, label)}/><datalist id={`list-${label}`}>{options.map(o => <option key={o.id ?? o.value} value={o.value}/>)}</datalist></> : <select value={value} onChange={e => onChange(e.target.value)} onFocus={() => onFocus?.(fieldKey, label)}><option value="">Не выбрано</option>{options.map(o => <option key={o.id ?? o.value} value={o.value}>{o.value}</option>)}</select>}</label> }
 
-function SplitPaymentModal({ item, onClose, onSave }) {
-  const [form, setForm] = useState({ mode: 'count', count: 3, payment_amount: '', start_date: item.planned_payment_date || todayISO(), period_unit: 'month', period_value: 1 })
+function SplitPaymentModal({ item, refs, onClose, onSave }) {
+  const defaultDate = item.planned_payment_date || todayISO()
+  const accountTypes = refs.account_types || []
+  const [form, setForm] = useState({ mode: 'count', count: 3, payment_amount: '', start_date: defaultDate, period_unit: 'month', period_value: 1, percentage_parts: [{ percent: '', account_type: '', planned_date: '' }, { percent: '', account_type: '', planned_date: '' }] })
   const [saving, setSaving] = useState(false)
   const preview = useMemo(() => buildSplitPreview(Number(item.amount), form), [item.amount, form])
   const update = (key, value) => setForm(current => ({ ...current, [key]: value }))
+  const updatePercentagePart = (index, key, value) => setForm(current => ({ ...current, percentage_parts: current.percentage_parts.map((part, partIndex) => partIndex === index ? { ...part, [key]: value } : part) }))
+  const addPercentagePart = () => setForm(current => {
+    if (current.percentage_parts.length >= 60) return current
+    return { ...current, percentage_parts: [...current.percentage_parts, { percent: '', account_type: '', planned_date: '' }] }
+  })
+  const removePercentagePart = index => setForm(current => current.percentage_parts.length <= 2 ? current : { ...current, percentage_parts: current.percentage_parts.filter((_, partIndex) => partIndex !== index) })
   const submit = async () => {
     if (preview.error || saving) return
     setSaving(true)
     try {
-      await onSave({ ...form, count: Number(form.count), payment_amount: form.mode === 'amount' ? Number(form.payment_amount) : null, period_value: Number(form.period_value) })
+      await onSave({ ...form, count: Number(form.count), payment_amount: form.mode === 'amount' ? Number(form.payment_amount) : null, period_value: Number(form.period_value), percentage_parts: form.mode === 'percentage' ? form.percentage_parts.map(part => ({ ...part, percent: Number(part.percent) })) : null })
     } finally { setSaving(false) }
   }
   return <div className="modal-backdrop"><div className="modal split-payment-modal">
     <div className="modal-head"><div><p className="eyebrow">График оплаты</p><h2>Разбить платёж</h2></div><button onClick={onClose} aria-label="Закрыть"><X/></button></div>
     <div className="modal-body split-payment-body">
       <div className="split-source-card"><div><span>Контрагент</span><strong>{item.counterparty || 'Не указан'}</strong><small>{item.document_number ? `Документ ${item.document_number}` : 'Без номера документа'}</small></div><div><span>Общая сумма</span><strong>{money(item.amount)}</strong><small>Сумма графика останется неизменной</small></div></div>
-      <div className="split-mode-tabs" role="tablist"><button type="button" className={form.mode === 'count' ? 'active' : ''} onClick={() => update('mode', 'count')}>Равными частями</button><button type="button" className={form.mode === 'amount' ? 'active' : ''} onClick={() => update('mode', 'amount')}>Заданная сумма</button></div>
-      <div className="split-settings-grid">
+      <div className="split-mode-tabs" role="tablist"><button type="button" className={form.mode === 'count' ? 'active' : ''} onClick={() => update('mode', 'count')}>Равными частями</button><button type="button" className={form.mode === 'amount' ? 'active' : ''} onClick={() => update('mode', 'amount')}>Заданная сумма</button><button type="button" className={form.mode === 'percentage' ? 'active' : ''} onClick={() => update('mode', 'percentage')}>По процентам</button></div>
+      {form.mode === 'percentage' ? <div className="split-percentage-editor">
+        <div className="split-percentage-head"><div><strong>Распределение платежа</strong><span>Для каждой доли укажите процент, признак учёта и дату</span></div><b className={preview.percentageTotal === 100 ? 'valid' : ''}>{formatPercent(preview.percentageTotal)} из 100%</b></div>
+        <div className="split-percentage-list">{form.percentage_parts.map((part, index) => <div className="split-percentage-row" key={index}>
+          <span className="split-percentage-number">{index + 1}</span>
+          <label className="field"><span>Доля, %</span><input type="number" min="0.01" max="100" step="0.01" value={part.percent} onChange={event => updatePercentagePart(index, 'percent', event.target.value)}/></label>
+          <label className="field"><span>Признак учёта</span><select value={part.account_type} onChange={event => updatePercentagePart(index, 'account_type', event.target.value)}><option value="">Выберите</option>{accountTypes.map(option => <option key={option.id ?? option.value} value={option.value}>{option.value}</option>)}</select></label>
+          <label className="field"><span>Плановая дата</span><DateInput value={part.planned_date} onChange={value => updatePercentagePart(index, 'planned_date', value)} aria-label={`Плановая дата доли ${index + 1}`}/></label>
+          <div className="split-percentage-amount"><span>Сумма доли</span><strong>{preview.items[index] ? money(preview.items[index].amount) : '—'}</strong></div>
+          <button type="button" className="split-percentage-remove" onClick={() => removePercentagePart(index)} disabled={form.percentage_parts.length <= 2} aria-label={`Удалить долю ${index + 1}`} title="Удалить долю"><Trash2 size={16}/></button>
+        </div>)}</div>
+        <button type="button" className="split-percentage-add" onClick={addPercentagePart} disabled={form.percentage_parts.length >= 60}><Plus size={16}/>Добавить долю</button>
+      </div> : <div className="split-settings-grid">
         {form.mode === 'count' ? <label className="field"><span>Количество платежей</span><input type="number" min="2" max="60" value={form.count} onChange={event => update('count', event.target.value)}/></label> : <label className="field"><span>Сумма одного платежа, ₽</span><input type="number" min="0.01" step="0.01" value={form.payment_amount} onChange={event => update('payment_amount', event.target.value)} placeholder="Например, 50 000"/></label>}
         <label className="field"><span>Дата первого платежа</span><DateInput value={form.start_date} onChange={value => update('start_date', value)} aria-label="Дата первого платежа"/></label>
         <label className="field"><span>Повторять каждые</span><input type="number" min="1" max="365" value={form.period_value} onChange={event => update('period_value', event.target.value)}/></label>
         <label className="field"><span>Период</span><select value={form.period_unit} onChange={event => update('period_unit', event.target.value)}><option value="month">Месяц</option><option value="week">Неделя</option><option value="day">День</option></select></label>
-      </div>
+      </div>}
       {preview.error ? <div className="split-error">{preview.error}</div> : <div className="split-preview">
         <div className="split-preview-head"><div><strong>Предварительный график</strong><span>{preview.items.length} {paymentWord(preview.items.length)}</span></div><div><span>Итого</span><strong>{money(preview.total)}</strong></div></div>
-        <div className="split-preview-scroll"><table><thead><tr><th>№</th><th>Плановая дата</th><th>Сумма</th></tr></thead><tbody>{preview.items.map(part => <tr key={part.number}><td>{part.number}</td><td>{shortDate(part.date)}</td><td>{money(part.amount)}</td></tr>)}</tbody></table></div>
+        <div className="split-preview-scroll"><table><thead><tr><th>№</th>{form.mode === 'percentage' && <><th>Доля</th><th>Признак учёта</th></>}<th>Плановая дата</th><th>Сумма</th></tr></thead><tbody>{preview.items.map(part => <tr key={part.number}><td>{part.number}</td>{form.mode === 'percentage' && <><td>{formatPercent(part.percent)}</td><td>{part.account_type}</td></>}<td>{shortDate(part.date)}</td><td>{money(part.amount)}</td></tr>)}</tbody></table></div>
         {preview.hasRemainder && <p>Последний платёж скорректирован на остаток, поэтому общая сумма совпадает до копейки.</p>}
       </div>}
     </div>
@@ -461,8 +480,34 @@ function canSplitPayment(item) {
 
 function buildSplitPreview(amount, form) {
   const totalCents = Math.round(Number(amount) * 100)
-  const interval = Number(form.period_value)
   if (!Number.isFinite(totalCents) || totalCents <= 0) return { error: 'У платежа должна быть положительная сумма.', items: [], total: 0 }
+  if (form.mode === 'percentage') {
+    const parts = form.percentage_parts || []
+    if (parts.length < 2 || parts.length > 60) return { error: 'Количество долей должно быть от 2 до 60.', items: [], total: 0, percentageTotal: 0 }
+    const prepared = []
+    let totalPoints = 0
+    for (let index = 0; index < parts.length; index++) {
+      const raw = Number(parts[index].percent)
+      const points = Math.round(raw * 100)
+      if (!Number.isFinite(raw) || raw <= 0 || raw > 100 || Math.abs(raw * 100 - points) > 0.000001) return { error: `Укажите корректный процент для доли ${index + 1} с точностью до двух знаков.`, items: [], total: 0, percentageTotal: totalPoints / 100 }
+      if (!parts[index].account_type) return { error: `Выберите признак учёта для доли ${index + 1}.`, items: [], total: 0, percentageTotal: (totalPoints + points) / 100 }
+      if (!parts[index].planned_date || !/^\d{4}-\d{2}-\d{2}$/.test(parts[index].planned_date)) return { error: `Выберите плановую дату для доли ${index + 1}.`, items: [], total: 0, percentageTotal: (totalPoints + points) / 100 }
+      prepared.push({ ...parts[index], points, index })
+      totalPoints += points
+    }
+    if (totalPoints !== 10000) return { error: `Сумма долей должна быть ровно 100%, сейчас ${formatPercent(totalPoints / 100)}.`, items: [], total: 0, percentageTotal: totalPoints / 100 }
+    const denominator = 10000n
+    const total = BigInt(totalCents)
+    const allocated = prepared.map(part => { const product = total * BigInt(part.points); return { ...part, cents: product / denominator, remainder: product % denominator } })
+    let leftover = total - allocated.reduce((sum, part) => sum + part.cents, 0n)
+    const byRemainder = [...allocated].sort((left, right) => Number(right.remainder - left.remainder) || left.index - right.index)
+    for (let index = 0; leftover > 0n; index++, leftover--) byRemainder[index % byRemainder.length].cents++
+    const centsByIndex = new Map(byRemainder.map(part => [part.index, part.cents]))
+    const items = prepared.map((part, index) => ({ number: index + 1, date: part.planned_date, amount: Number(centsByIndex.get(index)) / 100, percent: part.points / 100, account_type: part.account_type }))
+    if (items.some(part => part.amount < 0.01)) return { error: 'Одна из долей получается меньше одной копейки.', items: [], total: 0, percentageTotal: 100 }
+    return { items, total: items.reduce((sum, part) => sum + part.amount, 0), hasRemainder: allocated.some(part => part.remainder !== 0n), error: '', percentageTotal: 100 }
+  }
+  const interval = Number(form.period_value)
   if (!form.start_date || !/^\d{4}-\d{2}-\d{2}$/.test(form.start_date)) return { error: 'Выберите дату первого платежа.', items: [], total: 0 }
   if (!Number.isInteger(interval) || interval < 1 || interval > 365) return { error: 'Период должен быть целым числом от 1 до 365.', items: [], total: 0 }
   let amounts = []
@@ -483,6 +528,8 @@ function buildSplitPreview(amount, form) {
   const items = amounts.map((cents, index) => ({ number: index + 1, date: splitDate(form.start_date, index, form.period_unit, interval), amount: cents / 100 }))
   return { items, total: amounts.reduce((sum, cents) => sum + cents, 0) / 100, hasRemainder: amounts.length > 1 && amounts.at(-1) !== amounts[0], error: '' }
 }
+
+function formatPercent(value) { return `${Number(value || 0).toLocaleString('ru-RU', { maximumFractionDigits: 2 })}%` }
 
 function splitDate(startValue, index, unit, interval) {
   const [year, month, day] = startValue.split('-').map(Number)

@@ -80,6 +80,18 @@ CREATE TABLE IF NOT EXISTS audit_log (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+CREATE TABLE IF NOT EXISTS undo_operations (
+  id BIGSERIAL PRIMARY KEY,
+  user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  action TEXT NOT NULL,
+  description TEXT NOT NULL,
+  payload JSONB NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  undone_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS undo_operations_user_idx ON undo_operations(user_id,id DESC);
+
 CREATE TABLE IF NOT EXISTS chat_conversations (
   id BIGSERIAL PRIMARY KEY,
   kind TEXT NOT NULL CHECK (kind IN ('direct','group')),

@@ -1,7 +1,9 @@
 package main
 
 import (
+	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -46,13 +48,38 @@ func (a *app) addReference(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, "Пустое значение")
 		return
 	}
+	user := currentUser(r)
+	tx, err := a.db.BeginTx(r.Context(), nil)
+	if err != nil {
+		fail(w, 500, "Не удалось начать сохранение")
+		return
+	}
+	defer tx.Rollback()
+	var existingID int64
+	before := emptySnapshot()
+	err = tx.QueryRowContext(r.Context(), `SELECT id FROM reference_values WHERE kind=$1 AND value=$2 FOR UPDATE`, kind, input.Value).Scan(&existingID)
+	if err == nil {
+		before, err = snapshotRows(r.Context(), tx, "reference_values", []int64{existingID})
+	}
+	if err != nil && err != sql.ErrNoRows {
+		fail(w, 500, "Не удалось подготовить историю отмены")
+		return
+	}
 	var id int64
-	err := a.db.QueryRowContext(r.Context(), `INSERT INTO reference_values(kind,value,sort_order) VALUES($1,$2,(SELECT COALESCE(max(sort_order),-1)+1 FROM reference_values WHERE kind=$1)) ON CONFLICT(kind,value) DO UPDATE SET active=true RETURNING id`, kind, input.Value).Scan(&id)
+	err = tx.QueryRowContext(r.Context(), `INSERT INTO reference_values(kind,value,sort_order) VALUES($1,$2,(SELECT COALESCE(max(sort_order),-1)+1 FROM reference_values WHERE kind=$1)) ON CONFLICT(kind,value) DO UPDATE SET active=true RETURNING id`, kind, input.Value).Scan(&id)
 	if err != nil {
 		fail(w, 400, "Не удалось добавить значение")
 		return
 	}
-	user := currentUser(r)
+	after, err := snapshotRows(r.Context(), tx, "reference_values", []int64{id})
+	if err != nil || a.recordUndo(r.Context(), tx, user.ID, "create", "Добавление значения справочника «"+input.Value+"»", undoPayload{References: &undoChange{Before: before, After: after}}) != nil {
+		fail(w, 500, "Не удалось записать историю отмены")
+		return
+	}
+	if err = tx.Commit(); err != nil {
+		fail(w, 500, "Не удалось завершить сохранение")
+		return
+	}
 	a.audit(r.Context(), user.ID, "create", "reference", &id, map[string]any{"kind": kind, "value": input.Value})
 	writeJSON(w, 201, map[string]any{"id": id})
 }
@@ -64,7 +91,26 @@ func (a *app) deleteReference(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, "Некорректные данные")
 		return
 	}
-	result, err := a.db.ExecContext(r.Context(), `UPDATE reference_values SET active=false WHERE id=$1 AND kind=$2`, id, kind)
+	user := currentUser(r)
+	tx, err := a.db.BeginTx(r.Context(), nil)
+	if err != nil {
+		fail(w, 500, "Не удалось начать удаление")
+		return
+	}
+	defer tx.Rollback()
+	if err = tx.QueryRowContext(r.Context(), `SELECT id FROM reference_values WHERE id=$1 AND kind=$2 FOR UPDATE`, id, kind).Scan(&id); err == sql.ErrNoRows {
+		fail(w, 404, "Значение не найдено")
+		return
+	} else if err != nil {
+		fail(w, 500, "Не удалось подготовить историю отмены")
+		return
+	}
+	before, err := snapshotRows(r.Context(), tx, "reference_values", []int64{id})
+	if err != nil {
+		fail(w, 500, "Не удалось подготовить историю отмены")
+		return
+	}
+	result, err := tx.ExecContext(r.Context(), `UPDATE reference_values SET active=false WHERE id=$1 AND kind=$2`, id, kind)
 	if err != nil {
 		fail(w, 500, "Не удалось удалить значение")
 		return
@@ -74,7 +120,15 @@ func (a *app) deleteReference(w http.ResponseWriter, r *http.Request) {
 		fail(w, 404, "Значение не найдено")
 		return
 	}
-	user := currentUser(r)
+	after, err := snapshotRows(r.Context(), tx, "reference_values", []int64{id})
+	if err != nil || a.recordUndo(r.Context(), tx, user.ID, "delete", fmt.Sprintf("Удаление значения справочника №%d", id), undoPayload{References: &undoChange{Before: before, After: after}}) != nil {
+		fail(w, 500, "Не удалось записать историю отмены")
+		return
+	}
+	if err = tx.Commit(); err != nil {
+		fail(w, 500, "Не удалось завершить удаление")
+		return
+	}
 	a.audit(r.Context(), user.ID, "delete", "reference", &id, map[string]any{"kind": kind})
 	w.WriteHeader(204)
 }

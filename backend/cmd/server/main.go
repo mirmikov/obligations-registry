@@ -80,6 +80,8 @@ func main() {
 	mux.Handle("POST /api/obligations/{id}/split", a.authorize(a.requireRole("admin", "editor")(http.HandlerFunc(a.splitObligation))))
 	mux.Handle("GET /api/obligations/export.xlsx", a.authorize(http.HandlerFunc(a.exportXLSX)))
 	mux.Handle("POST /api/obligations/import.xlsx", a.authorize(a.requireRole("admin")(http.HandlerFunc(a.importXLSX))))
+	mux.Handle("GET /api/undo", a.authorize(http.HandlerFunc(a.undoStatus)))
+	mux.Handle("POST /api/undo", a.authorize(a.requireRole("admin", "editor")(http.HandlerFunc(a.undoLast))))
 	mux.Handle("GET /api/references", a.authorize(http.HandlerFunc(a.listReferences)))
 	mux.Handle("POST /api/references/{kind}", a.authorize(a.requireRole("admin")(http.HandlerFunc(a.addReference))))
 	mux.Handle("DELETE /api/references/{kind}/{id}", a.authorize(a.requireRole("admin")(http.HandlerFunc(a.deleteReference))))

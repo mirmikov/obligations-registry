@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { BarChart3, BellRing, BookOpen, ChevronDown, ChevronLeft, ChevronRight, CircleDollarSign, FileClock, Landmark, LogOut, Maximize2, Menu, MessageCircle, Minus, ReceiptText, Settings, Users, X } from 'lucide-react'
+import { BarChart3, BellRing, BookOpen, ChevronDown, ChevronLeft, ChevronRight, CircleDollarSign, FileClock, Landmark, LogOut, Maximize2, Menu, MessageCircle, Minus, ReceiptText, Settings, Undo2, Users, X } from 'lucide-react'
 import { request } from './api'
 import Dashboard from './Dashboard'
 import Registry from './Registry'
@@ -31,6 +31,9 @@ export default function App() {
   const [workspaceReady, setWorkspaceReady] = useState(false)
   const [registryOpen, setRegistryOpen] = useState(false)
   const [chatTarget, setChatTarget] = useState(null)
+  const [undoState, setUndoState] = useState({ available: false, remaining: 0, loading: true })
+  const [undoing, setUndoing] = useState(false)
+  const [dataRevision, setDataRevision] = useState(0)
 
   const enterWorkspace = (nextUser, state = {}) => {
     setUser(nextUser)
@@ -56,6 +59,14 @@ export default function App() {
     if (!user || !workspaceReady) return
     request('/api/workspace-state', { method: 'PUT', body: JSON.stringify({ page, sidebar_collapsed: collapsed }), keepalive: true }).catch(() => {})
   }, [page, collapsed, user?.id, workspaceReady])
+  useEffect(() => {
+    if (!user) return undefined
+    let active = true
+    const load = () => request('/api/undo').then(value => { if (active) setUndoState({ ...value, loading: false }) }).catch(() => { if (active) setUndoState(current => ({ ...current, loading: false })) })
+    load()
+    const timer = window.setInterval(load, 3000)
+    return () => { active = false; window.clearInterval(timer) }
+  }, [user?.id])
 
   const notify = (message, type = 'success') => {
     setToast({ message, type }); window.setTimeout(() => setToast(null), 3500)
@@ -63,18 +74,30 @@ export default function App() {
   const openChat = conversationID => { setChatTarget(conversationID || null); setPage('chat') }
   const chatNotifications = useChatNotifications({ user, page, onOpenChat: openChat, notify })
   const logout = () => { localStorage.removeItem('registry_token'); setUser(null); setWorkspaceReady(false) }
+  const undoLast = async () => {
+    if (!undoState.available || undoing) return
+    if (!window.confirm(`Отменить последнее действие?\n\n${undoState.description}`)) return
+    setUndoing(true)
+    try {
+      const result = await request('/api/undo', { method: 'POST', body: '{}' })
+      notify(`Отменено: ${result.description}`)
+      setDataRevision(value => value + 1)
+      const next = await request('/api/undo')
+      setUndoState({ ...next, loading: false })
+    } catch (error) { notify(error.message, 'error') } finally { setUndoing(false) }
+  }
   if (checking) return <div className="splash"><ReceiptText size={42}/><span>Загружаем реестр…</span></div>
   if (!user) return <Login onLogin={enterWorkspace} />
 
   const pages = {
-    dashboard: <Dashboard notify={notify} />,
-    registry: <Registry user={user} notify={notify} />,
-    'credits-leasing': <CreditsLeasing notify={notify} />,
-    payments: <Payments user={user} notify={notify} />,
+    dashboard: <Dashboard key={`dashboard-${dataRevision}`} notify={notify} />,
+    registry: <Registry key={`registry-${dataRevision}`} user={user} notify={notify} />,
+    'credits-leasing': <CreditsLeasing key={`credits-${dataRevision}`} notify={notify} />,
+    payments: <Payments key={`payments-${dataRevision}`} user={user} notify={notify} />,
     chat: <Chat user={user} notify={notify} initialConversationID={chatTarget} notificationPermission={chatNotifications.permission} onEnableNotifications={chatNotifications.requestPermission} />,
-    references: <References notify={notify} />,
-    users: <UsersPage notify={notify} />,
-    audit: <Audit notify={notify} />,
+    references: <References key={`references-${dataRevision}`} notify={notify} />,
+    users: <UsersPage key={`users-${dataRevision}`} notify={notify} />,
+    audit: <Audit key={`audit-${dataRevision}`} notify={notify} />,
   }
 
   return <div className={`app-shell ${collapsed ? 'is-collapsed' : ''}`}>
@@ -82,6 +105,7 @@ export default function App() {
       <div className="brand"><div className="brand-mark"><ReceiptText size={23}/></div><div><strong>ФинРеестр</strong><span>обязательства</span></div></div>
       <nav>{nav.filter(item => !item.admin || user.role === 'admin').map(item => item.children ? <div className={`nav-group ${registryOpen ? 'is-open' : ''}`} key={item.id}><div className="nav-parent"><button className={page === item.id ? 'active' : ''} onClick={() => setPage(item.id)} title={item.label}><item.icon size={19}/><span>{item.label}</span></button><button type="button" className="nav-expand" onClick={() => setRegistryOpen(value => !value)} title={registryOpen ? 'Свернуть раздел' : 'Развернуть раздел'} aria-label={registryOpen ? 'Свернуть раздел Реестр' : 'Развернуть раздел Реестр'} aria-expanded={registryOpen}><ChevronDown size={16}/></button></div>{registryOpen && <div className="nav-children">{item.children.map(child => <button key={child.id} className={page === child.id ? 'active' : ''} onClick={() => setPage(child.id)} title={child.label}><child.icon size={17}/><span>{child.label}</span></button>)}</div>}</div> : <button key={item.id} className={page === item.id ? 'active' : ''} onClick={() => item.id === 'chat' ? openChat() : setPage(item.id)} title={item.label}><item.icon size={19}/><span>{item.label}</span>{item.id === 'chat' && chatNotifications.unread > 0 && <b className="nav-unread">{unreadLabel(chatNotifications.unread)}</b>}{item.id === 'payments' && <i/>}</button>)}</nav>
       <div className="sidebar-bottom">
+        <button type="button" className={`undo-action ${undoing ? 'is-loading' : ''}`} onClick={undoLast} disabled={!undoState.available || undoState.loading || undoing || user.role === 'viewer'} title={undoState.available ? `Отменить: ${undoState.description}` : 'Нет действий для отмены'} aria-label={undoState.available ? `Отменить последнее действие: ${undoState.description}` : 'Нет действий для отмены'}><Undo2 size={18}/><span>{undoing ? 'Отменяем…' : 'Отменить действие'}</span>{undoState.remaining > 0 && <b>{Math.min(undoState.remaining, 500)}</b>}</button>
         <button className="collapse" onClick={() => setCollapsed(v => !v)}>{collapsed ? <ChevronRight size={18}/> : <ChevronLeft size={18}/>}<span>Свернуть</span></button>
         <div className="profile"><div className="avatar">{user.name.slice(0, 1)}</div><div><strong>{user.name}</strong><span>{roleLabel(user.role)}</span></div><button onClick={logout} title="Выйти"><LogOut size={17}/></button></div>
       </div>

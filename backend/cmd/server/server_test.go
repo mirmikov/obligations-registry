@@ -8,10 +8,13 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/xuri/excelize/v2"
 )
 
 func TestObligationNormalizeCalculatesPlannedDate(t *testing.T) {
@@ -105,6 +108,35 @@ func TestDatabaseMigrationsCanBeDisabledForProductionCodeDeploy(t *testing.T) {
 	t.Setenv("RUN_DATABASE_MIGRATIONS", "true")
 	if !databaseMigrationsEnabled() {
 		t.Fatal("database migrations must be enabled")
+	}
+}
+
+func TestUndoHistoryLimitIsFiveHundredPerUser(t *testing.T) {
+	if maxUndoOperationsPerUser != 500 {
+		t.Fatalf("undo history limit = %d, want 500", maxUndoOperationsPerUser)
+	}
+}
+
+func TestUndoSnapshotsCompareJSONByValue(t *testing.T) {
+	left := json.RawMessage(`[{"id":7,"status":"К оплате"}]`)
+	right := json.RawMessage(`[{"status":"К оплате","id":7}]`)
+	if !snapshotsEqual(left, right) {
+		t.Fatal("equivalent JSON snapshots were considered different")
+	}
+	if snapshotsEqual(left, json.RawMessage(`[{"id":7,"status":"Оплачено"}]`)) {
+		t.Fatal("changed JSON snapshots were considered equal")
+	}
+}
+
+func TestUndoCollectsUniqueAffectedIDs(t *testing.T) {
+	change := &undoChange{Before: json.RawMessage(`[{"id":4},{"id":7}]`), After: json.RawMessage(`[{"id":4},{"id":9}]`)}
+	ids, err := combinedSnapshotIDs(change)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []int64{4, 7, 9}
+	if !reflect.DeepEqual(ids, want) {
+		t.Fatalf("affected ids = %#v, want %#v", ids, want)
 	}
 }
 
@@ -207,9 +239,16 @@ func TestExcelDateParsing(t *testing.T) {
 }
 
 func TestExcelNumberParsingPreservesKopecks(t *testing.T) {
-	value := parseFloatPtr("60\u00a0591,67")
-	if value == nil || strconv.FormatFloat(*value, 'f', 2, 64) != "60591.67" {
-		t.Fatalf("parseFloatPtr() = %v, want 60591.67", value)
+	for input, expected := range map[string]string{
+		"60\u00a0591,67": "60591.67",
+		"60,591.67":      "60591.67",
+		"60.591,67":      "60591.67",
+		"60591.67":       "60591.67",
+	} {
+		value := parseFloatPtr(input)
+		if value == nil || strconv.FormatFloat(*value, 'f', 2, 64) != expected {
+			t.Fatalf("parseFloatPtr(%q) = %v, want %s", input, value, expected)
+		}
 	}
 }
 
@@ -221,6 +260,84 @@ func TestExcelExportDereferencesNumbers(t *testing.T) {
 	}
 	if value, ok := floatValue(&amount).(float64); !ok || value != amount {
 		t.Fatalf("floatValue() = %#v, want numeric %.2f", floatValue(&amount), amount)
+	}
+}
+
+func TestExcelImportRequiresRoundTripTemplate(t *testing.T) {
+	headers := append(append([]string{}, excelHeaders...), excelTechnicalIDHeader)
+	if err := validateExcelImportHeaders(headers); err != nil {
+		t.Fatalf("export headers rejected: %v", err)
+	}
+	if err := validateExcelImportHeaders(excelHeaders); err == nil {
+		t.Fatal("legacy file without technical ID was accepted")
+	}
+	headers[2] = "Поставщик"
+	if err := validateExcelImportHeaders(headers); err == nil {
+		t.Fatal("file with changed visible headers was accepted")
+	}
+}
+
+func TestExcelImportIDParsing(t *testing.T) {
+	if id, err := parseExcelImportID(""); err != nil || id != nil {
+		t.Fatalf("blank ID = %v, %v; want new row", id, err)
+	}
+	id, err := parseExcelImportID(" 42 ")
+	if err != nil || id == nil || *id != 42 {
+		t.Fatalf("parsed ID = %v, %v; want 42", id, err)
+	}
+	for _, value := range []string{"0", "-2", "unknown"} {
+		if _, err := parseExcelImportID(value); err == nil {
+			t.Fatalf("invalid ID %q was accepted", value)
+		}
+	}
+}
+
+func TestExcelExportKeepsTechnicalIDHidden(t *testing.T) {
+	book := excelize.NewFile()
+	defer book.Close()
+	if err := book.SetSheetName("Sheet1", "Реестр"); err != nil {
+		t.Fatal(err)
+	}
+	writeExcelTemplateMetadata(book, "Реестр")
+	values := excelExportRow(obligation{ID: 42, obligationInput: obligationInput{Counterparty: "Новый контрагент"}})
+	if err := book.SetSheetRow("Реестр", "A2", &values); err != nil {
+		t.Fatal(err)
+	}
+	buffer, err := book.WriteToBuffer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	opened, err := excelize.OpenReader(bytes.NewReader(buffer.Bytes()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer opened.Close()
+	rows, err := opened.GetRows("Реестр")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = validateExcelImportHeaders(rows[0]); err != nil {
+		t.Fatalf("generated export cannot be imported: %v", err)
+	}
+	if len(rows[1]) < 18 || rows[1][17] != "42" {
+		t.Fatalf("technical ID row = %#v, want ID 42 in column R", rows[1])
+	}
+	visible, err := opened.GetColVisible("Реестр", "R")
+	if err != nil || visible {
+		t.Fatalf("technical column visible=%v err=%v, want hidden", visible, err)
+	}
+}
+
+func TestExcelImportCollectsNewReferenceValues(t *testing.T) {
+	values := importedReferences(obligationInput{Counterparty: "  Новый контрагент  ", LegalEntity: "ООО Тест", Status: "", Urgency: "Срочная"})
+	want := map[string]string{"counterparties": "Новый контрагент", "legal_entities": "ООО Тест", "urgencies": "Срочная"}
+	if len(values) != len(want) {
+		t.Fatalf("references = %#v, want %d non-empty values", values, len(want))
+	}
+	for _, item := range values {
+		if want[item.kind] != item.value {
+			t.Fatalf("reference %s=%q, want %q", item.kind, item.value, want[item.kind])
+		}
 	}
 }
 
@@ -280,6 +397,39 @@ func TestBuildPaymentPlanByFixedAmountUsesRemainder(t *testing.T) {
 		if installment.cents != wantCents[index] || installment.Date != wantDates[index] {
 			t.Fatalf("installment %d = %#v, want %d cents on %s", index+1, installment, wantCents[index], wantDates[index])
 		}
+	}
+}
+
+func TestBuildPaymentPlanByPercentageAssignsAccountTypesAndExactTotal(t *testing.T) {
+	plan, err := buildPaymentPlan(10001, time.Date(2026, time.July, 20, 0, 0, 0, 0, time.UTC), paymentSplitInput{Mode: "percentage", PercentageParts: []paymentSplitPercentagePart{
+		{Percent: json.Number("30"), AccountType: "ОМС", PlannedDate: "2026-07-20"},
+		{Percent: json.Number("70"), AccountType: "Коммерция", PlannedDate: "2026-07-25"},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan) != 2 {
+		t.Fatalf("plan length = %d, want 2", len(plan))
+	}
+	if plan[0].cents != 3000 || plan[1].cents != 7001 {
+		t.Fatalf("percentage amounts = %d, %d; want 3000, 7001", plan[0].cents, plan[1].cents)
+	}
+	if plan[0].AccountType != "ОМС" || plan[1].AccountType != "Коммерция" || plan[0].Date != "2026-07-20" || plan[1].Date != "2026-07-25" {
+		t.Fatalf("percentage plan metadata = %#v", plan)
+	}
+	if plan[0].Percent != 30 || plan[1].Percent != 70 || plan[0].cents+plan[1].cents != 10001 {
+		t.Fatalf("percentage plan does not preserve total: %#v", plan)
+	}
+}
+
+func TestBuildPaymentPlanByPercentageValidatesTotalAndPrecision(t *testing.T) {
+	base := []paymentSplitPercentagePart{{Percent: json.Number("30"), AccountType: "ОМС"}, {Percent: json.Number("60"), AccountType: "Коммерция"}}
+	if _, err := buildPaymentPlan(10000, time.Now(), paymentSplitInput{Mode: "percentage", PercentageParts: base}); err == nil || !strings.Contains(err.Error(), "100%") {
+		t.Fatalf("invalid total error = %v", err)
+	}
+	base[1].Percent = json.Number("70.001")
+	if _, err := buildPaymentPlan(10000, time.Now(), paymentSplitInput{Mode: "percentage", PercentageParts: base}); err == nil || !strings.Contains(err.Error(), "точностью до двух знаков") {
+		t.Fatalf("invalid precision error = %v", err)
 	}
 }
 

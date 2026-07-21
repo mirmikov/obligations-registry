@@ -14,7 +14,9 @@ export default function Chat({ user, notify, compact = false, initialConversatio
   const [viewingImage, setViewingImage] = useState(null)
   const [creating, setCreating] = useState(false)
   const [sending, setSending] = useState(false)
-  const messagesEndRef = useRef(null)
+  const messagesViewportRef = useRef(null)
+  const stickToBottomRef = useRef(true)
+  const lastScrolledConversationRef = useRef(null)
   const draftImageRef = useRef(null)
   const lastImagePasteRef = useRef(0)
 
@@ -44,7 +46,18 @@ export default function Chat({ user, notify, compact = false, initialConversatio
     return () => { active = false; window.clearInterval(timer) }
   }, [selectedID])
 
-  useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages.length, selectedID])
+  useEffect(() => {
+    const viewport = messagesViewportRef.current
+    if (!viewport || !selectedID) return undefined
+    const conversationChanged = lastScrolledConversationRef.current !== selectedID
+    lastScrolledConversationRef.current = selectedID
+    if (!conversationChanged && !stickToBottomRef.current) return undefined
+    const frame = window.requestAnimationFrame(() => {
+      viewport.scrollTo({ top: viewport.scrollHeight, behavior: conversationChanged ? 'auto' : 'smooth' })
+      stickToBottomRef.current = true
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [messages.length, selectedID])
   useEffect(() => { draftImageRef.current = draftImage }, [draftImage])
   useEffect(() => () => { if (draftImageRef.current?.url) URL.revokeObjectURL(draftImageRef.current.url) }, [])
   useEffect(() => {
@@ -132,7 +145,10 @@ export default function Chat({ user, notify, compact = false, initialConversatio
     <main className="chat-room">
       {selected ? <>
         <header className="chat-room-head">{compact && <button type="button" className="chat-room-back" onClick={() => setSelectedID(null)} aria-label="Назад к диалогам"><ChevronLeft size={19}/></button>}<ConversationAvatar item={selected} currentUser={user}/><div><strong>{selected.title}</strong><span>{conversationSubtitle(selected, user)}</span></div></header>
-        <div className="chat-messages">
+        <div className="chat-messages" ref={messagesViewportRef} onScroll={event => {
+          const viewport = event.currentTarget
+          stickToBottomRef.current = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 80
+        }}>
           {!messages.length && <div className="chat-welcome"><div><MessageCircle size={30}/></div><strong>Начните разговор</strong><span>Сообщения доступны только участникам этого диалога.</span></div>}
           {messages.map((message, index) => {
             const mine = message.sender_id === user.id
@@ -143,7 +159,6 @@ export default function Chat({ user, notify, compact = false, initialConversatio
               <div className={`chat-bubble ${message.image_url ? 'has-image' : ''}`}>{!mine && newGroup && <strong>{message.sender_name}</strong>}{message.image_url && <ChatImage path={message.image_url} alt={`Изображение от ${message.sender_name}`} onOpen={() => setViewingImage({ path: message.image_url, alt: `Изображение от ${message.sender_name}` })}/>} {message.body && <p>{message.body}</p>}<time>{chatClock(message.created_at)}</time></div>
             </div></div>
           })}
-          <div ref={messagesEndRef}/>
         </div>
         <form className={`chat-composer ${draftImage ? 'has-image' : ''}`} onSubmit={send}>
           {draftImage && <div className="chat-composer-preview"><img src={draftImage.url} alt="Изображение перед отправкой"/><span><strong>Изображение готово</strong><small>{formatFileSize(draftImage.file.size)}</small></span><button type="button" onClick={() => setDraftImage(current => { if (current?.url) URL.revokeObjectURL(current.url); return null })} aria-label="Удалить изображение" title="Удалить изображение"><X size={16}/></button></div>}

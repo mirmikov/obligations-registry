@@ -2,6 +2,8 @@ package main
 
 import (
 	"database/sql"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -158,9 +160,24 @@ func (a *app) createObligation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	user := currentUser(r)
-	id, err := insertObligation(r.Context(), a.db, input, &user.ID)
+	tx, err := a.db.BeginTx(r.Context(), nil)
+	if err != nil {
+		fail(w, 500, "Не удалось начать сохранение")
+		return
+	}
+	defer tx.Rollback()
+	id, err := insertObligation(r.Context(), tx, input, &user.ID)
 	if err != nil {
 		fail(w, 400, "Не удалось добавить обязательство: "+err.Error())
+		return
+	}
+	after, err := snapshotRows(r.Context(), tx, "obligations", []int64{id})
+	if err != nil || a.recordUndo(r.Context(), tx, user.ID, "create", fmt.Sprintf("Создание обязательства №%d", id), undoPayload{Obligations: &undoChange{Before: emptySnapshot(), After: after}}) != nil {
+		fail(w, 500, "Не удалось записать историю отмены")
+		return
+	}
+	if err = tx.Commit(); err != nil {
+		fail(w, 500, "Не удалось завершить сохранение")
 		return
 	}
 	a.audit(r.Context(), user.ID, "create", "obligation", &id, input)
@@ -180,7 +197,23 @@ func (a *app) updateObligation(w http.ResponseWriter, r *http.Request) {
 	input := payload.obligationInput
 	input.normalize()
 	user := currentUser(r)
-	result, err := a.db.ExecContext(r.Context(), `UPDATE obligations SET account_type=$1,entry_date=NULLIF($2,'')::date,counterparty=$3,legal_entity=$4,cost_category=$5,priority=$6,responsible=$7,document_number=$8,deferment_days=$9,document_date=NULLIF($10,'')::date,amount=$11,planned_payment_date=NULLIF($12,'')::date,approval_date=NULLIF($13,'')::date,actual_payment_date=NULLIF($14,'')::date,status=$15,urgency=$16,comment=$17,source_note=$18,updated_by=$19,updated_at=now() WHERE id=$20`, nullable(input.AccountType), nullable(input.EntryDate), nullable(input.Counterparty), nullable(input.LegalEntity), nullable(input.CostCategory), nullable(input.Priority), nullable(input.Responsible), nullable(input.DocumentNumber), input.DefermentDays, nullable(input.DocumentDate), input.Amount, nullable(input.PlannedPaymentDate), nullable(input.ApprovalDate), nullable(input.ActualPaymentDate), nullable(input.Status), nullable(input.Urgency), nullable(input.Comment), nullable(input.SourceNote), user.ID, id)
+	tx, err := a.db.BeginTx(r.Context(), nil)
+	if err != nil {
+		fail(w, 500, "Не удалось начать сохранение")
+		return
+	}
+	defer tx.Rollback()
+	beforeRow, err := snapshotOneObligation(r.Context(), tx, id)
+	if errors.Is(err, sql.ErrNoRows) {
+		fail(w, 404, "Запись не найдена")
+		return
+	}
+	if err != nil {
+		fail(w, 500, "Не удалось подготовить историю отмены")
+		return
+	}
+	before, _ := snapshotArray([]json.RawMessage{beforeRow})
+	result, err := tx.ExecContext(r.Context(), `UPDATE obligations SET account_type=$1,entry_date=NULLIF($2,'')::date,counterparty=$3,legal_entity=$4,cost_category=$5,priority=$6,responsible=$7,document_number=$8,deferment_days=$9,document_date=NULLIF($10,'')::date,amount=$11,planned_payment_date=NULLIF($12,'')::date,approval_date=NULLIF($13,'')::date,actual_payment_date=NULLIF($14,'')::date,status=$15,urgency=$16,comment=$17,source_note=$18,updated_by=$19,updated_at=now() WHERE id=$20`, nullable(input.AccountType), nullable(input.EntryDate), nullable(input.Counterparty), nullable(input.LegalEntity), nullable(input.CostCategory), nullable(input.Priority), nullable(input.Responsible), nullable(input.DocumentNumber), input.DefermentDays, nullable(input.DocumentDate), input.Amount, nullable(input.PlannedPaymentDate), nullable(input.ApprovalDate), nullable(input.ActualPaymentDate), nullable(input.Status), nullable(input.Urgency), nullable(input.Comment), nullable(input.SourceNote), user.ID, id)
 	if err != nil {
 		fail(w, 400, "Не удалось сохранить: "+err.Error())
 		return
@@ -188,6 +221,15 @@ func (a *app) updateObligation(w http.ResponseWriter, r *http.Request) {
 	affected, _ := result.RowsAffected()
 	if affected == 0 {
 		fail(w, 404, "Запись не найдена")
+		return
+	}
+	after, err := snapshotRows(r.Context(), tx, "obligations", []int64{id})
+	if err != nil || a.recordUndo(r.Context(), tx, user.ID, "update", fmt.Sprintf("Изменение обязательства №%d", id), undoPayload{Obligations: &undoChange{Before: before, After: after}}) != nil {
+		fail(w, 500, "Не удалось записать историю отмены")
+		return
+	}
+	if err = tx.Commit(); err != nil {
+		fail(w, 500, "Не удалось завершить сохранение")
 		return
 	}
 	a.audit(r.Context(), user.ID, "update", "obligation", &id, input)
@@ -200,7 +242,24 @@ func (a *app) deleteObligation(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, "Некорректный ID")
 		return
 	}
-	result, err := a.db.ExecContext(r.Context(), "DELETE FROM obligations WHERE id=$1", id)
+	user := currentUser(r)
+	tx, err := a.db.BeginTx(r.Context(), nil)
+	if err != nil {
+		fail(w, 500, "Не удалось начать удаление")
+		return
+	}
+	defer tx.Rollback()
+	beforeRow, err := snapshotOneObligation(r.Context(), tx, id)
+	if errors.Is(err, sql.ErrNoRows) {
+		fail(w, 404, "Запись не найдена")
+		return
+	}
+	if err != nil {
+		fail(w, 500, "Не удалось подготовить историю отмены")
+		return
+	}
+	before, _ := snapshotArray([]json.RawMessage{beforeRow})
+	result, err := tx.ExecContext(r.Context(), "DELETE FROM obligations WHERE id=$1", id)
 	if err != nil {
 		fail(w, 500, "Не удалось удалить")
 		return
@@ -210,7 +269,14 @@ func (a *app) deleteObligation(w http.ResponseWriter, r *http.Request) {
 		fail(w, 404, "Запись не найдена")
 		return
 	}
-	user := currentUser(r)
+	if a.recordUndo(r.Context(), tx, user.ID, "delete", fmt.Sprintf("Удаление обязательства №%d", id), undoPayload{Obligations: &undoChange{Before: before, After: emptySnapshot()}}) != nil {
+		fail(w, 500, "Не удалось записать историю отмены")
+		return
+	}
+	if err = tx.Commit(); err != nil {
+		fail(w, 500, "Не удалось завершить удаление")
+		return
+	}
 	a.audit(r.Context(), user.ID, "delete", "obligation", &id, map[string]any{})
 	w.WriteHeader(204)
 }
@@ -230,12 +296,36 @@ func (a *app) bulkUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	user := currentUser(r)
-	result, err := a.db.ExecContext(r.Context(), `UPDATE obligations SET status=CASE WHEN $1='' THEN status ELSE $1 END,approval_date=CASE WHEN $2='' THEN approval_date ELSE $2::date END,actual_payment_date=CASE WHEN $3='' THEN actual_payment_date ELSE $3::date END,updated_by=$4,updated_at=now() WHERE id=ANY($5)`, input.Status, input.ApprovalDate, input.ActualPaymentDate, user.ID, input.IDs)
+	tx, err := a.db.BeginTx(r.Context(), nil)
+	if err != nil {
+		fail(w, 500, "Не удалось начать массовое изменение")
+		return
+	}
+	defer tx.Rollback()
+	if err = tx.QueryRowContext(r.Context(), `SELECT count(*) FROM (SELECT id FROM obligations WHERE id=ANY($1) FOR UPDATE) locked`, input.IDs).Scan(new(int)); err != nil {
+		fail(w, 500, "Не удалось подготовить историю отмены")
+		return
+	}
+	before, err := snapshotRows(r.Context(), tx, "obligations", input.IDs)
+	if err != nil {
+		fail(w, 500, "Не удалось подготовить историю отмены")
+		return
+	}
+	result, err := tx.ExecContext(r.Context(), `UPDATE obligations SET status=CASE WHEN $1='' THEN status ELSE $1 END,approval_date=CASE WHEN $2='' THEN approval_date ELSE $2::date END,actual_payment_date=CASE WHEN $3='' THEN actual_payment_date ELSE $3::date END,updated_by=$4,updated_at=now() WHERE id=ANY($5)`, input.Status, input.ApprovalDate, input.ActualPaymentDate, user.ID, input.IDs)
 	if err != nil {
 		fail(w, 400, "Не удалось обновить строки: "+err.Error())
 		return
 	}
 	count, _ := result.RowsAffected()
+	after, err := snapshotRows(r.Context(), tx, "obligations", input.IDs)
+	if err != nil || a.recordUndo(r.Context(), tx, user.ID, "bulk_update", fmt.Sprintf("Массовое изменение: %d записей", count), undoPayload{Obligations: &undoChange{Before: before, After: after}}) != nil {
+		fail(w, 500, "Не удалось записать историю отмены")
+		return
+	}
+	if err = tx.Commit(); err != nil {
+		fail(w, 500, "Не удалось завершить массовое изменение")
+		return
+	}
 	a.audit(r.Context(), user.ID, "bulk_update", "obligation", nil, map[string]any{"count": count})
 	writeJSON(w, 200, map[string]any{"updated": count})
 }
