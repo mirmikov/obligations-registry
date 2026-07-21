@@ -21,6 +21,28 @@ func TestObligationNormalizeCalculatesPlannedDate(t *testing.T) {
 	}
 }
 
+func TestParseDateAcceptsTwoDigitYearWithDots(t *testing.T) {
+	if got := parseDate("13.07.26"); got != "2026-07-13" {
+		t.Fatalf("parseDate() = %q, want 2026-07-13", got)
+	}
+}
+
+func TestParseFloatPtrAcceptsExcelNumberFormats(t *testing.T) {
+	tests := map[string]float64{
+		"30,999.00": 30999,
+		"30 999,25": 30999.25,
+		"30.999,25": 30999.25,
+		"999,25":    999.25,
+		"220,500 ₽": 220500,
+	}
+	for input, want := range tests {
+		got := parseFloatPtr(input)
+		if got == nil || *got != want {
+			t.Errorf("parseFloatPtr(%q) = %v, want %v", input, got, want)
+		}
+	}
+}
+
 func TestPresenceExpiresStaleSessions(t *testing.T) {
 	hub := newPresenceHub()
 	now := time.Date(2026, 7, 18, 12, 0, 0, 0, time.UTC)
@@ -182,3 +204,4 @@ func TestMoneyTextToCentsDoesNotLoseLargeAmountKopecks(t *testing.T) {
 		t.Fatal("amount with fractions of a kopeck must be rejected")
 	}
 }
+
