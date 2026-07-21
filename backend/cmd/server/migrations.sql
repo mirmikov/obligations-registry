@@ -58,6 +58,47 @@ CREATE TABLE IF NOT EXISTS reference_values (
   UNIQUE(kind, value)
 );
 
+-- Keep the counterparty reference in sync with registry records. The backfill
+-- repairs databases populated before this trigger existed; ON CONFLICT keeps
+-- values that an administrator deliberately deactivated inactive.
+WITH counterparty_values AS (
+  SELECT DISTINCT btrim(counterparty) AS value
+  FROM obligations
+  WHERE btrim(COALESCE(counterparty, '')) <> ''
+), ordered_values AS (
+  SELECT value,
+    COALESCE((SELECT max(sort_order) FROM reference_values WHERE kind = 'counterparties'), -1)
+      + row_number() OVER (ORDER BY lower(value), value) AS sort_order
+  FROM counterparty_values
+)
+INSERT INTO reference_values(kind, value, sort_order)
+SELECT 'counterparties', value, sort_order
+FROM ordered_values
+ON CONFLICT(kind, value) DO NOTHING;
+
+CREATE OR REPLACE FUNCTION sync_counterparty_reference()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  IF btrim(COALESCE(NEW.counterparty, '')) <> '' THEN
+    INSERT INTO reference_values(kind, value, sort_order)
+    VALUES (
+      'counterparties',
+      btrim(NEW.counterparty),
+      COALESCE((SELECT max(sort_order) + 1 FROM reference_values WHERE kind = 'counterparties'), 0)
+    )
+    ON CONFLICT(kind, value) DO NOTHING;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS obligations_sync_counterparty_reference ON obligations;
+CREATE TRIGGER obligations_sync_counterparty_reference
+AFTER INSERT OR UPDATE OF counterparty ON obligations
+FOR EACH ROW EXECUTE FUNCTION sync_counterparty_reference();
+
 CREATE TABLE IF NOT EXISTS saved_views (
   user_id BIGINT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
   filters JSONB NOT NULL DEFAULT '{}'::jsonb,
@@ -79,3 +120,4 @@ CREATE TABLE IF NOT EXISTS audit_log (
   details JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
