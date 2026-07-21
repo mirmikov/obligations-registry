@@ -8,16 +8,33 @@ function currentPermission() {
 export default function useChatNotifications({ user, page, onOpenChat, notify }) {
   const [permission, setPermission] = useState(currentPermission)
   const [unread, setUnread] = useState(0)
+  const [notices, setNotices] = useState([])
   const previousRef = useRef(new Map())
   const initializedRef = useRef(false)
   const pageRef = useRef(page)
   const openChatRef = useRef(onOpenChat)
+  const noticeTimersRef = useRef(new Map())
 
   useEffect(() => { pageRef.current = page }, [page])
   useEffect(() => { openChatRef.current = onOpenChat }, [onOpenChat])
+  useEffect(() => () => {
+    noticeTimersRef.current.forEach(window.clearTimeout)
+    noticeTimersRef.current.clear()
+  }, [])
+  useEffect(() => {
+    if (page !== 'chat') return
+    setNotices([])
+    noticeTimersRef.current.forEach(window.clearTimeout)
+    noticeTimersRef.current.clear()
+  }, [page])
 
   useEffect(() => {
-    if (!user) { setUnread(0); previousRef.current = new Map(); initializedRef.current = false; return undefined }
+    if (!user) {
+      setUnread(0); setNotices([]); previousRef.current = new Map(); initializedRef.current = false
+      noticeTimersRef.current.forEach(window.clearTimeout)
+      noticeTimersRef.current.clear()
+      return undefined
+    }
     let active = true
     const refresh = async () => {
       try {
@@ -25,10 +42,13 @@ export default function useChatNotifications({ user, page, onOpenChat, notify })
         if (!active) return
         const next = new Map(conversations.map(item => [item.id, item.unread || 0]))
         setUnread(conversations.reduce((total, item) => total + Number(item.unread || 0), 0))
-        if (initializedRef.current && permission === 'granted' && pageRef.current !== 'chat') {
+        if (initializedRef.current && pageRef.current !== 'chat') {
           for (const item of conversations) {
             const before = previousRef.current.get(item.id) || 0
-            if (item.unread > before) showChatNotification(item, openChatRef)
+            if (item.unread > before) {
+              showSiteNotification(item, item.unread - before, setNotices, noticeTimersRef)
+              if (permission === 'granted') showBrowserNotification(item, openChatRef)
+            }
           }
         }
         previousRef.current = next
@@ -39,6 +59,12 @@ export default function useChatNotifications({ user, page, onOpenChat, notify })
     const timer = window.setInterval(refresh, 7000)
     return () => { active = false; window.clearInterval(timer) }
   }, [user?.id, permission])
+
+  const dismissNotice = useCallback(conversationID => {
+    setNotices(current => current.filter(item => item.conversationID !== conversationID))
+    window.clearTimeout(noticeTimersRef.current.get(conversationID))
+    noticeTimersRef.current.delete(conversationID)
+  }, [])
 
   const requestPermission = useCallback(async () => {
     if (typeof Notification === 'undefined') {
@@ -58,10 +84,27 @@ export default function useChatNotifications({ user, page, onOpenChat, notify })
     }
   }, [notify])
 
-  return { permission, unread, requestPermission }
+  return { permission, unread, notices, dismissNotice, requestPermission }
 }
 
-function showChatNotification(conversation, openChatRef) {
+function showSiteNotification(conversation, added, setNotices, noticeTimersRef) {
+  const notice = {
+    conversationID: conversation.id,
+    title: conversation.title,
+    sender: conversation.last_sender,
+    body: conversation.last_message || 'Новое сообщение',
+    added,
+    group: conversation.kind === 'group',
+  }
+  setNotices(current => [notice, ...current.filter(item => item.conversationID !== conversation.id)].slice(0, 4))
+  window.clearTimeout(noticeTimersRef.current.get(conversation.id))
+  noticeTimersRef.current.set(conversation.id, window.setTimeout(() => {
+    setNotices(current => current.filter(item => item.conversationID !== conversation.id))
+    noticeTimersRef.current.delete(conversation.id)
+  }, 7000))
+}
+
+function showBrowserNotification(conversation, openChatRef) {
   try {
     const body = conversation.last_message
       ? `${conversation.last_sender ? `${conversation.last_sender}: ` : ''}${conversation.last_message}`
@@ -73,7 +116,7 @@ function showChatNotification(conversation, openChatRef) {
     })
     notification.onclick = () => {
       window.focus()
-      openChatRef.current?.()
+      openChatRef.current?.(conversation.id)
       notification.close()
     }
   } catch { /* разрешение могло быть отозвано между проверкой и показом */ }

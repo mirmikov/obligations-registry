@@ -3,7 +3,7 @@ import { BellRing, Check, ChevronLeft, MessageCircle, Plus, Search, Send, UserPl
 import { request } from './api'
 import { roleLabel } from './App'
 
-export default function Chat({ user, notify, compact = false, notificationPermission, onEnableNotifications }) {
+export default function Chat({ user, notify, compact = false, initialConversationID = null, notificationPermission, onEnableNotifications }) {
   const [contacts, setContacts] = useState([])
   const [conversations, setConversations] = useState([])
   const [selectedID, setSelectedID] = useState(null)
@@ -22,6 +22,8 @@ export default function Chat({ user, notify, compact = false, notificationPermis
     const timer = window.setInterval(() => { loadContacts(); loadConversations() }, 5000)
     return () => window.clearInterval(timer)
   }, [])
+
+  useEffect(() => { if (initialConversationID) setSelectedID(initialConversationID) }, [initialConversationID])
 
   useEffect(() => {
     if (!conversations.length) { setSelectedID(null); return }

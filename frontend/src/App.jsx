@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { BarChart3, BellRing, BookOpen, ChevronDown, ChevronLeft, ChevronRight, CircleDollarSign, FileClock, Landmark, LogOut, Maximize2, Menu, MessageCircle, Minus, ReceiptText, Settings, Users } from 'lucide-react'
+import { BarChart3, BellRing, BookOpen, ChevronDown, ChevronLeft, ChevronRight, CircleDollarSign, FileClock, Landmark, LogOut, Maximize2, Menu, MessageCircle, Minus, ReceiptText, Settings, Users, X } from 'lucide-react'
 import { request } from './api'
 import Dashboard from './Dashboard'
 import Registry from './Registry'
@@ -30,6 +30,7 @@ export default function App() {
   const [toast, setToast] = useState(null)
   const [workspaceReady, setWorkspaceReady] = useState(false)
   const [registryOpen, setRegistryOpen] = useState(false)
+  const [chatTarget, setChatTarget] = useState(null)
 
   const enterWorkspace = (nextUser, state = {}) => {
     setUser(nextUser)
@@ -59,7 +60,8 @@ export default function App() {
   const notify = (message, type = 'success') => {
     setToast({ message, type }); window.setTimeout(() => setToast(null), 3500)
   }
-  const chatNotifications = useChatNotifications({ user, page, onOpenChat: () => setPage('chat'), notify })
+  const openChat = conversationID => { setChatTarget(conversationID || null); setPage('chat') }
+  const chatNotifications = useChatNotifications({ user, page, onOpenChat: openChat, notify })
   const logout = () => { localStorage.removeItem('registry_token'); setUser(null); setWorkspaceReady(false) }
   if (checking) return <div className="splash"><ReceiptText size={42}/><span>Загружаем реестр…</span></div>
   if (!user) return <Login onLogin={enterWorkspace} />
@@ -69,7 +71,7 @@ export default function App() {
     registry: <Registry user={user} notify={notify} />,
     'credits-leasing': <CreditsLeasing notify={notify} />,
     payments: <Payments user={user} notify={notify} />,
-    chat: <Chat user={user} notify={notify} notificationPermission={chatNotifications.permission} onEnableNotifications={chatNotifications.requestPermission} />,
+    chat: <Chat user={user} notify={notify} initialConversationID={chatTarget} notificationPermission={chatNotifications.permission} onEnableNotifications={chatNotifications.requestPermission} />,
     references: <References notify={notify} />,
     users: <UsersPage notify={notify} />,
     audit: <Audit notify={notify} />,
@@ -78,14 +80,15 @@ export default function App() {
   return <div className={`app-shell ${collapsed ? 'is-collapsed' : ''}`}>
     <aside className="sidebar">
       <div className="brand"><div className="brand-mark"><ReceiptText size={23}/></div><div><strong>ФинРеестр</strong><span>обязательства</span></div></div>
-      <nav>{nav.filter(item => !item.admin || user.role === 'admin').map(item => item.children ? <div className={`nav-group ${registryOpen ? 'is-open' : ''}`} key={item.id}><div className="nav-parent"><button className={page === item.id ? 'active' : ''} onClick={() => setPage(item.id)} title={item.label}><item.icon size={19}/><span>{item.label}</span></button><button type="button" className="nav-expand" onClick={() => setRegistryOpen(value => !value)} title={registryOpen ? 'Свернуть раздел' : 'Развернуть раздел'} aria-label={registryOpen ? 'Свернуть раздел Реестр' : 'Развернуть раздел Реестр'} aria-expanded={registryOpen}><ChevronDown size={16}/></button></div>{registryOpen && <div className="nav-children">{item.children.map(child => <button key={child.id} className={page === child.id ? 'active' : ''} onClick={() => setPage(child.id)} title={child.label}><child.icon size={17}/><span>{child.label}</span></button>)}</div>}</div> : <button key={item.id} className={page === item.id ? 'active' : ''} onClick={() => setPage(item.id)} title={item.label}><item.icon size={19}/><span>{item.label}</span>{item.id === 'payments' && <i/>}</button>)}</nav>
+      <nav>{nav.filter(item => !item.admin || user.role === 'admin').map(item => item.children ? <div className={`nav-group ${registryOpen ? 'is-open' : ''}`} key={item.id}><div className="nav-parent"><button className={page === item.id ? 'active' : ''} onClick={() => setPage(item.id)} title={item.label}><item.icon size={19}/><span>{item.label}</span></button><button type="button" className="nav-expand" onClick={() => setRegistryOpen(value => !value)} title={registryOpen ? 'Свернуть раздел' : 'Развернуть раздел'} aria-label={registryOpen ? 'Свернуть раздел Реестр' : 'Развернуть раздел Реестр'} aria-expanded={registryOpen}><ChevronDown size={16}/></button></div>{registryOpen && <div className="nav-children">{item.children.map(child => <button key={child.id} className={page === child.id ? 'active' : ''} onClick={() => setPage(child.id)} title={child.label}><child.icon size={17}/><span>{child.label}</span></button>)}</div>}</div> : <button key={item.id} className={page === item.id ? 'active' : ''} onClick={() => item.id === 'chat' ? openChat() : setPage(item.id)} title={item.label}><item.icon size={19}/><span>{item.label}</span>{item.id === 'chat' && chatNotifications.unread > 0 && <b className="nav-unread">{unreadLabel(chatNotifications.unread)}</b>}{item.id === 'payments' && <i/>}</button>)}</nav>
       <div className="sidebar-bottom">
         <button className="collapse" onClick={() => setCollapsed(v => !v)}>{collapsed ? <ChevronRight size={18}/> : <ChevronLeft size={18}/>}<span>Свернуть</span></button>
         <div className="profile"><div className="avatar">{user.name.slice(0, 1)}</div><div><strong>{user.name}</strong><span>{roleLabel(user.role)}</span></div><button onClick={logout} title="Выйти"><LogOut size={17}/></button></div>
       </div>
     </aside>
     <main className="main"><button className="mobile-menu" onClick={() => setCollapsed(v => !v)}><Menu/></button>{pages[page]}</main>
-    {page !== 'chat' && <ChatWidget user={user} notify={notify} unread={chatNotifications.unread} notificationPermission={chatNotifications.permission} onEnableNotifications={chatNotifications.requestPermission} onOpenFull={() => setPage('chat')}/>}
+    <ChatNotificationStack notices={chatNotifications.notices} onDismiss={chatNotifications.dismissNotice} onOpen={openChat}/>
+    {page !== 'chat' && <ChatWidget user={user} notify={notify} unread={chatNotifications.unread} notificationPermission={chatNotifications.permission} onEnableNotifications={chatNotifications.requestPermission} onOpenFull={() => openChat()}/>}
     {toast && <div className={`toast ${toast.type}`}>{toast.message}</div>}
   </div>
 }
@@ -94,11 +97,26 @@ function ChatWidget({ user, notify, unread, notificationPermission, onEnableNoti
   const [open, setOpen] = useState(false)
   return <div className={`chat-widget ${open ? 'is-open' : ''}`}>
     {open ? <section className="chat-widget-panel">
-      <header className="chat-widget-bar"><div><MessageCircle size={16}/><strong>Чат команды</strong></div><div><button type="button" onClick={onOpenFull} title="Открыть чат на всю страницу" aria-label="Открыть чат на всю страницу"><Maximize2 size={16}/></button><button type="button" onClick={() => setOpen(false)} title="Свернуть чат" aria-label="Свернуть чат"><Minus size={18}/></button></div></header>
+      <header className="chat-widget-bar"><div><MessageCircle size={16}/><strong>Чат команды</strong>{unread > 0 && <b className="chat-widget-unread">{unreadLabel(unread)}</b>}</div><div><button type="button" onClick={onOpenFull} title="Открыть чат на всю страницу" aria-label="Открыть чат на всю страницу"><Maximize2 size={16}/></button><button type="button" onClick={() => setOpen(false)} title="Свернуть чат" aria-label="Свернуть чат"><Minus size={18}/></button></div></header>
       <Chat user={user} notify={notify} compact notificationPermission={notificationPermission} onEnableNotifications={onEnableNotifications}/>
-    </section> : <div className="chat-widget-closed">{notificationPermission === 'default' && <button type="button" className="chat-notification-enable" onClick={onEnableNotifications} title="Включить уведомления о сообщениях"><BellRing size={16}/><span>Включить уведомления</span></button>}<button type="button" className="chat-widget-launcher" onClick={() => setOpen(true)} title="Открыть чат" aria-label="Открыть чат"><MessageCircle size={24}/><span>Чат</span>{unread > 0 && <b>{unread > 99 ? '99+' : unread}</b>}</button></div>}
+    </section> : <div className="chat-widget-closed">{notificationPermission === 'default' && <button type="button" className="chat-notification-enable" onClick={onEnableNotifications} title="Включить уведомления о сообщениях"><BellRing size={16}/><span>Включить уведомления</span></button>}<button type="button" className="chat-widget-launcher" onClick={() => setOpen(true)} title="Открыть чат" aria-label={`Открыть чат${unread ? `, непрочитанных сообщений: ${unread}` : ''}`}><MessageCircle size={24}/><span>Чат</span>{unread > 0 && <b>{unreadLabel(unread)}</b>}</button></div>}
   </div>
 }
+
+function ChatNotificationStack({ notices, onDismiss, onOpen }) {
+  if (!notices.length) return null
+  return <section className="chat-notification-stack" aria-label="Новые сообщения" aria-live="polite">
+    {notices.map(notice => <article className="chat-site-notification" key={notice.conversationID}>
+      <button type="button" className={`chat-site-avatar ${notice.group ? 'group' : ''}`} onClick={() => { onDismiss(notice.conversationID); onOpen(notice.conversationID) }} aria-label={`Открыть чат ${notice.title}`}>{initials(notice.title)}</button>
+      <button type="button" className="chat-site-content" onClick={() => { onDismiss(notice.conversationID); onOpen(notice.conversationID) }}><span>{notice.group ? notice.title : 'Новое сообщение'}</span><strong>{notice.group && notice.sender ? notice.sender : notice.title}</strong><p>{notice.body}</p></button>
+      {notice.added > 1 && <b className="chat-site-count">+{notice.added}</b>}
+      <button type="button" className="chat-site-close" onClick={() => onDismiss(notice.conversationID)} title="Закрыть уведомление" aria-label="Закрыть уведомление"><X size={15}/></button>
+    </article>)}
+  </section>
+}
+
+function unreadLabel(value) { return value > 99 ? '99+' : value }
+function initials(value = '') { return value.trim().split(/\s+/).slice(0, 2).map(part => part[0]).join('').toUpperCase() || 'Ч' }
 
 function Login({ onLogin }) {
   const [login, setLogin] = useState('')
