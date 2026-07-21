@@ -69,7 +69,7 @@ func main() {
 	mux.Handle("GET /api/obligations/export.xlsx", a.authorize(http.HandlerFunc(a.exportXLSX)))
 	mux.Handle("POST /api/obligations/import.xlsx", a.authorize(a.requireRole("admin")(http.HandlerFunc(a.importXLSX))))
 	mux.Handle("GET /api/references", a.authorize(http.HandlerFunc(a.listReferences)))
-	mux.Handle("POST /api/references/{kind}", a.authorize(a.requireRole("admin")(http.HandlerFunc(a.addReference))))
+	mux.Handle("POST /api/references/{kind}", a.authorize(a.requireRole("admin", "editor")(http.HandlerFunc(a.addReference))))
 	mux.Handle("DELETE /api/references/{kind}/{id}", a.authorize(a.requireRole("admin")(http.HandlerFunc(a.deleteReference))))
 	mux.Handle("GET /api/dashboard", a.authorize(http.HandlerFunc(a.dashboard)))
 	mux.Handle("GET /api/reports/credits-leasing", a.authorize(http.HandlerFunc(a.creditsLeasingReport)))
@@ -178,3 +178,4 @@ func queryInt(r *http.Request, key string, fallback, max int) int {
 	}
 	return value
 }
+
