@@ -75,7 +75,7 @@ func main() {
 	mux.Handle("GET /api/obligations", a.authorize(http.HandlerFunc(a.listObligations)))
 	mux.Handle("POST /api/obligations", a.authorize(a.requireRole("admin", "editor")(http.HandlerFunc(a.createObligation))))
 	mux.Handle("PATCH /api/obligations/{id}", a.authorize(a.requireRole("admin", "editor")(http.HandlerFunc(a.updateObligation))))
-	mux.Handle("DELETE /api/obligations/{id}", a.authorize(a.requireRole("admin")(http.HandlerFunc(a.deleteObligation))))
+	mux.Handle("DELETE /api/obligations/{id}", a.authorize(a.requireRole("admin", "editor")(http.HandlerFunc(a.deleteObligation))))
 	mux.Handle("POST /api/obligations/bulk", a.authorize(a.requireRole("admin", "editor")(http.HandlerFunc(a.bulkUpdate))))
 	mux.Handle("POST /api/obligations/{id}/split", a.authorize(a.requireRole("admin", "editor")(http.HandlerFunc(a.splitObligation))))
 	mux.Handle("GET /api/obligations/export.xlsx", a.authorize(http.HandlerFunc(a.exportXLSX)))
@@ -83,8 +83,8 @@ func main() {
 	mux.Handle("GET /api/undo", a.authorize(http.HandlerFunc(a.undoStatus)))
 	mux.Handle("POST /api/undo", a.authorize(a.requireRole("admin", "editor")(http.HandlerFunc(a.undoLast))))
 	mux.Handle("GET /api/references", a.authorize(http.HandlerFunc(a.listReferences)))
-	mux.Handle("POST /api/references/{kind}", a.authorize(a.requireRole("admin")(http.HandlerFunc(a.addReference))))
-	mux.Handle("DELETE /api/references/{kind}/{id}", a.authorize(a.requireRole("admin")(http.HandlerFunc(a.deleteReference))))
+	mux.Handle("POST /api/references/{kind}", a.authorize(a.requireRole("admin", "editor")(http.HandlerFunc(a.addReference))))
+	mux.Handle("DELETE /api/references/{kind}/{id}", a.authorize(a.requireRole("admin", "editor")(http.HandlerFunc(a.deleteReference))))
 	mux.Handle("GET /api/dashboard", a.authorize(http.HandlerFunc(a.dashboard)))
 	mux.Handle("GET /api/reports/credits-leasing", a.authorize(http.HandlerFunc(a.creditsLeasingReport)))
 	mux.Handle("GET /api/payment-register", a.authorize(http.HandlerFunc(a.paymentRegister)))
@@ -197,3 +197,4 @@ func queryInt(r *http.Request, key string, fallback, max int) int {
 	}
 	return value
 }
+
