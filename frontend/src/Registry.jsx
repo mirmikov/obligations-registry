@@ -7,7 +7,7 @@ import usePresence from './usePresence'
 const emptyFilters = { q: '', counterparty: [], account_type: '', legal_entity: '', cost_category: '', priority: '', responsible: '', status: '', urgency: '', entry_date: '', document_date: '', planned_payment_date: '', approval_date: '', actual_payment_date: '', planned_from: '', planned_to: '', overdue: '' }
 const dateFields = new Set(['entry_date', 'document_date', 'planned_payment_date', 'approval_date', 'actual_payment_date'])
 const fieldLabels = { counterparty: 'Контрагент', entry_date: 'Дата внесения', document_number: 'Документ', document_date: 'Дата документа', legal_entity: 'Юрлицо', cost_category: 'Статья затрат', amount: 'Сумма, ₽', deferment_days: 'Отсрочка, дней', planned_payment_date: 'Плановая оплата', approval_date: 'Дата утверждения', actual_payment_date: 'Фактическая оплата', status: 'Статус', urgency: 'Срочность', responsible: 'Ответственный', priority: 'Приоритет', account_type: 'Признак учёта', comment: 'Комментарий', source_note: 'Условия оплаты' }
-const registryColumnWidths = [46, 220, 130, 130, 180, 180, 135, 240, 120, 110, 145, 145, 145, 160, 135, 160, 120, 240, 240, 86]
+const registryColumnWidths = [46, 220, 130, 130, 180, 120, 180, 135, 240, 110, 145, 145, 145, 160, 135, 160, 120, 240, 240, 86]
 const registryLargeFontKey = 'registry-table-large-font'
 
 function readLargeFontPreference() {
@@ -169,9 +169,9 @@ export default function Registry({ user, notify }) {
         <ColumnHead className="entry-date-head" label="Дата внесения" field="entry_date" sort={sort} onSort={doSort} dateValue={filters.entry_date} onDateFilter={value => setFilter('entry_date', value)}/>
         <ColumnHead className="account-type-head" label="Признак" value={filters.account_type} options={refs.account_types} onFilter={value => setFilter('account_type', value)}/>
         <ColumnHead className="legal-entity-head" label="Юрлицо" field="legal_entity" sort={sort} onSort={doSort} value={filters.legal_entity} options={refs.legal_entities} onFilter={value => setFilter('legal_entity', value)}/>
+        <ColumnHead label="Сумма" field="amount" sort={sort} onSort={doSort}/>
         <th>Документ</th><ColumnHead label="Дата документа" dateValue={filters.document_date} onDateFilter={value => setFilter('document_date', value)}/>
         <ColumnHead label="Статья затрат" value={filters.cost_category} options={refs.cost_categories} onFilter={value => setFilter('cost_category', value)}/>
-        <ColumnHead label="Сумма" field="amount" sort={sort} onSort={doSort}/>
         <th>Отсрочка, дней</th>
         <ColumnHead label="Плановая оплата" field="planned_payment_date" sort={sort} onSort={doSort} dateValue={filters.planned_payment_date} onDateFilter={value => setFilter('planned_payment_date', value)}/>
         <ColumnHead label="Дата утверждения" field="approval_date" sort={sort} onSort={doSort} dateValue={filters.approval_date} onDateFilter={value => setFilter('approval_date', value)}/>
@@ -285,10 +285,10 @@ function RegistryRow({ item, refs, editable, isNew = false, selected, savingCell
     {cell('entry_date', { type: 'date', className: 'entry-date-cell' })}
     {cell('account_type', { options: refs.account_types, className: 'account-type-cell' })}
     {cell('legal_entity', { options: refs.legal_entities, className: 'legal-entity-cell' })}
+    {cell('amount', { type: 'number', className: 'money-cell', render: value => value == null || value === '' ? '—' : <span className="installment-amount"><span>{money(value)}</span>{item.installment_count > 1 && <small>Платёж {item.installment_number} из {item.installment_count}</small>}</span> })}
     {cell('document_number')}
     {cell('document_date', { type: 'date' })}
     {cell('cost_category', { options: refs.cost_categories, className: 'category-cell' })}
-    {cell('amount', { type: 'number', className: 'money-cell', render: value => value == null || value === '' ? '—' : <span className="installment-amount"><span>{money(value)}</span>{item.installment_count > 1 && <small>Платёж {item.installment_number} из {item.installment_count}</small>}</span> })}
     {cell('deferment_days', { type: 'number' })}
     {cell('planned_payment_date', { type: 'date', className: item.overdue ? 'date-overdue' : '' })}
     {cell('approval_date', { type: 'date' })}
@@ -548,3 +548,4 @@ function isoDate(date) { return `${date.getUTCFullYear()}-${String(date.getUTCMo
 function paymentWord(value) { const lastTwo = value % 100; const last = value % 10; return lastTwo >= 11 && lastTwo <= 14 ? 'платежей' : last === 1 ? 'платёж' : last >= 2 && last <= 4 ? 'платежа' : 'платежей' }
 function partWord(value) { const lastTwo = value % 100; const last = value % 10; return lastTwo >= 11 && lastTwo <= 14 ? 'частей' : last === 1 ? 'часть' : last >= 2 && last <= 4 ? 'части' : 'частей' }
 function BulkModal({ count, refs, onClose, onSave }) { const [form,setForm]=useState({status:'',approval_date:'',actual_payment_date:''});return <div className="modal-backdrop"><div className="modal small-modal"><div className="modal-head"><div><p className="eyebrow">Массовое действие</p><h2>Изменить {count} строк</h2></div><button onClick={onClose}><X/></button></div><div className="modal-body stacked-fields"><SelectField label="Новый статус" value={form.status} options={refs.statuses} onChange={v=>setForm({...form,status:v})}/><Field label="Дата утверждения" type="date" value={form.approval_date} onChange={v=>setForm({...form,approval_date:v})}/><Field label="Фактическая дата оплаты" type="date" value={form.actual_payment_date} onChange={v=>setForm({...form,actual_payment_date:v})}/></div><div className="modal-footer"><button className="secondary" onClick={onClose}>Отмена</button><button className="primary" onClick={()=>onSave(form)}>Применить</button></div></div></div> }
+
