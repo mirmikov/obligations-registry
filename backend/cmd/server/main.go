@@ -197,4 +197,3 @@ func queryInt(r *http.Request, key string, fallback, max int) int {
 	}
 	return value
 }
-
