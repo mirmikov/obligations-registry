@@ -238,4 +238,3 @@ function monthFromValue(value) { const match = String(value || '').match(/^(\d{4
 function localISO(date) { return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}` }
 function parseDateDraft(draft) { if (!String(draft).trim()) return ''; const match = String(draft).trim().match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{4})$/); if (!match) return null; const day = Number(match[1]); const month = Number(match[2]); const year = Number(match[3]); const date = new Date(year, month - 1, day); return date.getFullYear() === year && date.getMonth() === month - 1 && date.getDate() === day ? localISO(date) : null }
 function capitalizeMonth(value) { return value ? value[0].toUpperCase() + value.slice(1) : value }
-
