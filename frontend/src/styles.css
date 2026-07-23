@@ -20,9 +20,9 @@
 
 /* Four fixed business columns stay above the horizontally scrolling sheet. */
 .inline-registry .entry-date-head,.inline-registry .entry-date-cell{box-shadow:none;border-right:0}
-.inline-registry .account-type-head,.inline-registry .account-type-cell{position:sticky!important;left:396px!important;background:#fff;z-index:5!important}
+.inline-registry .account-type-head,.inline-registry .account-type-cell{position:sticky!important;left:var(--registry-account-type-left)!important;background:#fff;z-index:5!important}
 .app-shell .registry-page .inline-registry thead th.account-type-head{top:0;background:#f8faf9;z-index:100!important;overflow:visible}
-.inline-registry .legal-entity-head,.inline-registry .legal-entity-cell{position:sticky!important;left:526px!important;background:#fff;z-index:4!important;box-shadow:7px 0 10px rgba(27,58,61,.12)}
+.inline-registry .legal-entity-head,.inline-registry .legal-entity-cell{position:sticky!important;left:var(--registry-legal-entity-left)!important;background:#fff;z-index:4!important;box-shadow:7px 0 10px rgba(27,58,61,.12)}
 .app-shell .registry-page .inline-registry thead th.legal-entity-head{top:0;background:#f8faf9;z-index:99!important;overflow:visible;border-right:1px solid #d9e3df}
 .inline-registry tbody tr:hover .account-type-cell,.inline-registry tbody tr:hover .legal-entity-cell{background:#f7faf8}
 .inline-registry .inline-new-row .account-type-cell,.inline-registry .inline-new-row .legal-entity-cell{background:#fffaf2!important}

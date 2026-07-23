@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, Download, FileUp, Filter, LocateFixed, Maximize2, Minimize2, Plus, RotateCcw, Scissors, Search, Trash2, X } from 'lucide-react'
 import { download, request } from './api'
 import { DateInput, money, PageHeader, roleLabel, shortDate } from './App'
+import { getRegistryStickyOffsets } from './registryColumns'
 import usePresence from './usePresence'
 
 const emptyFilters = { q: '', counterparty: [], account_type: '', legal_entity: '', cost_category: '', priority: '', responsible: '', status: '', urgency: '', entry_date: '', document_date: '', planned_payment_date: '', approval_date: '', actual_payment_date: '', document_from: '', document_to: '', overdue: '' }
@@ -110,6 +111,7 @@ export default function Registry({ user, notify }) {
   }, [largeTableFont])
   useEffect(() => () => resizeCleanupRef.current?.(), [])
   const tableWidth = useMemo(() => columnWidths.reduce((sum, width) => sum + width, 0), [columnWidths])
+  const stickyOffsets = useMemo(() => getRegistryStickyOffsets(columnWidths), [columnWidths])
   const setColumnWidth = (index, width, persist = true) => {
     const next = [...columnWidthsRef.current]
     next[index] = normalizeColumnWidth(width, index)
@@ -230,7 +232,7 @@ export default function Registry({ user, notify }) {
     <section className="table-card">
       {tableFullscreen && <div className="registry-fullscreen-controls"><FontSizeButton large={largeTableFont} onToggle={() => setLargeTableFont(value => !value)}/><button type="button" className="registry-fullscreen-exit" onClick={() => setTableFullscreen(false)} title="Вернуться к обычному виду" aria-label="Вернуться к обычному виду"><Minimize2 size={17}/><span>Обычный вид</span></button></div>}
       {selected.length > 0 && <div className="selection-bar"><span><Check size={16}/>{selected.length} выбрано</span>{user.role !== 'viewer' && selectedItem && canSplitPayment(selectedItem) && <button onClick={() => setSplitItem(selectedItem)}><Scissors size={15}/>Разбить платёж</button>}{user.role !== 'viewer' && <button onClick={() => setBulkOpen(true)}>Изменить статус и даты</button>}<button onClick={() => setSelected([])}>Снять выбор</button></div>}
-      <div ref={tableWrapRef} className="registry-table-wrap" onScroll={rememberScroll}><table className={`registry-table inline-registry ${largeTableFont ? 'registry-font-large' : ''}`} style={{ '--registry-table-width': `${tableWidth}px`, '--registry-counterparty-left': `${columnWidths[0]}px`, '--registry-entry-date-left': `${columnWidths[0] + columnWidths[1]}px` }}><colgroup>{columnWidths.map((width, index) => <col key={index} style={{ width }}/>)}</colgroup><thead><tr><th className="check-col">{user.role !== 'viewer' ? <button type="button" className={`inline-add-row ${newRow ? 'active' : ''}`} onClick={addInlineRow} title={newRow ? 'Убрать новую строку' : 'Добавить строку'} aria-label={newRow ? 'Убрать новую строку' : 'Добавить строку'}><Plus size={16}/></button> : <input type="checkbox" checked={allSelected} onChange={toggleAll}/>}</th>
+      <div ref={tableWrapRef} className="registry-table-wrap" onScroll={rememberScroll}><table className={`registry-table inline-registry ${largeTableFont ? 'registry-font-large' : ''}`} style={{ '--registry-table-width': `${tableWidth}px`, '--registry-counterparty-left': `${stickyOffsets.counterparty}px`, '--registry-entry-date-left': `${stickyOffsets.entryDate}px`, '--registry-account-type-left': `${stickyOffsets.accountType}px`, '--registry-legal-entity-left': `${stickyOffsets.legalEntity}px` }}><colgroup>{columnWidths.map((width, index) => <col key={index} style={{ width }}/>)}</colgroup><thead><tr><th className="check-col">{user.role !== 'viewer' ? <button type="button" className={`inline-add-row ${newRow ? 'active' : ''}`} onClick={addInlineRow} title={newRow ? 'Убрать новую строку' : 'Добавить строку'} aria-label={newRow ? 'Убрать новую строку' : 'Добавить строку'}><Plus size={16}/></button> : <input type="checkbox" checked={allSelected} onChange={toggleAll}/>}</th>
         <ColumnHead className="counterparty-head" label="Контрагент" field="counterparty" sort={sort} onSort={doSort} value={filters.counterparty} options={refs.counterparties} onFilter={value => setFilter('counterparty', value)} multiple {...resizeProps(1)}/>
         <ColumnHead className="entry-date-head" label="Дата внесения" field="entry_date" sort={sort} onSort={doSort} dateValue={filters.entry_date} onDateFilter={value => setFilter('entry_date', value)} {...resizeProps(2)}/>
         <ColumnHead className="account-type-head" label="Признак" value={filters.account_type} options={refs.account_types} onFilter={value => setFilter('account_type', value)} {...resizeProps(3)}/>
