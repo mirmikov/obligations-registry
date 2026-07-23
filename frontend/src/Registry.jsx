@@ -4,14 +4,33 @@ import { download, request } from './api'
 import { DateInput, money, PageHeader, roleLabel, shortDate } from './App'
 import usePresence from './usePresence'
 
-const emptyFilters = { q: '', counterparty: [], account_type: '', legal_entity: '', cost_category: '', priority: '', responsible: '', status: '', urgency: '', entry_date: '', document_date: '', planned_payment_date: '', approval_date: '', actual_payment_date: '', planned_from: '', planned_to: '', overdue: '' }
+const emptyFilters = { q: '', counterparty: [], account_type: '', legal_entity: '', cost_category: '', priority: '', responsible: '', status: '', urgency: '', entry_date: '', document_date: '', planned_payment_date: '', approval_date: '', actual_payment_date: '', document_from: '', document_to: '', overdue: '' }
 const dateFields = new Set(['entry_date', 'document_date', 'planned_payment_date', 'approval_date', 'actual_payment_date'])
 const fieldLabels = { counterparty: 'Контрагент', entry_date: 'Дата внесения', document_number: 'Документ', document_date: 'Дата документа', legal_entity: 'Юрлицо', cost_category: 'Статья затрат', amount: 'Сумма, ₽', deferment_days: 'Отсрочка, дней', planned_payment_date: 'Плановая оплата', approval_date: 'Дата утверждения', actual_payment_date: 'Фактическая оплата', status: 'Статус', urgency: 'Срочность', responsible: 'Ответственный', priority: 'Приоритет', account_type: 'Признак учёта', comment: 'Комментарий', source_note: 'Условия оплаты' }
-const registryColumnWidths = [46, 220, 130, 130, 180, 120, 180, 135, 240, 110, 145, 145, 145, 160, 135, 160, 120, 240, 240, 86]
+const defaultRegistryColumnWidths = [46, 220, 130, 130, 180, 120, 180, 135, 240, 110, 145, 145, 145, 160, 135, 160, 120, 240, 240, 86]
+const minimumRegistryColumnWidths = [46, 130, 105, 100, 120, 90, 110, 110, 130, 90, 115, 115, 115, 110, 105, 115, 95, 120, 120, 70]
+const registryColumnWidthsKey = 'registry-table-column-widths-v1'
 const registryLargeFontKey = 'registry-table-large-font'
 
 function readLargeFontPreference() {
   try { return window.localStorage.getItem(registryLargeFontKey) === 'true' } catch { return false }
+}
+
+function normalizeColumnWidth(value, index) {
+  const width = Number(value)
+  return Number.isFinite(width) ? Math.min(600, Math.max(minimumRegistryColumnWidths[index], Math.round(width))) : defaultRegistryColumnWidths[index]
+}
+
+function readColumnWidths() {
+  try {
+    const saved = JSON.parse(window.localStorage.getItem(registryColumnWidthsKey))
+    if (Array.isArray(saved) && saved.length === defaultRegistryColumnWidths.length) return saved.map(normalizeColumnWidth)
+  } catch {}
+  return [...defaultRegistryColumnWidths]
+}
+
+function saveColumnWidths(widths) {
+  try { window.localStorage.setItem(registryColumnWidthsKey, JSON.stringify(widths)) } catch {}
 }
 
 export default function Registry({ user, notify }) {
@@ -28,6 +47,7 @@ export default function Registry({ user, notify }) {
   const [splitItem, setSplitItem] = useState(null)
   const [tableFullscreen, setTableFullscreen] = useState(false)
   const [largeTableFont, setLargeTableFont] = useState(readLargeFontPreference)
+  const [columnWidths, setColumnWidths] = useState(readColumnWidths)
   const [viewReady, setViewReady] = useState(false)
   const importRef = useRef()
   const tableWrapRef = useRef()
@@ -37,7 +57,10 @@ export default function Registry({ user, notify }) {
   const scrollPositionRef = useRef({ left: 0, top: 0 })
   const scrollSaveTimerRef = useRef()
   const latestViewRef = useRef(null)
+  const columnWidthsRef = useRef(columnWidths)
+  const resizeCleanupRef = useRef(null)
   const { activeUsers, updateLocation, sessionId } = usePresence({ page: 'registry', page_label: 'Реестр обязательств', mode: 'view' })
+  columnWidthsRef.current = columnWidths
 
   useEffect(() => {
     Promise.all([request('/api/references'), request('/api/saved-view')]).then(([references, saved]) => {
@@ -85,6 +108,49 @@ export default function Registry({ user, notify }) {
   useEffect(() => {
     try { window.localStorage.setItem(registryLargeFontKey, String(largeTableFont)) } catch {}
   }, [largeTableFont])
+  useEffect(() => () => resizeCleanupRef.current?.(), [])
+  const tableWidth = useMemo(() => columnWidths.reduce((sum, width) => sum + width, 0), [columnWidths])
+  const setColumnWidth = (index, width, persist = true) => {
+    const next = [...columnWidthsRef.current]
+    next[index] = normalizeColumnWidth(width, index)
+    columnWidthsRef.current = next
+    setColumnWidths(next)
+    if (persist) saveColumnWidths(next)
+  }
+  const startColumnResize = (index, event) => {
+    if (event.button !== 0) return
+    event.preventDefault()
+    event.stopPropagation()
+    resizeCleanupRef.current?.()
+    const startX = event.clientX
+    const startWidth = columnWidthsRef.current[index]
+    const move = moveEvent => {
+      moveEvent.preventDefault()
+      setColumnWidth(index, startWidth + moveEvent.clientX - startX, false)
+    }
+    const finish = () => {
+      saveColumnWidths(columnWidthsRef.current)
+      document.body.classList.remove('registry-column-resizing')
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', finish)
+      window.removeEventListener('pointercancel', finish)
+      resizeCleanupRef.current = null
+    }
+    resizeCleanupRef.current = finish
+    document.body.classList.add('registry-column-resizing')
+    window.addEventListener('pointermove', move, { passive: false })
+    window.addEventListener('pointerup', finish)
+    window.addEventListener('pointercancel', finish)
+  }
+  const resizeColumnBy = (index, delta) => setColumnWidth(index, columnWidthsRef.current[index] + delta)
+  const resetColumnWidth = index => setColumnWidth(index, defaultRegistryColumnWidths[index])
+  const resetColumnWidths = () => {
+    const defaults = [...defaultRegistryColumnWidths]
+    columnWidthsRef.current = defaults
+    setColumnWidths(defaults)
+    saveColumnWidths(defaults)
+  }
+  const resizeProps = index => ({ columnIndex: index, columnWidth: columnWidths[index], onResizeStart: startColumnResize, onResizeBy: resizeColumnBy, onResizeReset: resetColumnWidth })
   const setFilter = (key, value) => { setFilters(old => ({ ...old, [key]: value })); setPage(1) }
   const rememberScroll = event => {
     scrollPositionRef.current = { left: event.currentTarget.scrollLeft, top: event.currentTarget.scrollTop }
@@ -153,34 +219,34 @@ export default function Registry({ user, notify }) {
   const importFile = async event => { const file = event.target.files?.[0]; if (!file) return; const body = new FormData(); body.append('file', file); try { const result = await request('/api/obligations/import.xlsx', { method: 'POST', body }); notify(`База обновлена: ${result.updated} изменено, ${result.created} добавлено`); load(); request('/api/references').then(setRefs).catch(e => notify(e.message, 'error')) } catch (e) { notify(e.message, 'error') } finally { event.target.value = '' } }
   const doSort = key => setSort(current => ({ key, order: current.key === key && current.order === 'asc' ? 'desc' : 'asc' }))
   return <div className={`page registry-page ${tableFullscreen ? 'is-table-fullscreen' : ''}`}>
-    <PageHeader eyebrow="Рабочая область" title="Реестр обязательств" subtitle={`${data.total.toLocaleString('ru-RU')} записей с учётом фильтров`} actions={<><PresenceCluster users={activeUsers} currentSession={sessionId}/>{user.role === 'admin' && <><input ref={importRef} type="file" accept=".xlsx" hidden onChange={importFile}/><button className="secondary" onClick={() => importRef.current.click()}><FileUp size={17}/>Импорт</button></>}<button className="secondary" onClick={() => download(`/api/obligations/export.xlsx?${query}`, 'Реестр обязательств.xlsx')}><Download size={17}/>Excel</button><FontSizeButton large={largeTableFont} onToggle={() => setLargeTableFont(value => !value)}/><button className="secondary registry-fullscreen-button" onClick={() => setTableFullscreen(true)} title="Открыть таблицу на весь экран" aria-label="Открыть таблицу на весь экран"><Maximize2 size={17}/></button></>}/>
+    <PageHeader eyebrow="Рабочая область" title="Реестр обязательств" subtitle={`${data.total.toLocaleString('ru-RU')} записей с учётом фильтров`} actions={<><PresenceCluster users={activeUsers} currentSession={sessionId}/>{user.role === 'admin' && <><input ref={importRef} type="file" accept=".xlsx" hidden onChange={importFile}/><button className="secondary" onClick={() => importRef.current.click()}><FileUp size={17}/>Импорт</button></>}<button className="secondary" onClick={() => download(`/api/obligations/export.xlsx?${query}`, 'Реестр обязательств.xlsx')}><Download size={17}/>Excel</button><button className="secondary registry-width-reset" onClick={resetColumnWidths} title="Вернуть стандартную ширину всех столбцов"><RotateCcw size={16}/>Ширина</button><FontSizeButton large={largeTableFont} onToggle={() => setLargeTableFont(value => !value)}/><button className="secondary registry-fullscreen-button" onClick={() => setTableFullscreen(true)} title="Открыть таблицу на весь экран" aria-label="Открыть таблицу на весь экран"><Maximize2 size={17}/></button></>}/>
     <section className="filter-panel">
       <div className="search-box"><Search size={18}/><input placeholder="Контрагент, счёт, комментарий…" value={filters.q} onChange={e => setFilter('q', e.target.value)}/>{filters.q && <button onClick={() => setFilter('q', '')}><X size={15}/></button>}</div>
-      <label className="filter-date"><span>Срок с</span><DateInput value={filters.planned_from} onChange={value => setFilter('planned_from', value)} aria-label="Срок с"/></label>
-      <label className="filter-date"><span>по</span><DateInput value={filters.planned_to} onChange={value => setFilter('planned_to', value)} aria-label="Срок по"/></label>
+      <label className="filter-date"><span>Дата документа: от</span><DateInput value={filters.document_from} onChange={value => setFilter('document_from', value)} aria-label="Дата документа: от"/></label>
+      <label className="filter-date"><span>Дата документа: до</span><DateInput value={filters.document_to} onChange={value => setFilter('document_to', value)} aria-label="Дата документа: до"/></label>
       <button className={`overdue-toggle ${filters.overdue ? 'active' : ''}`} onClick={() => setFilter('overdue', filters.overdue ? '' : 'true')}><Filter size={15}/>Только просроченные</button>
       {hasActiveFilters(filters) && <button className="reset-filters" onClick={() => { setFilters(emptyFilters); setPage(1) }}><RotateCcw size={15}/>Сбросить</button>}
     </section>
     <section className="table-card">
       {tableFullscreen && <div className="registry-fullscreen-controls"><FontSizeButton large={largeTableFont} onToggle={() => setLargeTableFont(value => !value)}/><button type="button" className="registry-fullscreen-exit" onClick={() => setTableFullscreen(false)} title="Вернуться к обычному виду" aria-label="Вернуться к обычному виду"><Minimize2 size={17}/><span>Обычный вид</span></button></div>}
       {selected.length > 0 && <div className="selection-bar"><span><Check size={16}/>{selected.length} выбрано</span>{user.role !== 'viewer' && selectedItem && canSplitPayment(selectedItem) && <button onClick={() => setSplitItem(selectedItem)}><Scissors size={15}/>Разбить платёж</button>}{user.role !== 'viewer' && <button onClick={() => setBulkOpen(true)}>Изменить статус и даты</button>}<button onClick={() => setSelected([])}>Снять выбор</button></div>}
-      <div ref={tableWrapRef} className="registry-table-wrap" onScroll={rememberScroll}><table className={`registry-table inline-registry ${largeTableFont ? 'registry-font-large' : ''}`}><colgroup>{registryColumnWidths.map((width, index) => <col key={index} style={{ width }}/>)}</colgroup><thead><tr><th className="check-col">{user.role !== 'viewer' ? <button type="button" className={`inline-add-row ${newRow ? 'active' : ''}`} onClick={addInlineRow} title={newRow ? 'Убрать новую строку' : 'Добавить строку'} aria-label={newRow ? 'Убрать новую строку' : 'Добавить строку'}><Plus size={16}/></button> : <input type="checkbox" checked={allSelected} onChange={toggleAll}/>}</th>
-        <ColumnHead className="counterparty-head" label="Контрагент" field="counterparty" sort={sort} onSort={doSort} value={filters.counterparty} options={refs.counterparties} onFilter={value => setFilter('counterparty', value)} multiple/>
-        <ColumnHead className="entry-date-head" label="Дата внесения" field="entry_date" sort={sort} onSort={doSort} dateValue={filters.entry_date} onDateFilter={value => setFilter('entry_date', value)}/>
-        <ColumnHead className="account-type-head" label="Признак" value={filters.account_type} options={refs.account_types} onFilter={value => setFilter('account_type', value)}/>
-        <ColumnHead className="legal-entity-head" label="Юрлицо" field="legal_entity" sort={sort} onSort={doSort} value={filters.legal_entity} options={refs.legal_entities} onFilter={value => setFilter('legal_entity', value)}/>
-        <ColumnHead label="Сумма" field="amount" sort={sort} onSort={doSort}/>
-        <th>Документ</th><ColumnHead label="Дата документа" dateValue={filters.document_date} onDateFilter={value => setFilter('document_date', value)}/>
-        <ColumnHead label="Статья затрат" value={filters.cost_category} options={refs.cost_categories} onFilter={value => setFilter('cost_category', value)}/>
-        <th>Отсрочка, дней</th>
-        <ColumnHead label="Плановая оплата" field="planned_payment_date" sort={sort} onSort={doSort} dateValue={filters.planned_payment_date} onDateFilter={value => setFilter('planned_payment_date', value)}/>
-        <ColumnHead label="Дата утверждения" field="approval_date" sort={sort} onSort={doSort} dateValue={filters.approval_date} onDateFilter={value => setFilter('approval_date', value)}/>
-        <ColumnHead label="Фактическая оплата" dateValue={filters.actual_payment_date} onDateFilter={value => setFilter('actual_payment_date', value)}/>
-        <ColumnHead label="Статус" field="status" sort={sort} onSort={doSort} value={filters.status} options={refs.statuses} onFilter={value => setFilter('status', value)}/>
-        <ColumnHead label="Срочность" value={filters.urgency} options={refs.urgencies} onFilter={value => setFilter('urgency', value)}/>
-        <ColumnHead label="Ответственный" value={filters.responsible} options={refs.responsibles} onFilter={value => setFilter('responsible', value)}/>
-        <ColumnHead label="Приоритет" value={filters.priority} options={refs.priorities} onFilter={value => setFilter('priority', value)}/>
-        <th>Комментарий</th><th>Условия оплаты</th><th className="action-col"/></tr></thead>
+      <div ref={tableWrapRef} className="registry-table-wrap" onScroll={rememberScroll}><table className={`registry-table inline-registry ${largeTableFont ? 'registry-font-large' : ''}`} style={{ '--registry-table-width': `${tableWidth}px`, '--registry-counterparty-left': `${columnWidths[0]}px`, '--registry-entry-date-left': `${columnWidths[0] + columnWidths[1]}px` }}><colgroup>{columnWidths.map((width, index) => <col key={index} style={{ width }}/>)}</colgroup><thead><tr><th className="check-col">{user.role !== 'viewer' ? <button type="button" className={`inline-add-row ${newRow ? 'active' : ''}`} onClick={addInlineRow} title={newRow ? 'Убрать новую строку' : 'Добавить строку'} aria-label={newRow ? 'Убрать новую строку' : 'Добавить строку'}><Plus size={16}/></button> : <input type="checkbox" checked={allSelected} onChange={toggleAll}/>}</th>
+        <ColumnHead className="counterparty-head" label="Контрагент" field="counterparty" sort={sort} onSort={doSort} value={filters.counterparty} options={refs.counterparties} onFilter={value => setFilter('counterparty', value)} multiple {...resizeProps(1)}/>
+        <ColumnHead className="entry-date-head" label="Дата внесения" field="entry_date" sort={sort} onSort={doSort} dateValue={filters.entry_date} onDateFilter={value => setFilter('entry_date', value)} {...resizeProps(2)}/>
+        <ColumnHead className="account-type-head" label="Признак" value={filters.account_type} options={refs.account_types} onFilter={value => setFilter('account_type', value)} {...resizeProps(3)}/>
+        <ColumnHead className="legal-entity-head" label="Юрлицо" field="legal_entity" sort={sort} onSort={doSort} value={filters.legal_entity} options={refs.legal_entities} onFilter={value => setFilter('legal_entity', value)} {...resizeProps(4)}/>
+        <ColumnHead label="Сумма" field="amount" sort={sort} onSort={doSort} {...resizeProps(5)}/>
+        <PlainColumnHead label="Документ" {...resizeProps(6)}/><ColumnHead label="Дата документа" dateValue={filters.document_date} onDateFilter={value => setFilter('document_date', value)} {...resizeProps(7)}/>
+        <ColumnHead label="Статья затрат" value={filters.cost_category} options={refs.cost_categories} onFilter={value => setFilter('cost_category', value)} {...resizeProps(8)}/>
+        <PlainColumnHead label="Отсрочка, дней" {...resizeProps(9)}/>
+        <ColumnHead label="Плановая оплата" field="planned_payment_date" sort={sort} onSort={doSort} dateValue={filters.planned_payment_date} onDateFilter={value => setFilter('planned_payment_date', value)} {...resizeProps(10)}/>
+        <ColumnHead label="Дата утверждения" field="approval_date" sort={sort} onSort={doSort} dateValue={filters.approval_date} onDateFilter={value => setFilter('approval_date', value)} {...resizeProps(11)}/>
+        <ColumnHead label="Фактическая оплата" dateValue={filters.actual_payment_date} onDateFilter={value => setFilter('actual_payment_date', value)} {...resizeProps(12)}/>
+        <ColumnHead label="Статус" field="status" sort={sort} onSort={doSort} value={filters.status} options={refs.statuses} onFilter={value => setFilter('status', value)} {...resizeProps(13)}/>
+        <ColumnHead label="Срочность" value={filters.urgency} options={refs.urgencies} onFilter={value => setFilter('urgency', value)} {...resizeProps(14)}/>
+        <ColumnHead label="Ответственный" value={filters.responsible} options={refs.responsibles} onFilter={value => setFilter('responsible', value)} {...resizeProps(15)}/>
+        <ColumnHead label="Приоритет" value={filters.priority} options={refs.priorities} onFilter={value => setFilter('priority', value)} {...resizeProps(16)}/>
+        <PlainColumnHead label="Комментарий" {...resizeProps(17)}/><PlainColumnHead label="Условия оплаты" {...resizeProps(18)}/><th className="action-col"/></tr></thead>
       <tbody>{newRow && <RegistryRow item={newRow} refs={refs} editable isNew savingCells={savingCells} onCommit={commitNewCell} onStartEdit={startCellEdit} onFinishEdit={finishCellEdit} onDelete={() => setNewRow(null)}/>} {loading ? <SkeletonRows/> : data.items.length === 0 && !newRow ? <tr><td colSpan="20"><div className="empty-state"><Search size={27}/><strong>Ничего не найдено</strong><span>Измените или сбросьте фильтры</span></div></td></tr> : data.items.map(item => <RegistryRow key={item.id} item={item} refs={refs} editable={user.role !== 'viewer'} selected={selected.includes(item.id)} savingCells={savingCells} onToggle={() => setSelected(s => s.includes(item.id) ? s.filter(id => id !== item.id) : [...s, item.id])} onCommit={commitCell} onStartEdit={startCellEdit} onFinishEdit={finishCellEdit} onSplit={user.role !== 'viewer' && canSplitPayment(item) ? () => setSplitItem(item) : null} onDelete={user.role !== 'viewer' ? () => remove(item.id) : null}/>)}</tbody></table></div>
       <footer className="table-footer"><span>Показано {data.items.length} из {data.total.toLocaleString('ru-RU')}</span><div><button disabled={page === 1} onClick={() => setPage(p => p - 1)}><ChevronLeft size={17}/></button><span>Страница <b>{page}</b> из {totalPages}</span><button disabled={page === totalPages} onClick={() => setPage(p => p + 1)}><ChevronRight size={17}/></button></div></footer>
     </section>
@@ -195,14 +261,28 @@ function FontSizeButton({ large, onToggle }) {
   return <button type="button" className={`secondary registry-font-button ${large ? 'active' : ''}`} onClick={onToggle} aria-pressed={large} aria-label={large ? 'Вернуть обычный размер шрифта в таблице' : 'Увеличить размер шрифта в таблице'} title={large ? 'Обычный шрифт' : 'Увеличить шрифт'}><span aria-hidden="true">A<sup>+</sup></span><b>{large ? 'Обычный' : 'Крупнее'}</b></button>
 }
 
-function ColumnHead({ label, field, sort, onSort, value = '', options, onFilter, dateValue = '', onDateFilter, className = '', multiple = false }) {
+function ColumnHead({ label, field, sort, onSort, value = '', options, onFilter, dateValue = '', onDateFilter, className = '', multiple = false, ...resize }) {
   const sorted = field && sort?.key === field
   const filtered = (Array.isArray(value) ? value.length > 0 : Boolean(value)) || Boolean(dateValue)
   return <th className={`${className} ${sorted ? 'sorted' : ''} ${filtered ? 'filtered' : ''}`}><div className="column-head-inner">
     {field ? <button type="button" className="column-sort" onClick={() => onSort(field)}>{label}<i>{sorted ? (sort.order === 'asc' ? '↑' : '↓') : '↕'}</i></button> : <span className="column-label">{label}</span>}
     {onFilter && <HeaderFilter label={label} value={value} options={options} onChange={onFilter} multiple={multiple}/>}
     {onDateFilter && <DateHeaderFilter label={label} value={dateValue} onChange={onDateFilter}/>}
-  </div></th>
+  </div><ColumnResizeHandle {...resize}/></th>
+}
+
+function PlainColumnHead({ label, ...resize }) {
+  return <th><span className="column-label">{label}</span><ColumnResizeHandle {...resize}/></th>
+}
+
+function ColumnResizeHandle({ columnIndex, columnWidth, onResizeStart, onResizeBy, onResizeReset }) {
+  const onKeyDown = event => {
+    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+    event.preventDefault()
+    event.stopPropagation()
+    onResizeBy(columnIndex, event.key === 'ArrowLeft' ? -10 : 10)
+  }
+  return <span className="column-resize-handle" role="separator" tabIndex="0" aria-label="Изменить ширину столбца" aria-orientation="vertical" aria-valuenow={columnWidth} onPointerDown={event => onResizeStart(columnIndex, event)} onKeyDown={onKeyDown} onDoubleClick={() => onResizeReset(columnIndex)} title="Потяните для изменения ширины; двойной щелчок — сброс"/>
 }
 
 function DateHeaderFilter({ label, value, onChange }) {
@@ -251,7 +331,10 @@ function HeaderFilter({ label, value, options = [], onChange, multiple = false }
 
 function normalizeSavedFilters(saved) {
   const counterparty = Array.isArray(saved.counterparty) ? saved.counterparty.filter(Boolean) : saved.counterparty ? [saved.counterparty] : []
-  return { ...emptyFilters, ...saved, counterparty }
+  const normalized = { ...emptyFilters, ...saved, counterparty }
+  delete normalized.planned_from
+  delete normalized.planned_to
+  return normalized
 }
 
 function normalizeSavedView(saved) {
@@ -423,9 +506,8 @@ function Field({ label, fieldKey, value, onChange, onFocus, wide, type, ...props
 function SelectField({ label, fieldKey, value, options = [], onChange, onFocus, wide, editable }) { return <label className={`field ${wide ? 'wide' : ''}`}><span>{label}</span>{editable ? <><input list={`list-${label}`} value={value} onChange={e => onChange(e.target.value)} onFocus={() => onFocus?.(fieldKey, label)}/><datalist id={`list-${label}`}>{options.map(o => <option key={o.id ?? o.value} value={o.value}/>)}</datalist></> : <select value={value} onChange={e => onChange(e.target.value)} onFocus={() => onFocus?.(fieldKey, label)}><option value="">Не выбрано</option>{options.map(o => <option key={o.id ?? o.value} value={o.value}>{o.value}</option>)}</select>}</label> }
 
 function SplitPaymentModal({ item, refs, onClose, onSave }) {
-  const defaultDate = item.planned_payment_date || todayISO()
   const accountTypes = refs.account_types || []
-  const [form, setForm] = useState({ mode: 'count', count: 3, payment_amount: '', start_date: defaultDate, period_unit: 'month', period_value: 1, percentage_parts: [{ percent: '', account_type: '', planned_date: '' }, { percent: '', account_type: '', planned_date: '' }] })
+  const [form, setForm] = useState({ mode: 'count', count: '', payment_amount: '', start_date: '', period_unit: '', period_value: '', percentage_parts: [{ percent: '', account_type: '', planned_date: '' }, { percent: '', account_type: '', planned_date: '' }] })
   const [saving, setSaving] = useState(false)
   const preview = useMemo(() => buildSplitPreview(Number(item.amount), form), [item.amount, form])
   const update = (key, value) => setForm(current => ({ ...current, [key]: value }))
@@ -462,7 +544,7 @@ function SplitPaymentModal({ item, refs, onClose, onSave }) {
         {form.mode === 'count' ? <label className="field"><span>Количество платежей</span><input type="number" min="2" max="60" value={form.count} onChange={event => update('count', event.target.value)}/></label> : <label className="field"><span>Сумма одного платежа, ₽</span><input type="number" min="0.01" step="0.01" value={form.payment_amount} onChange={event => update('payment_amount', event.target.value)} placeholder="Например, 50 000"/></label>}
         <label className="field"><span>Дата первого платежа</span><DateInput value={form.start_date} onChange={value => update('start_date', value)} aria-label="Дата первого платежа"/></label>
         <label className="field"><span>Повторять каждые</span><input type="number" min="1" max="365" value={form.period_value} onChange={event => update('period_value', event.target.value)}/></label>
-        <label className="field"><span>Период</span><select value={form.period_unit} onChange={event => update('period_unit', event.target.value)}><option value="month">Месяц</option><option value="week">Неделя</option><option value="day">День</option></select></label>
+        <label className="field"><span>Период</span><select value={form.period_unit} onChange={event => update('period_unit', event.target.value)}><option value="">Выберите</option><option value="month">Месяц</option><option value="week">Неделя</option><option value="day">День</option></select></label>
       </div>}
       {preview.error ? <div className="split-error">{preview.error}</div> : <div className="split-preview">
         <div className="split-preview-head"><div><strong>Предварительный график</strong><span>{preview.items.length} {paymentWord(preview.items.length)}</span></div><div><span>Итого</span><strong>{money(preview.total)}</strong></div></div>
@@ -510,6 +592,7 @@ function buildSplitPreview(amount, form) {
   const interval = Number(form.period_value)
   if (!form.start_date || !/^\d{4}-\d{2}-\d{2}$/.test(form.start_date)) return { error: 'Выберите дату первого платежа.', items: [], total: 0 }
   if (!Number.isInteger(interval) || interval < 1 || interval > 365) return { error: 'Период должен быть целым числом от 1 до 365.', items: [], total: 0 }
+  if (!['month', 'week', 'day'].includes(form.period_unit)) return { error: 'Выберите период повторения.', items: [], total: 0 }
   let amounts = []
   if (form.mode === 'count') {
     const count = Number(form.count)
@@ -548,4 +631,5 @@ function isoDate(date) { return `${date.getUTCFullYear()}-${String(date.getUTCMo
 function paymentWord(value) { const lastTwo = value % 100; const last = value % 10; return lastTwo >= 11 && lastTwo <= 14 ? 'платежей' : last === 1 ? 'платёж' : last >= 2 && last <= 4 ? 'платежа' : 'платежей' }
 function partWord(value) { const lastTwo = value % 100; const last = value % 10; return lastTwo >= 11 && lastTwo <= 14 ? 'частей' : last === 1 ? 'часть' : last >= 2 && last <= 4 ? 'части' : 'частей' }
 function BulkModal({ count, refs, onClose, onSave }) { const [form,setForm]=useState({status:'',approval_date:'',actual_payment_date:''});return <div className="modal-backdrop"><div className="modal small-modal"><div className="modal-head"><div><p className="eyebrow">Массовое действие</p><h2>Изменить {count} строк</h2></div><button onClick={onClose}><X/></button></div><div className="modal-body stacked-fields"><SelectField label="Новый статус" value={form.status} options={refs.statuses} onChange={v=>setForm({...form,status:v})}/><Field label="Дата утверждения" type="date" value={form.approval_date} onChange={v=>setForm({...form,approval_date:v})}/><Field label="Фактическая дата оплаты" type="date" value={form.actual_payment_date} onChange={v=>setForm({...form,actual_payment_date:v})}/></div><div className="modal-footer"><button className="secondary" onClick={onClose}>Отмена</button><button className="primary" onClick={()=>onSave(form)}>Применить</button></div></div></div> }
+
 
