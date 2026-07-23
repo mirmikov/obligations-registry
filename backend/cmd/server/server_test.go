@@ -67,6 +67,19 @@ func TestBuildFiltersUsesBoundParameters(t *testing.T) {
 	}
 }
 
+func TestBuildFiltersUsesDocumentDateRange(t *testing.T) {
+	r := httptest.NewRequest("GET", "/?document_from=2026-07-01&document_to=2026-07-31", nil)
+	where, args := buildFilters(r, 1)
+	if len(args) != 2 || args[0] != "2026-07-01" || args[1] != "2026-07-31" {
+		t.Fatalf("document range args = %#v, want [2026-07-01 2026-07-31]", args)
+	}
+	for _, expected := range []string{"document_date >= $1::date", "document_date <= $2::date"} {
+		if !strings.Contains(where, expected) {
+			t.Fatalf("filter SQL %q does not contain %q", where, expected)
+		}
+	}
+}
+
 func TestBuildFiltersSupportsMultipleCounterparties(t *testing.T) {
 	r := httptest.NewRequest("GET", "/?counterparty=Альфа&counterparty=Бета&counterparty=Альфа", nil)
 	where, args := buildFilters(r, 1)
@@ -445,3 +458,4 @@ func TestMoneyTextToCentsDoesNotLoseLargeAmountKopecks(t *testing.T) {
 		t.Fatal("amount with fractions of a kopeck must be rejected")
 	}
 }
+
