@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, Download, FileUp, Filter, LocateFixed, Maximize2, Minimize2, Plus, RotateCcw, Scissors, Search, Trash2, X } from 'lucide-react'
+import { CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, CircleDollarSign, Download, FileUp, Filter, LocateFixed, Maximize2, Minimize2, Plus, RotateCcw, Scissors, Search, Trash2, X } from 'lucide-react'
 import { download, request } from './api'
 import { DateInput, money, PageHeader, roleLabel, shortDate } from './App'
 import { getRegistryStickyOffsets } from './registryColumns'
@@ -35,7 +35,7 @@ function saveColumnWidths(widths) {
 }
 
 export default function Registry({ user, notify }) {
-  const [data, setData] = useState({ items: [], total: 0, page: 1, page_size: 50 })
+  const [data, setData] = useState({ items: [], total: 0, filtered_amount: 0, page: 1, page_size: 50 })
   const [refs, setRefs] = useState({})
   const [filters, setFilters] = useState(emptyFilters)
   const [page, setPage] = useState(1)
@@ -228,6 +228,11 @@ export default function Registry({ user, notify }) {
       <label className="filter-date"><span>Дата документа: до</span><DateInput value={filters.document_to} onChange={value => setFilter('document_to', value)} aria-label="Дата документа: до"/></label>
       <button className={`overdue-toggle ${filters.overdue ? 'active' : ''}`} onClick={() => setFilter('overdue', filters.overdue ? '' : 'true')}><Filter size={15}/>Только просроченные</button>
       {hasActiveFilters(filters) && <button className="reset-filters" onClick={() => { setFilters(emptyFilters); setPage(1) }}><RotateCcw size={15}/>Сбросить</button>}
+    </section>
+    <section className={`registry-filter-summary ${loading ? 'is-loading' : ''}`} aria-live="polite" aria-busy={loading}>
+      <CircleDollarSign size={22}/>
+      <div><span>Сумма по текущим фильтрам</span><strong>{loading ? 'Считаем…' : money(data.filtered_amount)}</strong></div>
+      <small>{loading ? 'Обновляем результат' : `${data.total.toLocaleString('ru-RU')} записей в расчёте`}</small>
     </section>
     <section className="table-card">
       {tableFullscreen && <div className="registry-fullscreen-controls"><FontSizeButton large={largeTableFont} onToggle={() => setLargeTableFont(value => !value)}/><button type="button" className="registry-fullscreen-exit" onClick={() => setTableFullscreen(false)} title="Вернуться к обычному виду" aria-label="Вернуться к обычному виду"><Minimize2 size={17}/><span>Обычный вид</span></button></div>}
