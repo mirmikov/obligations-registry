@@ -136,7 +136,8 @@ func (a *app) listObligations(w http.ResponseWriter, r *http.Request) {
 		direction = "ASC"
 	}
 	var total int
-	if err := a.db.QueryRowContext(r.Context(), "SELECT count(*) FROM obligations WHERE "+where, args...).Scan(&total); err != nil {
+	var filteredAmount float64
+	if err := a.db.QueryRowContext(r.Context(), "SELECT count(*),COALESCE(sum(amount),0)::float8 FROM obligations WHERE "+where, args...).Scan(&total, &filteredAmount); err != nil {
 		fail(w, 500, "Не удалось загрузить реестр")
 		return
 	}
@@ -157,7 +158,7 @@ func (a *app) listObligations(w http.ResponseWriter, r *http.Request) {
 		}
 		items = append(items, item)
 	}
-	writeJSON(w, 200, map[string]any{"items": items, "total": total, "page": page, "page_size": pageSize})
+	writeJSON(w, 200, map[string]any{"items": items, "total": total, "filtered_amount": filteredAmount, "page": page, "page_size": pageSize})
 }
 
 func (a *app) createObligation(w http.ResponseWriter, r *http.Request) {
