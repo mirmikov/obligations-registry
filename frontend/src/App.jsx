@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { BarChart3, BellRing, BookOpen, ChevronDown, ChevronLeft, ChevronRight, CircleDollarSign, FileClock, Landmark, LogOut, Maximize2, Menu, MessageCircle, Minus, ReceiptText, Settings, Undo2, Users, X } from 'lucide-react'
+import { BarChart3, BellRing, BookOpen, BriefcaseBusiness, ChevronDown, ChevronLeft, ChevronRight, CircleDollarSign, FileClock, Landmark, LogOut, Maximize2, Menu, MessageCircle, Minus, ReceiptText, Settings, Undo2, Users, X } from 'lucide-react'
 import { request } from './api'
 import Dashboard from './Dashboard'
 import Registry from './Registry'
@@ -10,10 +10,12 @@ import UsersPage from './UsersPage'
 import Audit from './Audit'
 import CreditsLeasing from './CreditsLeasing'
 import Chat from './Chat'
+import ExecutiveDashboard from './ExecutiveDashboard'
 import useChatNotifications from './useChatNotifications'
 
 const nav = [
   { id: 'dashboard', label: 'Сводка', icon: BarChart3 },
+  { id: 'executive', label: 'Панель руководителя', icon: BriefcaseBusiness, admin: true },
   { id: 'registry', label: 'Реестр', icon: BookOpen, children: [{ id: 'credits-leasing', label: 'Кредиты и лизинги', icon: Landmark }] },
   { id: 'payments', label: 'К оплате', icon: CircleDollarSign },
   { id: 'chat', label: 'Чаты', icon: MessageCircle },
@@ -91,6 +93,7 @@ export default function App() {
 
   const pages = {
     dashboard: <Dashboard key={`dashboard-${dataRevision}`} notify={notify} />,
+    executive: <ExecutiveDashboard key={`executive-${dataRevision}`} notify={notify} />,
     registry: <Registry key={`registry-${dataRevision}`} user={user} notify={notify} />,
     'credits-leasing': <CreditsLeasing key={`credits-${dataRevision}`} notify={notify} />,
     payments: <Payments key={`payments-${dataRevision}`} user={user} notify={notify} />,

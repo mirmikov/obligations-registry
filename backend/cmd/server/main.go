@@ -86,6 +86,8 @@ func main() {
 	mux.Handle("POST /api/references/{kind}", a.authorize(a.requireRole("admin", "editor")(http.HandlerFunc(a.addReference))))
 	mux.Handle("DELETE /api/references/{kind}/{id}", a.authorize(a.requireRole("admin", "editor")(http.HandlerFunc(a.deleteReference))))
 	mux.Handle("GET /api/dashboard", a.authorize(http.HandlerFunc(a.dashboard)))
+	mux.Handle("GET /api/reports/executive", a.authorize(a.requireRole("admin")(http.HandlerFunc(a.executiveDashboard))))
+	mux.Handle("GET /api/reports/executive/details", a.authorize(a.requireRole("admin")(http.HandlerFunc(a.executiveDashboardDetails))))
 	mux.Handle("GET /api/reports/credits-leasing", a.authorize(http.HandlerFunc(a.creditsLeasingReport)))
 	mux.Handle("GET /api/payment-register", a.authorize(http.HandlerFunc(a.paymentRegister)))
 	mux.Handle("GET /api/saved-view", a.authorize(http.HandlerFunc(a.getSavedView)))
