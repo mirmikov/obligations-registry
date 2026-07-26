@@ -244,7 +244,7 @@ type workspaceState struct {
 
 func normalizeWorkspaceState(value workspaceState) workspaceState {
 	switch value.Page {
-	case "dashboard", "registry", "credits-leasing", "payments", "chat", "references", "users", "audit":
+	case "dashboard", "executive", "registry", "credits-leasing", "payments", "chat", "references", "users", "audit":
 	default:
 		value.Page = "dashboard"
 	}

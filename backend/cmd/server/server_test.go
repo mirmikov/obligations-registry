@@ -113,6 +113,47 @@ func TestNormalizeWorkspaceStateAcceptsChat(t *testing.T) {
 	}
 }
 
+func TestNormalizeWorkspaceStateAcceptsExecutiveDashboard(t *testing.T) {
+	value := normalizeWorkspaceState(workspaceState{Page: "executive"})
+	if value.Page != "executive" {
+		t.Fatalf("workspace state = %#v", value)
+	}
+}
+
+func TestExecutivePeriodDefinitionsUseCalendarBoundaries(t *testing.T) {
+	reportDate := time.Date(2026, time.July, 22, 0, 0, 0, 0, time.UTC)
+	tests := []struct {
+		key, from, to string
+	}{
+		{key: "overdue", to: "2026-07-21"},
+		{key: "week", from: "2026-07-22", to: "2026-07-26"},
+		{key: "month", from: "2026-07-22", to: "2026-07-31"},
+	}
+	for _, test := range tests {
+		period, clause, ok := executivePeriodDefinition(test.key, reportDate)
+		if !ok || clause == "" || period.From != test.from || period.To != test.to {
+			t.Fatalf("%s period = %#v, clause=%q, ok=%v", test.key, period, clause, ok)
+		}
+	}
+	if _, _, ok := executivePeriodDefinition("quarter", reportDate); ok {
+		t.Fatal("unknown executive period accepted")
+	}
+}
+
+func TestExecutiveFiltersOnlyRegisteredStatuses(t *testing.T) {
+	filter := executiveBaseFilter("planned_payment_date < $1::date")
+	for _, expected := range []string{"Зарегистрирован", "Зарегистрировано", "planned_payment_date < $1::date", "legal_entity=$2", "account_type=$3"} {
+		if !strings.Contains(filter, expected) {
+			t.Fatalf("executive filter %q does not contain %q", filter, expected)
+		}
+	}
+	for _, forbidden := range []string{"К оплате", "Оплачено", "Отменено"} {
+		if strings.Contains(filter, forbidden) {
+			t.Fatalf("executive filter includes forbidden status %q", forbidden)
+		}
+	}
+}
+
 func TestDatabaseMigrationsCanBeDisabledForProductionCodeDeploy(t *testing.T) {
 	t.Setenv("RUN_DATABASE_MIGRATIONS", "false")
 	if databaseMigrationsEnabled() {
@@ -458,4 +499,3 @@ func TestMoneyTextToCentsDoesNotLoseLargeAmountKopecks(t *testing.T) {
 		t.Fatal("amount with fractions of a kopeck must be rejected")
 	}
 }
-
