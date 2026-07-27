@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useState } from 'react'
-import { AlertTriangle, CalendarClock, CalendarRange, ChevronRight, Layers3, RefreshCw, X } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { AlertTriangle, CalendarClock, CalendarRange, Check, ChevronDown, ChevronRight, Layers3, RefreshCw, Search, X } from 'lucide-react'
 import { request } from './api'
 import { DateInput, money, PageHeader, shortDate } from './App'
-import { BLANK_ACCOUNT_TYPE_FILTER } from './filterValues'
+import { BLANK_ACCOUNT_TYPE_FILTER, filterSelectOptions } from './filterValues'
 import { localTodayISO } from './paymentsView'
 
 const periodIcons = {
@@ -69,21 +69,23 @@ export default function ExecutiveDashboard({ notify }) {
         <span>Дата отчёта</span>
         <DateInput value={filters.as_of} onChange={value => value && setFilters(current => ({ ...current, as_of: value }))} aria-label="Дата отчёта"/>
       </label>
-      <label>
-        <span>Юридическое лицо</span>
-        <select value={filters.legal_entity} onChange={event => setFilters(current => ({ ...current, legal_entity: event.target.value }))}>
-          <option value="">Все юридические лица</option>
-          {(refs.legal_entities || []).map(item => <option key={item.id} value={item.value}>{item.value}</option>)}
-        </select>
-      </label>
-      <label>
-        <span>Признак учёта</span>
-        <select value={filters.account_type} onChange={event => setFilters(current => ({ ...current, account_type: event.target.value }))}>
-          <option value="">Все признаки учёта</option>
-          <option value={BLANK_ACCOUNT_TYPE_FILTER}>Не выбран (—)</option>
-          {(refs.account_types || []).map(item => <option key={item.id} value={item.value}>{item.value}</option>)}
-        </select>
-      </label>
+      <ExecutiveFilterSelect
+        label="Юридическое лицо"
+        value={filters.legal_entity}
+        allLabel="Все юридические лица"
+        options={(refs.legal_entities || []).map(item => ({ value: item.value, label: item.value }))}
+        onChange={value => setFilters(current => ({ ...current, legal_entity: value }))}
+      />
+      <ExecutiveFilterSelect
+        label="Признак учёта"
+        value={filters.account_type}
+        allLabel="Все признаки учёта"
+        options={[
+          { value: BLANK_ACCOUNT_TYPE_FILTER, label: 'Не выбран (—)' },
+          ...(refs.account_types || []).map(item => ({ value: item.value, label: item.value })),
+        ]}
+        onChange={value => setFilters(current => ({ ...current, account_type: value }))}
+      />
       <div className="executive-filter-context">
         <span>В расчёте</span>
         <strong>Только статус «Зарегистрирован»</strong>
@@ -98,6 +100,56 @@ export default function ExecutiveDashboard({ notify }) {
 
     {details && <ExecutiveDetails details={details} loading={detailsLoading} onClose={() => setDetails(null)}/>}
   </div>
+}
+
+function ExecutiveFilterSelect({ label, value, allLabel, options, onChange }) {
+  const [open, setOpen] = useState(false)
+  const [search, setSearch] = useState('')
+  const rootRef = useRef(null)
+  const inputRef = useRef(null)
+  const selected = options.find(option => option.value === value)
+  const visible = useMemo(() => filterSelectOptions(options, search), [options, search])
+
+  useEffect(() => {
+    if (!open) return undefined
+    const closeOutside = event => { if (!rootRef.current?.contains(event.target)) setOpen(false) }
+    const closeEscape = event => { if (event.key === 'Escape') setOpen(false) }
+    document.addEventListener('mousedown', closeOutside)
+    document.addEventListener('keydown', closeEscape)
+    requestAnimationFrame(() => inputRef.current?.focus())
+    return () => {
+      document.removeEventListener('mousedown', closeOutside)
+      document.removeEventListener('keydown', closeEscape)
+    }
+  }, [open])
+
+  const choose = next => {
+    onChange(next)
+    setSearch('')
+    setOpen(false)
+  }
+
+  return <label>
+    <span>{label}</span>
+    <div ref={rootRef} className={`executive-select ${open ? 'is-open' : ''} ${value ? 'has-value' : ''}`}>
+      <button type="button" className="executive-select-trigger" onClick={() => { setSearch(''); setOpen(current => !current) }} aria-haspopup="listbox" aria-expanded={open} aria-label={`${label}: ${selected?.label || allLabel}`}>
+        <span title={selected?.label || allLabel}>{selected?.label || allLabel}</span>
+        <ChevronDown size={16}/>
+      </button>
+      {open && <div className="executive-select-menu">
+        <div className="header-filter-search">
+          <Search size={15}/>
+          <input ref={inputRef} value={search} onChange={event => setSearch(event.target.value)} placeholder="Поиск по наименованию" aria-label={`Поиск: ${label}`}/>
+          {search && <button type="button" onClick={() => setSearch('')} aria-label="Очистить поиск"><X size={13}/></button>}
+        </div>
+        <div className="header-filter-options" role="listbox" aria-label={`Значения: ${label}`}>
+          <button type="button" className={!value ? 'selected' : ''} onClick={() => choose('')} role="option" aria-selected={!value}><span>{allLabel}</span>{!value && <Check size={14}/>}</button>
+          {visible.map(option => <button type="button" key={option.value} className={option.value === value ? 'selected' : ''} onClick={() => choose(option.value)} title={option.label} role="option" aria-selected={option.value === value}><span>{option.label}</span>{option.value === value && <Check size={14}/>}</button>)}
+          {!visible.length && <p>Ничего не найдено</p>}
+        </div>
+      </div>}
+    </div>
+  </label>
 }
 
 function ExecutivePeriodCard({ period, onSelect }) {
