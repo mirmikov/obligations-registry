@@ -80,6 +80,17 @@ func TestBuildFiltersUsesDocumentDateRange(t *testing.T) {
 	}
 }
 
+func TestBuildFiltersSupportsBlankAccountType(t *testing.T) {
+	r := httptest.NewRequest("GET", "/?account_type="+blankAccountTypeFilter, nil)
+	where, args := buildFilters(r, 1)
+	if len(args) != 0 {
+		t.Fatalf("blank account type args = %#v, want none", args)
+	}
+	if !strings.Contains(where, "NULLIF(BTRIM(account_type),'') IS NULL") {
+		t.Fatalf("filter SQL %q does not select blank account types", where)
+	}
+}
+
 func TestBuildFiltersSupportsMultipleCounterparties(t *testing.T) {
 	r := httptest.NewRequest("GET", "/?counterparty=Альфа&counterparty=Бета&counterparty=Альфа", nil)
 	where, args := buildFilters(r, 1)
@@ -142,7 +153,7 @@ func TestExecutivePeriodDefinitionsUseCalendarBoundaries(t *testing.T) {
 
 func TestExecutiveFiltersOnlyRegisteredStatuses(t *testing.T) {
 	filter := executiveBaseFilter("planned_payment_date < $1::date")
-	for _, expected := range []string{"Зарегистрирован", "Зарегистрировано", "planned_payment_date < $1::date", "legal_entity=$2", "account_type=$3"} {
+	for _, expected := range []string{"Зарегистрирован", "Зарегистрировано", "planned_payment_date < $1::date", "legal_entity=$2", "account_type=$3", blankAccountTypeFilter, "NULLIF(BTRIM(account_type),'') IS NULL"} {
 		if !strings.Contains(filter, expected) {
 			t.Fatalf("executive filter %q does not contain %q", filter, expected)
 		}

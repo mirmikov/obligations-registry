@@ -90,7 +90,11 @@ func executiveBaseFilter(periodClause string) string {
 		AND planned_payment_date IS NOT NULL
 		AND ` + periodClause + `
 		AND ($2='' OR legal_entity=$2)
-		AND ($3='' OR account_type=$3)`
+		AND (
+			$3=''
+			OR ($3='` + blankAccountTypeFilter + `' AND NULLIF(BTRIM(account_type),'') IS NULL)
+			OR account_type=$3
+		)`
 }
 
 func (a *app) executiveDashboard(w http.ResponseWriter, r *http.Request) {

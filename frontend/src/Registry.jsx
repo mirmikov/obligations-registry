@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, Download, FileUp, Filter, LocateFixed, Maximize2, Minimize2, Plus, RotateCcw, Scissors, Search, Trash2, X } from 'lucide-react'
 import { download, request } from './api'
 import { DateInput, money, PageHeader, roleLabel, shortDate } from './App'
+import { BLANK_ACCOUNT_TYPE_FILTER } from './filterValues'
 import { getRegistryStickyOffsets } from './registryColumns'
 import usePresence from './usePresence'
 
@@ -235,7 +236,7 @@ export default function Registry({ user, notify }) {
       <div ref={tableWrapRef} className="registry-table-wrap" onScroll={rememberScroll}><table className={`registry-table inline-registry ${largeTableFont ? 'registry-font-large' : ''}`} style={{ '--registry-table-width': `${tableWidth}px`, '--registry-counterparty-left': `${stickyOffsets.counterparty}px`, '--registry-entry-date-left': `${stickyOffsets.entryDate}px`, '--registry-account-type-left': `${stickyOffsets.accountType}px`, '--registry-legal-entity-left': `${stickyOffsets.legalEntity}px` }}><colgroup>{columnWidths.map((width, index) => <col key={index} style={{ width }}/>)}</colgroup><thead><tr><th className="check-col">{user.role !== 'viewer' ? <button type="button" className={`inline-add-row ${newRow ? 'active' : ''}`} onClick={addInlineRow} title={newRow ? 'Убрать новую строку' : 'Добавить строку'} aria-label={newRow ? 'Убрать новую строку' : 'Добавить строку'}><Plus size={16}/></button> : <input type="checkbox" checked={allSelected} onChange={toggleAll}/>}</th>
         <ColumnHead className="counterparty-head" label="Контрагент" field="counterparty" sort={sort} onSort={doSort} value={filters.counterparty} options={refs.counterparties} onFilter={value => setFilter('counterparty', value)} multiple {...resizeProps(1)}/>
         <ColumnHead className="entry-date-head" label="Дата внесения" field="entry_date" sort={sort} onSort={doSort} dateValue={filters.entry_date} onDateFilter={value => setFilter('entry_date', value)} {...resizeProps(2)}/>
-        <ColumnHead className="account-type-head" label="Признак" value={filters.account_type} options={refs.account_types} onFilter={value => setFilter('account_type', value)} {...resizeProps(3)}/>
+        <ColumnHead className="account-type-head" label="Признак" value={filters.account_type} options={refs.account_types} onFilter={value => setFilter('account_type', value)} allowBlank {...resizeProps(3)}/>
         <ColumnHead className="legal-entity-head" label="Юрлицо" field="legal_entity" sort={sort} onSort={doSort} value={filters.legal_entity} options={refs.legal_entities} onFilter={value => setFilter('legal_entity', value)} {...resizeProps(4)}/>
         <ColumnHead label="Сумма" field="amount" sort={sort} onSort={doSort} {...resizeProps(5)}/>
         <PlainColumnHead label="Документ" {...resizeProps(6)}/><ColumnHead label="Дата документа" dateValue={filters.document_date} onDateFilter={value => setFilter('document_date', value)} {...resizeProps(7)}/>
@@ -263,12 +264,12 @@ function FontSizeButton({ large, onToggle }) {
   return <button type="button" className={`secondary registry-font-button ${large ? 'active' : ''}`} onClick={onToggle} aria-pressed={large} aria-label={large ? 'Вернуть обычный размер шрифта в таблице' : 'Увеличить размер шрифта в таблице'} title={large ? 'Обычный шрифт' : 'Увеличить шрифт'}><span aria-hidden="true">A<sup>+</sup></span><b>{large ? 'Обычный' : 'Крупнее'}</b></button>
 }
 
-function ColumnHead({ label, field, sort, onSort, value = '', options, onFilter, dateValue = '', onDateFilter, className = '', multiple = false, ...resize }) {
+function ColumnHead({ label, field, sort, onSort, value = '', options, onFilter, dateValue = '', onDateFilter, className = '', multiple = false, allowBlank = false, ...resize }) {
   const sorted = field && sort?.key === field
   const filtered = (Array.isArray(value) ? value.length > 0 : Boolean(value)) || Boolean(dateValue)
   return <th className={`${className} ${sorted ? 'sorted' : ''} ${filtered ? 'filtered' : ''}`}><div className="column-head-inner">
     {field ? <button type="button" className="column-sort" onClick={() => onSort(field)}>{label}<i>{sorted ? (sort.order === 'asc' ? '↑' : '↓') : '↕'}</i></button> : <span className="column-label">{label}</span>}
-    {onFilter && <HeaderFilter label={label} value={value} options={options} onChange={onFilter} multiple={multiple}/>}
+    {onFilter && <HeaderFilter label={label} value={value} options={options} onChange={onFilter} multiple={multiple} allowBlank={allowBlank}/>}
     {onDateFilter && <DateHeaderFilter label={label} value={dateValue} onChange={onDateFilter}/>}
   </div><ColumnResizeHandle {...resize}/></th>
 }
@@ -296,7 +297,7 @@ function DateHeaderFilter({ label, value, onChange }) {
   </div>
 }
 
-function HeaderFilter({ label, value, options = [], onChange, multiple = false }) {
+function HeaderFilter({ label, value, options = [], onChange, multiple = false, allowBlank = false }) {
   const [open, setOpen] = useState(false)
   const [search, setSearch] = useState('')
   const rootRef = useRef(null)
@@ -324,6 +325,7 @@ function HeaderFilter({ label, value, options = [], onChange, multiple = false }
       <div className="header-filter-search"><Search size={15}/><input ref={inputRef} value={search} onChange={event => setSearch(event.target.value)} placeholder="Поиск по наименованию" aria-label={`Поиск: ${label}`}/>{search && <button type="button" onClick={() => setSearch('')} aria-label="Очистить поиск"><X size={13}/></button>}</div>
       <div className="header-filter-options" role="listbox" aria-multiselectable={multiple || undefined} aria-label={`Значения: ${label}`}>
         <button type="button" className={!selectedValues.length ? 'selected' : ''} onClick={() => select('')}><span>Все значения</span>{!selectedValues.length && <Check size={14}/>}</button>
+        {allowBlank && <button type="button" className={selectedValues.includes(BLANK_ACCOUNT_TYPE_FILTER) ? 'selected' : ''} onClick={() => select(BLANK_ACCOUNT_TYPE_FILTER)} role="option" aria-selected={selectedValues.includes(BLANK_ACCOUNT_TYPE_FILTER)}><span>Не выбран (—)</span>{selectedValues.includes(BLANK_ACCOUNT_TYPE_FILTER) && <Check size={14}/>}</button>}
         {visible.map(option => { const selected = selectedValues.includes(option); return <button type="button" key={option} className={selected ? 'selected' : ''} onClick={() => select(option)} title={option} role="option" aria-selected={selected}><span>{option}</span>{selected && <Check size={14}/>}</button> })}
         {!visible.length && <p>Ничего не найдено</p>}
       </div>
