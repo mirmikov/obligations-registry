@@ -60,6 +60,8 @@ type obligation struct {
 
 const obligationColumns = `id,COALESCE(source_row,0),COALESCE(account_type,''),COALESCE(to_char(entry_date,'YYYY-MM-DD'),''),COALESCE(counterparty,''),COALESCE(legal_entity,''),COALESCE(cost_category,''),COALESCE(priority,''),COALESCE(responsible,''),COALESCE(document_number,''),deferment_days,COALESCE(to_char(document_date,'YYYY-MM-DD'),''),amount::float8,COALESCE(to_char(planned_payment_date,'YYYY-MM-DD'),''),COALESCE(to_char(approval_date,'YYYY-MM-DD'),''),COALESCE(to_char(actual_payment_date,'YYYY-MM-DD'),''),COALESCE(status,''),COALESCE(urgency,''),COALESCE(comment,''),COALESCE(source_note,''),to_char(created_at,'YYYY-MM-DD HH24:MI'),to_char(updated_at,'YYYY-MM-DD HH24:MI'),COALESCE(planned_payment_date<CURRENT_DATE AND COALESCE(status,'') NOT IN ('Оплачено','Отменено'),false),COALESCE(planned_payment_date BETWEEN CURRENT_DATE AND CURRENT_DATE+3 AND COALESCE(status,'') NOT IN ('Оплачено','Отменено'),false),COALESCE(split_group_id,''),split_parent_id,COALESCE(installment_number,0),COALESCE(installment_count,0)`
 
+const blankAccountTypeFilter = "__blank__"
+
 type scanner interface{ Scan(...any) error }
 
 func scanObligation(row scanner) (obligation, error) {
@@ -76,8 +78,13 @@ func buildFilters(r *http.Request, start int) (string, []any) {
 		args = append(args, value)
 		clauses = append(clauses, fmt.Sprintf(sqlPart, start+len(args)-1))
 	}
+	if value := strings.TrimSpace(query.Get("account_type")); value == blankAccountTypeFilter {
+		clauses = append(clauses, "NULLIF(BTRIM(account_type),'') IS NULL")
+	} else if value != "" {
+		add("account_type=$%d", value)
+	}
 	for _, filter := range []struct{ param, column string }{
-		{"account_type", "account_type"}, {"legal_entity", "legal_entity"}, {"cost_category", "cost_category"}, {"priority", "priority"}, {"responsible", "responsible"}, {"status", "status"}, {"urgency", "urgency"},
+		{"legal_entity", "legal_entity"}, {"cost_category", "cost_category"}, {"priority", "priority"}, {"responsible", "responsible"}, {"status", "status"}, {"urgency", "urgency"},
 	} {
 		if value := strings.TrimSpace(query.Get(filter.param)); value != "" {
 			add(filter.column+"=$%d", value)
@@ -344,4 +351,3 @@ func (a *app) getObligation(ctxQuery string, args ...any) (obligation, error) {
 
 var _ = sql.ErrNoRows
 var _ = time.Now
-

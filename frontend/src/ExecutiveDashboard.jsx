@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { AlertTriangle, CalendarClock, CalendarRange, ChevronRight, Layers3, RefreshCw, X } from 'lucide-react'
 import { request } from './api'
 import { DateInput, money, PageHeader, shortDate } from './App'
+import { BLANK_ACCOUNT_TYPE_FILTER } from './filterValues'
 import { localTodayISO } from './paymentsView'
 
 const periodIcons = {
@@ -79,6 +80,7 @@ export default function ExecutiveDashboard({ notify }) {
         <span>Признак учёта</span>
         <select value={filters.account_type} onChange={event => setFilters(current => ({ ...current, account_type: event.target.value }))}>
           <option value="">Все признаки учёта</option>
+          <option value={BLANK_ACCOUNT_TYPE_FILTER}>Не выбран (—)</option>
           {(refs.account_types || []).map(item => <option key={item.id} value={item.value}>{item.value}</option>)}
         </select>
       </label>
