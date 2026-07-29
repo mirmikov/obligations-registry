@@ -241,6 +241,36 @@ func TestUndoSnapshotsCompareJSONByValue(t *testing.T) {
 	}
 }
 
+func TestObligationHistoryBuildsFieldLevelChanges(t *testing.T) {
+	before := map[string]any{"id": float64(42), "status": "Зарегистрирован", "amount": float64(1000), "comment": ""}
+	after := map[string]any{"id": float64(42), "status": "К оплате", "amount": float64(1200), "comment": "Согласовано"}
+	changes := obligationHistoryChanges(before, after)
+	if len(changes) != 3 {
+		t.Fatalf("history changes=%#v, want 3 changes", changes)
+	}
+	got := map[string]obligationHistoryChange{}
+	for _, change := range changes {
+		got[change.Field] = change
+	}
+	if got["status"].Before != "Зарегистрирован" || got["status"].After != "К оплате" {
+		t.Fatalf("status change=%#v", got["status"])
+	}
+	if got["comment"].After != "Согласовано" {
+		t.Fatalf("comment change=%#v", got["comment"])
+	}
+}
+
+func TestObligationHistoryFindsRowInUndoSnapshot(t *testing.T) {
+	raw := json.RawMessage(`[{"id":41,"status":"Оплачено"},{"id":42,"status":"К оплате"}]`)
+	row := snapshotObjectForID(raw, 42)
+	if row == nil || row["status"] != "К оплате" {
+		t.Fatalf("snapshot row=%#v", row)
+	}
+	if snapshotObjectForID(raw, 99) != nil {
+		t.Fatal("unknown obligation found in snapshot")
+	}
+}
+
 func TestUndoCollectsUniqueAffectedIDs(t *testing.T) {
 	change := &undoChange{Before: json.RawMessage(`[{"id":4},{"id":7}]`), After: json.RawMessage(`[{"id":4},{"id":9}]`)}
 	ids, err := combinedSnapshotIDs(change)

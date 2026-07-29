@@ -73,6 +73,7 @@ func main() {
 	mux.Handle("GET /api/chat/conversations/{id}/images/{name}", a.authorize(http.HandlerFunc(a.serveChatImage)))
 	mux.Handle("POST /api/chat/conversations/{id}/read", a.authorize(http.HandlerFunc(a.markChatRead)))
 	mux.Handle("GET /api/obligations", a.authorize(http.HandlerFunc(a.listObligations)))
+	mux.Handle("GET /api/obligations/{id}/history", a.authorize(http.HandlerFunc(a.obligationHistory)))
 	mux.Handle("POST /api/obligations", a.authorize(a.requireRole("admin", "editor")(http.HandlerFunc(a.createObligation))))
 	mux.Handle("PATCH /api/obligations/{id}", a.authorize(a.requireRole("admin", "editor")(http.HandlerFunc(a.updateObligation))))
 	mux.Handle("DELETE /api/obligations/{id}", a.authorize(a.requireRole("admin", "editor")(http.HandlerFunc(a.deleteObligation))))
