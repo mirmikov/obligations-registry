@@ -244,3 +244,4 @@
   .executive-print-report tfoot td{padding:2.2mm 1.2mm;border-color:#9db6af;background:#e8f0ed;font-size:8pt;font-weight:800}
   .executive-print-report footer{display:flex;justify-content:space-between;margin-top:7mm;padding-top:3mm;border-top:1pt solid #d5e0dd;color:#6f807d;font-size:7pt}
 }
+.sidebar nav button>svg{flex:0 0 auto}
