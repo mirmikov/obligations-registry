@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"reflect"
 	"strconv"
@@ -104,6 +105,7 @@ func (a *app) obligationHistory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
+		log.Printf("obligation history record %d: %v", id, err)
 		fail(w, http.StatusInternalServerError, "Не удалось загрузить информацию о записи")
 		return
 	}
@@ -115,11 +117,12 @@ func (a *app) obligationHistory(w http.ResponseWriter, r *http.Request) {
 		FROM undo_operations op
 		LEFT JOIN users u ON u.id=op.user_id
 		WHERE COALESCE(op.payload->'obligations'->'before','[]'::jsonb)
-				@> jsonb_build_array(jsonb_build_object('id',$1))
+				@> jsonb_build_array(jsonb_build_object('id',$1::bigint))
 			OR COALESCE(op.payload->'obligations'->'after','[]'::jsonb)
-				@> jsonb_build_array(jsonb_build_object('id',$1))
+				@> jsonb_build_array(jsonb_build_object('id',$1::bigint))
 		ORDER BY op.id DESC`, id)
 	if err != nil {
+		log.Printf("obligation history events %d: %v", id, err)
 		fail(w, http.StatusInternalServerError, "Не удалось загрузить историю изменений")
 		return
 	}
@@ -133,6 +136,7 @@ func (a *app) obligationHistory(w http.ResponseWriter, r *http.Request) {
 			&event.ID, &event.Action, &event.Description, &event.User, &payloadRaw,
 			&event.CreatedAt, &event.UndoneAt,
 		); err != nil {
+			log.Printf("obligation history scan %d: %v", id, err)
 			fail(w, http.StatusInternalServerError, "Ошибка чтения истории изменений")
 			return
 		}
@@ -151,6 +155,7 @@ func (a *app) obligationHistory(w http.ResponseWriter, r *http.Request) {
 		events = append(events, event)
 	}
 	if err = rows.Err(); err != nil {
+		log.Printf("obligation history rows %d: %v", id, err)
 		fail(w, http.StatusInternalServerError, "Ошибка чтения истории изменений")
 		return
 	}
