@@ -3,6 +3,7 @@ import { AlertTriangle, CalendarClock, CalendarRange, Check, ChevronDown, Chevro
 import { request } from './api'
 import { DateInput, money, PageHeader, shortDate } from './App'
 import { BLANK_ACCOUNT_TYPE_FILTER, filterSelectOptions } from './filterValues'
+import { defaultExecutiveFilters, EXECUTIVE_FILTER_STATUSES, executiveUpdatePayload } from './executiveView'
 import { localTodayISO } from './paymentsView'
 
 const periodIcons = {
@@ -11,13 +12,16 @@ const periodIcons = {
   month: CalendarRange,
 }
 
+const executiveStatusOptions = EXECUTIVE_FILTER_STATUSES.map(value => ({ value, label: value }))
+
 export default function ExecutiveDashboard({ notify }) {
   const [refs, setRefs] = useState({})
-  const [filters, setFilters] = useState(() => ({ as_of: localTodayISO(), legal_entity: '', account_type: '' }))
+  const [filters, setFilters] = useState(() => defaultExecutiveFilters(localTodayISO()))
   const [data, setData] = useState({ periods: [] })
   const [loading, setLoading] = useState(true)
   const [details, setDetails] = useState(null)
   const [detailsLoading, setDetailsLoading] = useState(false)
+  const [detailsSaving, setDetailsSaving] = useState(() => new Set())
   const query = useMemo(() => new URLSearchParams(Object.entries(filters).filter(([, value]) => value)).toString(), [filters])
 
   useEffect(() => {
@@ -49,12 +53,45 @@ export default function ExecutiveDashboard({ notify }) {
       report_date: filters.as_of,
       legal_entity: filters.legal_entity,
       account_type: filters.account_type,
+      status: filters.status,
     })
     setDetailsLoading(true)
     request(`/api/reports/executive/details?${params}`)
       .then(result => setDetails(current => current ? { ...current, ...result } : current))
       .catch(error => { setDetails(null); notify(error.message, 'error') })
       .finally(() => setDetailsLoading(false))
+  }
+
+  const saveDetailField = async (item, field, value) => {
+    const key = `${item.id}:${field}`
+    setDetailsSaving(current => new Set(current).add(key))
+    const payload = executiveUpdatePayload(item.id, field, value)
+    const currentDetails = details
+    const params = new URLSearchParams({
+      ...Object.fromEntries(Object.entries(filters).filter(([, filterValue]) => filterValue)),
+      period: currentDetails.period.key,
+      cost_category: currentDetails.cost_category,
+    })
+    try {
+      await request('/api/obligations/bulk', { method: 'POST', body: JSON.stringify(payload) })
+      const [dashboardResult, detailsResult] = await Promise.all([
+        request(`/api/reports/executive?${query}`),
+        request(`/api/reports/executive/details?${params}`),
+      ])
+      setData(dashboardResult)
+      setDetails(current => current ? { ...current, ...detailsResult } : current)
+      notify(field === 'status' ? 'Статус обновлён' : value ? 'Дата утверждения обновлена' : 'Дата утверждения очищена')
+      return true
+    } catch (error) {
+      notify(error.message, 'error')
+      return false
+    } finally {
+      setDetailsSaving(current => {
+        const next = new Set(current)
+        next.delete(key)
+        return next
+      })
+    }
   }
 
   const refresh = () => {
@@ -69,7 +106,7 @@ export default function ExecutiveDashboard({ notify }) {
     <PageHeader
       eyebrow="Управленческая аналитика"
       title="Панель руководителя"
-      subtitle="Контроль зарегистрированных обязательств на выбранную дату"
+      subtitle="Контроль обязательств на выбранную дату"
       actions={<button className="secondary" onClick={refresh} disabled={loading}><RefreshCw size={17}/>Обновить</button>}
     />
 
@@ -95,10 +132,14 @@ export default function ExecutiveDashboard({ notify }) {
         ]}
         onChange={value => setFilters(current => ({ ...current, account_type: value }))}
       />
-      <div className="executive-filter-context">
-        <span>В расчёте</span>
-        <strong>Только статус «Зарегистрирован»</strong>
-      </div>
+      <ExecutiveFilterSelect
+        label="Статус"
+        value={filters.status}
+        allLabel=""
+        allowAll={false}
+        options={executiveStatusOptions}
+        onChange={value => setFilters(current => ({ ...current, status: value }))}
+      />
     </section>
 
     <section className={`executive-grid ${loading ? 'is-loading' : ''}`} aria-busy={loading}>
@@ -107,11 +148,18 @@ export default function ExecutiveDashboard({ notify }) {
         : data.periods.map(period => <ExecutivePeriodCard key={period.key} period={period} onSelect={group => openDetails(period, group)}/>)}
     </section>
 
-    {details && <ExecutiveDetails details={details} loading={detailsLoading} onClose={() => setDetails(null)}/>}
+    {details && <ExecutiveDetails
+      details={details}
+      loading={detailsLoading}
+      statuses={(refs.statuses || []).map(item => item.value)}
+      savingCells={detailsSaving}
+      onCommit={saveDetailField}
+      onClose={() => setDetails(null)}
+    />}
   </div>
 }
 
-function ExecutiveFilterSelect({ label, value, allLabel, options, onChange }) {
+function ExecutiveFilterSelect({ label, value, allLabel, options, onChange, allowAll = true }) {
   const [open, setOpen] = useState(false)
   const [search, setSearch] = useState('')
   const rootRef = useRef(null)
@@ -152,7 +200,7 @@ function ExecutiveFilterSelect({ label, value, allLabel, options, onChange }) {
           {search && <button type="button" onClick={() => setSearch('')} aria-label="Очистить поиск"><X size={13}/></button>}
         </div>
         <div className="header-filter-options" role="listbox" aria-label={`Значения: ${label}`}>
-          <button type="button" className={!value ? 'selected' : ''} onClick={() => choose('')} role="option" aria-selected={!value}><span>{allLabel}</span>{!value && <Check size={14}/>}</button>
+          {allowAll && <button type="button" className={!value ? 'selected' : ''} onClick={() => choose('')} role="option" aria-selected={!value}><span>{allLabel}</span>{!value && <Check size={14}/>}</button>}
           {visible.map(option => <button type="button" key={option.value} className={option.value === value ? 'selected' : ''} onClick={() => choose(option.value)} title={option.label} role="option" aria-selected={option.value === value}><span>{option.label}</span>{option.value === value && <Check size={14}/>}</button>)}
           {!visible.length && <p>Ничего не найдено</p>}
         </div>
@@ -191,7 +239,8 @@ function ExecutiveSkeleton() {
   return <article className="executive-period executive-skeleton panel"><div/><div/><div/><div/><div/></article>
 }
 
-function ExecutiveDetails({ details, loading, onClose }) {
+function ExecutiveDetails({ details, loading, statuses, savingCells, onCommit, onClose }) {
+  const statusOptions = statuses.length ? statuses : executiveStatusOptions.map(option => option.value)
   return <div className="modal-backdrop executive-detail-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) onClose() }}>
     <section className="modal executive-detail-modal" role="dialog" aria-modal="true" aria-label={`Детализация: ${details.cost_category}`}>
       <header className="modal-head executive-detail-head">
@@ -221,8 +270,8 @@ function ExecutiveDetails({ details, loading, onClose }) {
                 <td>{item.comment || '—'}</td>
                 <td className="executive-detail-amount">{money(item.amount)}</td>
                 <td>{item.responsible || '—'}</td>
-                <td><span className="executive-status">{item.status}</span></td>
-                <td>{shortDate(item.approval_date)}</td>
+                <ExecutiveStatusCell item={item} options={statusOptions} saving={savingCells.has(`${item.id}:status`)} onCommit={onCommit}/>
+                <ExecutiveApprovalDateCell item={item} saving={savingCells.has(`${item.id}:approval_date`)} onCommit={onCommit}/>
               </tr>)}</tbody>
               <tfoot><tr><td colSpan="4">Итого</td><td colSpan="2">{money(details.amount)}</td><td colSpan="3">{details.count.toLocaleString('ru-RU')} обязательств</td></tr></tfoot>
             </table>}
@@ -230,6 +279,56 @@ function ExecutiveDetails({ details, loading, onClose }) {
       {!loading && details.items.length > 0 && <ExecutivePrintReport details={details}/>}
     </section>
   </div>
+}
+
+function ExecutiveStatusCell({ item, options, saving, onCommit }) {
+  const [editing, setEditing] = useState(false)
+  const rootRef = useRef(null)
+  useEffect(() => {
+    if (!editing) return undefined
+    const closeOutside = event => { if (!rootRef.current?.contains(event.target)) setEditing(false) }
+    const closeEscape = event => { if (event.key === 'Escape') setEditing(false) }
+    document.addEventListener('mousedown', closeOutside)
+    document.addEventListener('keydown', closeEscape)
+    return () => {
+      document.removeEventListener('mousedown', closeOutside)
+      document.removeEventListener('keydown', closeEscape)
+    }
+  }, [editing])
+  const choose = async value => {
+    if (value === item.status) {
+      setEditing(false)
+      return
+    }
+    if (await onCommit(item, 'status', value)) setEditing(false)
+  }
+  return <td ref={rootRef} className={`executive-editable-cell ${editing ? 'is-editing' : ''} ${saving ? 'is-saving' : ''}`}>
+    <button type="button" className="executive-cell-trigger" onClick={() => !saving && setEditing(current => !current)} disabled={saving} aria-label={`Статус: ${item.status}. Изменить`}>
+      <span className={`executive-status ${item.status === 'К оплате' ? 'is-payable' : ''}`}>{item.status || 'Не указан'}</span><ChevronDown size={14}/>
+    </button>
+    {editing && <div className="executive-inline-select" role="listbox" aria-label="Выбор статуса">
+      {options.map(option => <button type="button" key={option} className={option === item.status ? 'selected' : ''} onClick={() => choose(option)} role="option" aria-selected={option === item.status}><span>{option}</span>{option === item.status && <Check size={14}/>}</button>)}
+    </div>}
+    {saving && <i className="cell-saving-dot"/>}
+  </td>
+}
+
+function ExecutiveApprovalDateCell({ item, saving, onCommit }) {
+  const [editing, setEditing] = useState(false)
+  return <td className={`executive-editable-cell executive-date-cell ${editing ? 'is-editing' : ''} ${saving ? 'is-saving' : ''}`}>
+    {editing
+      ? <DateInput
+          className="executive-date-input"
+          value={item.approval_date || ''}
+          onChange={value => { setEditing(false); onCommit(item, 'approval_date', value) }}
+          onClose={() => setEditing(false)}
+          closeOnScroll={false}
+          aria-label="Дата утверждения"
+          autoFocus
+        />
+      : <button type="button" className="executive-cell-trigger executive-date-trigger" onClick={() => !saving && setEditing(true)} disabled={saving} aria-label={`Дата утверждения: ${shortDate(item.approval_date)}. Изменить`}>{shortDate(item.approval_date)}</button>}
+    {saving && <i className="cell-saving-dot"/>}
+  </td>
 }
 
 function ExecutivePrintReport({ details }) {
@@ -247,6 +346,7 @@ function ExecutivePrintReport({ details }) {
       <div><span>Период</span><strong>{details.period.from ? `${shortDate(details.period.from)} — ${shortDate(details.period.to)}` : `до ${shortDate(details.period.to)}`}</strong></div>
       <div><span>Юридическое лицо</span><strong>{details.legal_entity || 'Все юридические лица'}</strong></div>
       <div><span>Признак учёта</span><strong>{accountType}</strong></div>
+      <div><span>Статус</span><strong>{details.status}</strong></div>
       <div><span>Обязательств</span><strong>{details.count.toLocaleString('ru-RU')}</strong></div>
       <div><span>Общая сумма</span><strong>{money(details.amount)}</strong></div>
     </section>

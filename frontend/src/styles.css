@@ -143,7 +143,7 @@
 .executive-select.is-open .executive-select-trigger>svg{transform:rotate(180deg);color:#286d5e}
 .executive-select.has-value .executive-select-trigger{border-color:#9fc4b9;background:#f2f8f5;color:#225f53}
 .executive-select-menu{position:absolute;z-index:90;top:48px;left:0;width:max(100%,290px);padding:9px;border:1px solid #d8e3df;border-radius:11px;background:#fff;box-shadow:0 18px 48px rgba(17,54,60,.2);color:#28484f}
-.executive-filters label:nth-child(3) .executive-select-menu{left:auto;right:0}
+.executive-filters label:nth-child(n+3) .executive-select-menu{left:auto;right:0}
 .executive-filter-context{height:42px;display:flex;flex-direction:column;justify-content:center;gap:2px;padding:0 13px;border-left:3px solid #4f8f82;background:#f3f8f6;border-radius:0 10px 10px 0;min-width:0}
 .executive-filter-context strong{font-size:12px;color:#275e53;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .executive-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;align-items:start;transition:opacity .16s ease}
@@ -203,6 +203,21 @@
 .executive-detail-table td:nth-child(4),.executive-detail-table td:nth-child(5){min-width:170px}
 .executive-detail-amount{font-weight:800;color:#1f6254!important;text-align:right}
 .executive-status{display:inline-flex;padding:4px 7px;border-radius:999px;background:#edf6f3;color:#256858;font-size:9px;font-weight:800;white-space:nowrap}
+.executive-status.is-payable{background:#fff1df;color:#9a5c20}
+.executive-editable-cell{position:relative;padding:6px!important;overflow:visible;min-width:126px}
+.executive-editable-cell.is-editing{z-index:30;box-shadow:inset 0 0 0 2px #4f8f82}
+.executive-cell-trigger{width:100%;min-height:32px;padding:4px 7px;border:1px solid transparent;border-radius:8px;background:transparent;color:#3a4b47;display:flex;align-items:center;justify-content:space-between;gap:7px;text-align:left;font:inherit}
+.executive-cell-trigger:hover,.executive-cell-trigger:focus-visible{border-color:#a8c9c0;background:#f3f8f6;outline:0}
+.executive-cell-trigger:disabled{cursor:wait;opacity:.68}
+.executive-cell-trigger>svg{flex:none;color:#718582}
+.executive-inline-select{position:absolute;z-index:75;top:calc(100% - 4px);right:5px;width:220px;padding:7px;border:1px solid #d5e1dd;border-radius:10px;background:#fff;box-shadow:0 18px 48px rgba(17,54,60,.22)}
+.executive-inline-select>button{width:100%;min-height:34px;padding:7px 9px;border:0;border-radius:7px;background:transparent;color:#38514c;display:flex;align-items:center;gap:8px;text-align:left;font-size:11px;font-weight:700}
+.executive-inline-select>button:hover{background:#f0f5f3}
+.executive-inline-select>button.selected{background:#e3f0eb;color:#216757;font-weight:800}
+.executive-inline-select>button span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.executive-date-trigger{justify-content:flex-start;font-weight:700;white-space:nowrap}
+.executive-date-cell .date-input-wrap{width:100%;height:32px}
+.executive-date-input{width:100%;height:32px;padding:0 7px;border:1px solid #4f8f82;border-radius:7px;background:#fff;color:#294b44;font-size:11px;font-weight:700;outline:2px solid rgba(43,117,101,.14)}
 .executive-detail-table tfoot td{position:sticky;bottom:0;background:#eaf3f0;border-top:1px solid #cfdfda;border-bottom:0;font-weight:800;color:#25584d}
 .executive-detail-table tfoot td:nth-child(2){text-align:right;font-size:13px}
 .executive-print-report{display:none}
@@ -224,7 +239,7 @@
   .executive-print-mark strong,.executive-print-mark span{display:block}
   .executive-print-mark strong{font-size:10pt;letter-spacing:.08em}
   .executive-print-mark span{margin-top:1mm;color:#6d7e7f;font-size:7pt}
-  .executive-print-filters{display:grid;grid-template-columns:1fr 1.35fr 1fr .65fr .85fr;gap:2.5mm;margin:3.5mm 0}
+  .executive-print-filters{display:grid;grid-template-columns:1fr 1.25fr .9fr .8fr .62fr .88fr;gap:2.5mm;margin:3.5mm 0}
   .executive-print-filters>div{padding:2.3mm 2.7mm;border:1pt solid #dce5e2;border-radius:1.5mm;background:#f7f9f8}
   .executive-print-filters span,.executive-print-filters strong{display:block}
   .executive-print-filters span{margin-bottom:.8mm;color:#748385;font-size:6.5pt;font-weight:800;text-transform:uppercase}
