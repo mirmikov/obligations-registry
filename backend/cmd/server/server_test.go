@@ -427,6 +427,33 @@ func TestObligationUpdateAcceptsReadOnlySplitMetadata(t *testing.T) {
 	}
 }
 
+func TestAutomaticPaymentStatus(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		actualDate string
+		status     string
+		want       string
+	}{
+		{name: "filled date marks paid", actualDate: "2026-07-29", status: "К оплате", want: "Оплачено"},
+		{name: "spaces around date mark paid", actualDate: " 2026-07-29 ", status: "Зарегистрирован", want: "Оплачено"},
+		{name: "empty date preserves status", actualDate: "", status: "К оплате", want: "К оплате"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := automaticPaymentStatus(test.actualDate, test.status); got != test.want {
+				t.Fatalf("automaticPaymentStatus(%q, %q)=%q, want %q", test.actualDate, test.status, got, test.want)
+			}
+		})
+	}
+}
+
+func TestObligationNormalizeMarksActualPaymentAsPaid(t *testing.T) {
+	input := obligationInput{EntryDate: "2026-07-20", ActualPaymentDate: "2026-07-29", Status: "К оплате"}
+	input.normalize()
+	if input.Status != "Оплачено" {
+		t.Fatalf("normalized status=%q, want Оплачено", input.Status)
+	}
+}
+
 func TestBuildPaymentPlanKeepsExactTotalAndMonthlyAnchor(t *testing.T) {
 	start := time.Date(2027, time.January, 31, 0, 0, 0, 0, time.UTC)
 	plan, err := buildPaymentPlan(10000, start, paymentSplitInput{Mode: "count", Count: 3, PeriodUnit: "month", PeriodValue: 1})

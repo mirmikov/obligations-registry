@@ -113,11 +113,19 @@ func (input *obligationInput) normalize() {
 	if input.EntryDate == "" {
 		input.EntryDate = time.Now().Format("2006-01-02")
 	}
+	input.Status = automaticPaymentStatus(input.ActualPaymentDate, input.Status)
 	if input.DocumentDate != "" && input.DefermentDays != nil {
 		if date, err := time.Parse("2006-01-02", input.DocumentDate); err == nil {
 			input.PlannedPaymentDate = date.AddDate(0, 0, *input.DefermentDays).Format("2006-01-02")
 		}
 	}
+}
+
+func automaticPaymentStatus(actualPaymentDate, status string) string {
+	if strings.TrimSpace(actualPaymentDate) != "" {
+		return "Оплачено"
+	}
+	return status
 }
 
 func normalizeReferenceKind(kind string) string {
