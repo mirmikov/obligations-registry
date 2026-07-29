@@ -3,6 +3,7 @@ import { CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, Download, 
 import { download, request } from './api'
 import { DateInput, money, PageHeader, roleLabel, shortDate } from './App'
 import { BLANK_ACCOUNT_TYPE_FILTER } from './filterValues'
+import { withDerivedObligationValues } from './obligationValues'
 import { getRegistryStickyOffsets } from './registryColumns'
 import usePresence from './usePresence'
 
@@ -174,7 +175,7 @@ export default function Registry({ user, notify }) {
     const current = rowsRef.current.get(item.id) || item
     if (sameCellValue(current[field], value)) { finishCellEdit(current); return true }
     const previousValue = current[field]
-    const next = withCalculatedPlannedDate({ ...current, [field]: value }, field)
+    const next = withDerivedObligationValues({ ...current, [field]: value }, field)
     rowsRef.current.set(item.id, next)
     setData(state => ({ ...state, items: state.items.map(row => row.id === item.id ? next : row) }))
     const cellKey = `${item.id}:${field}`
@@ -197,7 +198,7 @@ export default function Registry({ user, notify }) {
   const commitNewCell = async (item, field, rawValue) => {
     let value
     try { value = normalizeCellValue(field, rawValue) } catch (error) { notify(error.message, 'error'); return false }
-    const next = withCalculatedPlannedDate({ ...item, [field]: value }, field)
+    const next = withDerivedObligationValues({ ...item, [field]: value }, field)
     setNewRow(next)
     if (sameCellValue(item[field], value) || creatingRef.current) return true
     creatingRef.current = true; markSaving(`new:${field}`, true)
@@ -452,14 +453,6 @@ function strip(values) {
 function blankObligation() { return { account_type:'',entry_date:todayISO(),counterparty:'',legal_entity:'',cost_category:'',priority:'',responsible:'',document_number:'',deferment_days:null,document_date:'',amount:null,planned_payment_date:'',approval_date:'',actual_payment_date:'',status:'Зарегистрирован',urgency:'',comment:'',source_note:'' } }
 function todayISO() { const date = new Date(); const offset = date.getTimezoneOffset() * 60000; return new Date(date.getTime() - offset).toISOString().slice(0, 10) }
 function sameCellValue(left, right) { return (left ?? '') === (right ?? '') }
-function withCalculatedPlannedDate(values, changedField) {
-  if (changedField !== 'deferment_days' && changedField !== 'document_date') return values
-  if (!values.document_date || values.deferment_days == null || values.deferment_days === '') return values
-  const date = new Date(`${values.document_date}T00:00:00Z`)
-  if (Number.isNaN(date.getTime())) return values
-  date.setUTCDate(date.getUTCDate() + Number(values.deferment_days))
-  return { ...values, planned_payment_date: date.toISOString().slice(0, 10) }
-}
 function cellEditorValue(field, value) { if (dateFields.has(field)) return value ? shortDate(value) : ''; return value ?? '' }
 function cellAriaValue(field, value) { if (dateFields.has(field)) return shortDate(value); if (field === 'amount' && value != null && value !== '') return money(value); return String(value ?? '') || 'не заполнено' }
 function normalizeCellValue(field, rawValue) {

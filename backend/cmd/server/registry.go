@@ -309,6 +309,7 @@ func (a *app) bulkUpdate(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, "Не выбраны строки")
 		return
 	}
+	input.Status = automaticPaymentStatus(input.ActualPaymentDate, input.Status)
 	user := currentUser(r)
 	tx, err := a.db.BeginTx(r.Context(), nil)
 	if err != nil {

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { AlertTriangle, CalendarClock, CalendarRange, Check, ChevronDown, ChevronRight, Layers3, RefreshCw, Search, X } from 'lucide-react'
+import { AlertTriangle, CalendarClock, CalendarRange, Check, ChevronDown, ChevronRight, Layers3, Printer, RefreshCw, Search, X } from 'lucide-react'
 import { request } from './api'
 import { DateInput, money, PageHeader, shortDate } from './App'
 import { BLANK_ACCOUNT_TYPE_FILTER, filterSelectOptions } from './filterValues'
@@ -40,10 +40,19 @@ export default function ExecutiveDashboard({ notify }) {
       period: period.key,
       cost_category: group.cost_category,
     })
-    setDetails({ period, cost_category: group.cost_category, count: group.count, amount: group.amount, items: [] })
+    setDetails({
+      period,
+      cost_category: group.cost_category,
+      count: group.count,
+      amount: group.amount,
+      items: [],
+      report_date: filters.as_of,
+      legal_entity: filters.legal_entity,
+      account_type: filters.account_type,
+    })
     setDetailsLoading(true)
     request(`/api/reports/executive/details?${params}`)
-      .then(setDetails)
+      .then(result => setDetails(current => current ? { ...current, ...result } : current))
       .catch(error => { setDetails(null); notify(error.message, 'error') })
       .finally(() => setDetailsLoading(false))
   }
@@ -191,7 +200,10 @@ function ExecutiveDetails({ details, loading, onClose }) {
           <h2>{details.cost_category}</h2>
           <span>{details.count.toLocaleString('ru-RU')} обязательств · {money(details.amount)}</span>
         </div>
-        <button type="button" onClick={onClose} title="Закрыть" aria-label="Закрыть"><X/></button>
+        <div className="executive-detail-actions">
+          <button type="button" className="secondary" onClick={() => window.print()} disabled={loading || details.items.length === 0}><Printer size={17}/>Печать</button>
+          <button type="button" onClick={onClose} title="Закрыть" aria-label="Закрыть"><X/></button>
+        </div>
       </header>
       <div className="executive-detail-scroll">
         {loading ? <div className="executive-detail-loading"><div className="loading-line"/><span>Загружаем обязательства…</span></div>
@@ -215,6 +227,48 @@ function ExecutiveDetails({ details, loading, onClose }) {
               <tfoot><tr><td colSpan="4">Итого</td><td colSpan="2">{money(details.amount)}</td><td colSpan="3">{details.count.toLocaleString('ru-RU')} обязательств</td></tr></tfoot>
             </table>}
       </div>
+      {!loading && details.items.length > 0 && <ExecutivePrintReport details={details}/>}
     </section>
   </div>
+}
+
+function ExecutivePrintReport({ details }) {
+  const accountType = details.account_type === BLANK_ACCOUNT_TYPE_FILTER ? 'Не выбран (—)' : details.account_type || 'Все признаки учёта'
+  return <article className="executive-print-report">
+    <header className="executive-print-title">
+      <div>
+        <p>Панель руководителя · детализация</p>
+        <h1>{details.cost_category}</h1>
+        <span>{details.period.title} · отчёт на {shortDate(details.report_date)}</span>
+      </div>
+      <div className="executive-print-mark"><strong>ФИНРЕЕСТР</strong><span>Управленческий отчёт</span></div>
+    </header>
+    <section className="executive-print-filters">
+      <div><span>Период</span><strong>{details.period.from ? `${shortDate(details.period.from)} — ${shortDate(details.period.to)}` : `до ${shortDate(details.period.to)}`}</strong></div>
+      <div><span>Юридическое лицо</span><strong>{details.legal_entity || 'Все юридические лица'}</strong></div>
+      <div><span>Признак учёта</span><strong>{accountType}</strong></div>
+      <div><span>Обязательств</span><strong>{details.count.toLocaleString('ru-RU')}</strong></div>
+      <div><span>Общая сумма</span><strong>{money(details.amount)}</strong></div>
+    </section>
+    <table>
+      <thead><tr>
+        <th>№</th><th>Юридическое лицо</th><th>Плановая дата</th><th>Контрагент</th><th>Назначение платежа</th>
+        <th>Комментарий</th><th>Сумма</th><th>Ответственный</th><th>Статус</th><th>Дата утверждения</th>
+      </tr></thead>
+      <tbody>{details.items.map((item, index) => <tr key={item.id}>
+        <td>{index + 1}</td>
+        <td>{item.legal_entity || '—'}</td>
+        <td>{shortDate(item.planned_payment_date)}</td>
+        <td>{item.counterparty || '—'}</td>
+        <td>{item.payment_purpose || '—'}</td>
+        <td>{item.comment || '—'}</td>
+        <td>{money(item.amount)}</td>
+        <td>{item.responsible || '—'}</td>
+        <td>{item.status || '—'}</td>
+        <td>{shortDate(item.approval_date)}</td>
+      </tr>)}</tbody>
+      <tfoot><tr><td colSpan="6">Итого</td><td>{money(details.amount)}</td><td colSpan="3">{details.count.toLocaleString('ru-RU')} обязательств</td></tr></tfoot>
+    </table>
+    <footer><span>Сформировано: {new Date().toLocaleString('ru-RU')}</span><span>Подпись: ____________________</span></footer>
+  </article>
 }
