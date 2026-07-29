@@ -1,24 +1,64 @@
 import { useEffect, useState } from 'react'
-import { CalendarDays, Download, Printer, RefreshCw } from 'lucide-react'
+import { CalendarDays, ChevronDown, Download, Printer, RefreshCw } from 'lucide-react'
 import { download, request } from './api'
 import { DateInput, money, PageHeader, shortDate } from './App'
-import { localTodayISO, paymentColumns } from './paymentsView'
+import { InlineCellSelect } from './Registry'
+import { localTodayISO, paymentColumns, paymentScreenColumns, paymentUpdatePayload } from './paymentsView'
 
-export default function Payments({ notify }) {
+export default function Payments({ user, notify }) {
   const [refs, setRefs] = useState({})
   const [filters, setFilters] = useState(() => ({ approval_date: localTodayISO(), legal_entity: '', account_type: '' }))
   const [data, setData] = useState({ items: [], count: 0, amount: 0 })
   const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState('')
   const query = new URLSearchParams(Object.fromEntries(Object.entries(filters).filter(([,v]) => v))).toString()
-  const load = () => { setLoading(true); request(`/api/payment-register?${query}`).then(setData).catch(e => notify(e.message, 'error')).finally(() => setLoading(false)) }
+  const load = () => { setLoading(true); return request(`/api/payment-register?${query}`).then(setData).catch(e => notify(e.message, 'error')).finally(() => setLoading(false)) }
+  const saveField = async (item, field, value) => {
+    const key = `${item.id}:${field}`
+    setSaving(key)
+    try {
+      await request(`/api/obligations/${item.id}`, { method: 'PATCH', body: JSON.stringify(paymentUpdatePayload(item, field, value)) })
+      notify(field === 'status' ? 'Статус обновлён' : 'Фактическая дата оплаты обновлена')
+      await load()
+    } catch (error) {
+      notify(error.message, 'error')
+    } finally {
+      setSaving('')
+    }
+  }
   useEffect(() => { request('/api/references').then(setRefs).catch(e => notify(e.message,'error')) }, [])
-  useEffect(load, [query])
+  useEffect(() => { load() }, [query])
   return <div className="page payments-page">
     <PageHeader eyebrow="Платёжный реестр" title="Обязательства к оплате" subtitle="Согласованные платежи по выбранным условиям" actions={<><button className="secondary" onClick={load}><RefreshCw size={17}/>Обновить</button><button className="secondary" onClick={() => window.print()} disabled={loading}><Printer size={17}/>Печать</button><button className="primary" onClick={() => download(`/api/obligations/export.xlsx?status=${encodeURIComponent('К оплате')}&${query}`, 'К оплате.xlsx')}><Download size={17}/>Выгрузить</button></>}/>
     <section className="payment-toolbar"><label><span>Дата утверждения</span><DateInput value={filters.approval_date} onChange={value => setFilters({...filters,approval_date:value})} aria-label="Дата утверждения"/></label><label><span>Юридическое лицо</span><select value={filters.legal_entity} onChange={e => setFilters({...filters,legal_entity:e.target.value})}><option value="">Все юрлица</option>{(refs.legal_entities||[]).map(x=><option key={x.id} value={x.value}>{x.value}</option>)}</select></label><label><span>Признак учёта</span><select value={filters.account_type} onChange={e => setFilters({...filters,account_type:e.target.value})}><option value="">Все</option>{(refs.account_types||[]).map(x=><option key={x.id} value={x.value}>{x.value}</option>)}</select></label></section>
     <section className="payment-summary"><div><CalendarDays/><span>Количество платежей<strong>{data.count}</strong></span></div><div><span>Общая сумма<strong>{money(data.amount)}</strong></span></div></section>
-    <section className="payment-list panel"><div className="payment-head">{paymentColumns.map(column => <span key={column.key}>{column.label}</span>)}</div>{loading ? <div className="loading-line"/> : data.items.length === 0 ? <div className="empty-state"><CalendarDays size={28}/><strong>По выбранным условиям платежей нет</strong><span>Выберите другую дату или юридическое лицо</span></div> : data.items.map(item => <div className={`payment-row ${item.urgency === 'Критическая' ? 'critical' : ''}`} key={item.id}>{paymentColumns.map(column => <span key={column.key}>{column.key === 'counterparty' ? <strong>{paymentValue(item, column.key)}</strong> : paymentValue(item, column.key)}</span>)}</div>)}</section>
+    <section className="payment-list panel"><div className="payment-head">{paymentScreenColumns.map(column => <span key={column.key}>{column.label}</span>)}</div>{loading ? <div className="loading-line"/> : data.items.length === 0 ? <div className="empty-state"><CalendarDays size={28}/><strong>По выбранным условиям платежей нет</strong><span>Выберите другую дату или юридическое лицо</span></div> : data.items.map(item => <PaymentRow key={item.id} item={item} statuses={refs.statuses || []} editable={user?.role !== 'viewer'} saving={saving} onSave={saveField}/>)}</section>
     <PaymentPrintReport data={data} filters={filters}/>
+  </div>
+}
+
+function PaymentRow({ item, statuses, editable, saving, onSave }) {
+  return <div className={`payment-row ${item.urgency === 'Критическая' ? 'critical' : ''}`}>
+    {paymentScreenColumns.map(column => <span key={column.key} className={column.interactive ? 'payment-interactive-cell' : ''}>
+      {column.key === 'status' ? <PaymentStatusCell item={item} statuses={statuses} editable={editable} saving={saving === `${item.id}:status`} onSave={onSave}/>
+        : column.key === 'actual_payment_date' ? <PaymentActualDateCell item={item} editable={editable} saving={saving === `${item.id}:actual_payment_date`} onSave={onSave}/>
+          : column.key === 'counterparty' ? <strong>{paymentValue(item, column.key)}</strong> : paymentValue(item, column.key)}
+    </span>)}
+  </div>
+}
+
+function PaymentStatusCell({ item, statuses, editable, saving, onSave }) {
+  const [open, setOpen] = useState(false)
+  if (open && editable && !saving) return <InlineCellSelect label="Статус" value={item.status || ''} options={statuses} onChoose={value => { setOpen(false); onSave(item, 'status', value) }} onCancel={() => setOpen(false)}/>
+  return <button type="button" className="payment-status-control" onClick={() => editable && setOpen(true)} disabled={!editable || saving} aria-label={`Статус: ${item.status || 'не выбран'}`} aria-expanded={open}>
+    <span>{saving ? 'Сохраняем…' : item.status || 'Не выбран'}</span>{editable && <ChevronDown size={15}/>}
+  </button>
+}
+
+function PaymentActualDateCell({ item, editable, saving, onSave }) {
+  if (!editable) return <span className="payment-readonly-date">{shortDate(item.actual_payment_date)}</span>
+  return <div className={`payment-actual-date-control ${saving ? 'is-saving' : ''}`}>
+    <DateInput value={item.actual_payment_date || ''} onChange={value => onSave(item, 'actual_payment_date', value)} disabled={saving} aria-label={`Фактическая дата оплаты, запись №${item.id}`}/>
   </div>
 }
 
