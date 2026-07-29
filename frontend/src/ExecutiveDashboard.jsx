@@ -201,7 +201,7 @@ function ExecutiveDetails({ details, loading, onClose }) {
           <span>{details.count.toLocaleString('ru-RU')} обязательств · {money(details.amount)}</span>
         </div>
         <div className="executive-detail-actions">
-          <button type="button" className="secondary" onClick={() => window.print()} disabled={loading || details.items.length === 0}><Printer size={17}/>Печать</button>
+          <button type="button" className="secondary executive-print-button" onClick={() => window.print()} disabled={loading || details.items.length === 0}><Printer size={17}/>Печать</button>
           <button type="button" onClick={onClose} title="Закрыть" aria-label="Закрыть"><X/></button>
         </div>
       </header>
