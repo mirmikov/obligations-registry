@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, Download, FileUp, Filter, LocateFixed, Maximize2, Minimize2, Plus, RotateCcw, Scissors, Search, Trash2, X } from 'lucide-react'
+import { ArrowRight, CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, Clock3, Download, FileUp, Filter, History, Info, LocateFixed, Maximize2, Minimize2, Plus, RotateCcw, Scissors, Search, Trash2, UserRound, X } from 'lucide-react'
 import { download, request } from './api'
 import { DateInput, money, PageHeader, roleLabel, shortDate } from './App'
 import { BLANK_ACCOUNT_TYPE_FILTER } from './filterValues'
@@ -10,8 +10,10 @@ import usePresence from './usePresence'
 const emptyFilters = { q: '', counterparty: [], account_type: '', legal_entity: '', cost_category: '', priority: '', responsible: '', status: '', urgency: '', entry_date: '', document_date: '', planned_payment_date: '', approval_date: '', actual_payment_date: '', document_from: '', document_to: '', overdue: '' }
 const dateFields = new Set(['entry_date', 'document_date', 'planned_payment_date', 'approval_date', 'actual_payment_date'])
 const fieldLabels = { counterparty: 'Контрагент', entry_date: 'Дата внесения', document_number: 'Документ', document_date: 'Дата документа', legal_entity: 'Юрлицо', cost_category: 'Статья затрат', amount: 'Сумма, ₽', deferment_days: 'Отсрочка, дней', planned_payment_date: 'Плановая оплата', approval_date: 'Дата утверждения', actual_payment_date: 'Фактическая оплата', status: 'Статус', urgency: 'Срочность', responsible: 'Ответственный', priority: 'Приоритет', account_type: 'Признак учёта', comment: 'Комментарий', source_note: 'Условия оплаты' }
-const defaultRegistryColumnWidths = [46, 220, 130, 130, 180, 120, 180, 135, 240, 110, 145, 145, 145, 160, 135, 160, 120, 240, 240, 86]
-const minimumRegistryColumnWidths = [46, 130, 105, 100, 120, 90, 110, 110, 130, 90, 115, 115, 115, 110, 105, 115, 95, 120, 120, 70]
+const historyFieldLabels = { ...fieldLabels, split_group_id: 'Группа платежей', split_parent_id: 'Исходный платёж', installment_number: 'Номер платежа', installment_count: 'Количество платежей' }
+const historyActionLabels = { create: 'Запись создана', update: 'Запись изменена', bulk_update: 'Массовое изменение', split: 'Платёж разбит', delete: 'Запись удалена' }
+const defaultRegistryColumnWidths = [46, 220, 130, 130, 180, 120, 180, 135, 240, 110, 145, 145, 145, 160, 135, 160, 120, 240, 240, 118]
+const minimumRegistryColumnWidths = [46, 130, 105, 100, 120, 90, 110, 110, 130, 90, 115, 115, 115, 110, 105, 115, 95, 120, 120, 108]
 const registryColumnWidthsKey = 'registry-table-column-widths-v1'
 const registryLargeFontKey = 'registry-table-large-font'
 
@@ -48,6 +50,7 @@ export default function Registry({ user, notify }) {
   const [selected, setSelected] = useState([])
   const [bulkOpen, setBulkOpen] = useState(false)
   const [splitItem, setSplitItem] = useState(null)
+  const [historyItem, setHistoryItem] = useState(null)
   const [tableFullscreen, setTableFullscreen] = useState(false)
   const [largeTableFont, setLargeTableFont] = useState(readLargeFontPreference)
   const [columnWidths, setColumnWidths] = useState(readColumnWidths)
@@ -233,7 +236,7 @@ export default function Registry({ user, notify }) {
     </section>
     <section className="table-card">
       {tableFullscreen && <div className="registry-fullscreen-controls"><FontSizeButton large={largeTableFont} onToggle={() => setLargeTableFont(value => !value)}/><button type="button" className="registry-fullscreen-exit" onClick={() => setTableFullscreen(false)} title="Вернуться к обычному виду" aria-label="Вернуться к обычному виду"><Minimize2 size={17}/><span>Обычный вид</span></button></div>}
-      {selected.length > 0 && <div className="selection-bar"><span><Check size={16}/>{selected.length} выбрано</span>{user.role !== 'viewer' && selectedItem && canSplitPayment(selectedItem) && <button onClick={() => setSplitItem(selectedItem)}><Scissors size={15}/>Разбить платёж</button>}{user.role !== 'viewer' && <button onClick={() => setBulkOpen(true)}>Изменить статус и даты</button>}<button onClick={() => setSelected([])}>Снять выбор</button></div>}
+      {selected.length > 0 && <div className="selection-bar"><span><Check size={16}/>{selected.length} выбрано</span>{selectedItem && <button onClick={() => setHistoryItem(selectedItem)}><Info size={15}/>Информация</button>}{user.role !== 'viewer' && selectedItem && canSplitPayment(selectedItem) && <button onClick={() => setSplitItem(selectedItem)}><Scissors size={15}/>Разбить платёж</button>}{user.role !== 'viewer' && <button onClick={() => setBulkOpen(true)}>Изменить статус и даты</button>}<button onClick={() => setSelected([])}>Снять выбор</button></div>}
       <div ref={tableWrapRef} className="registry-table-wrap" onScroll={rememberScroll}><table className={`registry-table inline-registry ${largeTableFont ? 'registry-font-large' : ''}`} style={{ '--registry-table-width': `${tableWidth}px`, '--registry-counterparty-left': `${stickyOffsets.counterparty}px`, '--registry-entry-date-left': `${stickyOffsets.entryDate}px`, '--registry-account-type-left': `${stickyOffsets.accountType}px`, '--registry-legal-entity-left': `${stickyOffsets.legalEntity}px` }}><colgroup>{columnWidths.map((width, index) => <col key={index} style={{ width }}/>)}</colgroup><thead><tr><th className="check-col">{user.role !== 'viewer' ? <button type="button" className={`inline-add-row ${newRow ? 'active' : ''}`} onClick={addInlineRow} title={newRow ? 'Убрать новую строку' : 'Добавить строку'} aria-label={newRow ? 'Убрать новую строку' : 'Добавить строку'}><Plus size={16}/></button> : <input type="checkbox" checked={allSelected} onChange={toggleAll}/>}</th>
         <ColumnHead className="counterparty-head" label="Контрагент" field="counterparty" sort={sort} onSort={doSort} value={filters.counterparty} options={refs.counterparties} onFilter={value => setFilter('counterparty', value)} multiple {...resizeProps(1)}/>
         <ColumnHead className="entry-date-head" label="Дата внесения" field="entry_date" sort={sort} onSort={doSort} dateValue={filters.entry_date} onDateFilter={value => setFilter('entry_date', value)} {...resizeProps(2)}/>
@@ -251,13 +254,14 @@ export default function Registry({ user, notify }) {
         <ColumnHead label="Ответственный" value={filters.responsible} options={refs.responsibles} onFilter={value => setFilter('responsible', value)} {...resizeProps(15)}/>
         <ColumnHead label="Приоритет" value={filters.priority} options={refs.priorities} onFilter={value => setFilter('priority', value)} {...resizeProps(16)}/>
         <PlainColumnHead label="Комментарий" {...resizeProps(17)}/><PlainColumnHead label="Условия оплаты" {...resizeProps(18)}/><th className="action-col"/></tr></thead>
-      <tbody>{newRow && <RegistryRow item={newRow} refs={refs} editable isNew savingCells={savingCells} onCommit={commitNewCell} onStartEdit={startCellEdit} onFinishEdit={finishCellEdit} onDelete={() => setNewRow(null)}/>} {loading ? <SkeletonRows/> : data.items.length === 0 && !newRow ? <tr><td colSpan="20"><div className="empty-state"><Search size={27}/><strong>Ничего не найдено</strong><span>Измените или сбросьте фильтры</span></div></td></tr> : data.items.map(item => <RegistryRow key={item.id} item={item} refs={refs} editable={user.role !== 'viewer'} selected={selected.includes(item.id)} savingCells={savingCells} onToggle={() => setSelected(s => s.includes(item.id) ? s.filter(id => id !== item.id) : [...s, item.id])} onCommit={commitCell} onStartEdit={startCellEdit} onFinishEdit={finishCellEdit} onSplit={user.role !== 'viewer' && canSplitPayment(item) ? () => setSplitItem(item) : null} onDelete={user.role !== 'viewer' ? () => remove(item.id) : null}/>)}</tbody></table></div>
+      <tbody>{newRow && <RegistryRow item={newRow} refs={refs} editable isNew savingCells={savingCells} onCommit={commitNewCell} onStartEdit={startCellEdit} onFinishEdit={finishCellEdit} onDelete={() => setNewRow(null)}/>} {loading ? <SkeletonRows/> : data.items.length === 0 && !newRow ? <tr><td colSpan="20"><div className="empty-state"><Search size={27}/><strong>Ничего не найдено</strong><span>Измените или сбросьте фильтры</span></div></td></tr> : data.items.map(item => <RegistryRow key={item.id} item={item} refs={refs} editable={user.role !== 'viewer'} selected={selected.includes(item.id)} savingCells={savingCells} onToggle={() => setSelected(s => s.includes(item.id) ? s.filter(id => id !== item.id) : [...s, item.id])} onCommit={commitCell} onStartEdit={startCellEdit} onFinishEdit={finishCellEdit} onInfo={() => setHistoryItem(item)} onSplit={user.role !== 'viewer' && canSplitPayment(item) ? () => setSplitItem(item) : null} onDelete={user.role !== 'viewer' ? () => remove(item.id) : null}/>)}</tbody></table></div>
       <footer className="table-footer"><div className="table-footer-summary" aria-live="polite" aria-busy={loading}><span>Показано {data.items.length} из {data.total.toLocaleString('ru-RU')}</span><span className="table-footer-total"><b>Сумма по фильтрам</b><strong>{loading ? 'Считаем…' : money(data.filtered_amount)}</strong></span></div><div><button disabled={page === 1} onClick={() => setPage(p => p - 1)}><ChevronLeft size={17}/></button><span>Страница <b>{page}</b> из {totalPages}</span><button disabled={page === totalPages} onClick={() => setPage(p => p + 1)}><ChevronRight size={17}/></button></div></footer>
     </section>
     {bulkOpen && (
       <BulkModal count={selected.length} refs={refs} onClose={() => setBulkOpen(false)} onSave={async values => { try { await request('/api/obligations/bulk', { method: 'POST', body: JSON.stringify({ ids: selected, ...values }) }); notify('Выбранные строки обновлены'); setBulkOpen(false); setSelected([]); load() } catch (e) { notify(e.message, 'error') } }}/>
     )}
     {splitItem && <SplitPaymentModal item={splitItem} refs={refs} onClose={() => setSplitItem(null)} onSave={values => splitPayment(splitItem, values)}/>}
+    {historyItem && <ObligationHistoryModal item={historyItem} notify={notify} onClose={() => setHistoryItem(null)}/>}
   </div>
 }
 
@@ -364,7 +368,7 @@ function hasActiveFilters(filters) {
   return Object.values(filters).some(value => Array.isArray(value) ? value.length > 0 : Boolean(value))
 }
 
-function RegistryRow({ item, refs, editable, isNew = false, selected, savingCells, onToggle, onCommit, onStartEdit, onFinishEdit, onSplit, onDelete }) {
+function RegistryRow({ item, refs, editable, isNew = false, selected, savingCells, onToggle, onCommit, onStartEdit, onFinishEdit, onInfo, onSplit, onDelete }) {
   const saving = field => savingCells.has(`${isNew ? 'new' : item.id}:${field}`)
   const cell = (field, props = {}) => <EditableCell item={item} field={field} label={fieldLabels[field]} editable={editable} saving={saving(field)} onCommit={onCommit} onStartEdit={onStartEdit} onFinishEdit={onFinishEdit} {...props}/>
   return <tr className={`${isNew ? 'inline-new-row' : rowTone(item)}`}>
@@ -387,7 +391,7 @@ function RegistryRow({ item, refs, editable, isNew = false, selected, savingCell
     {cell('priority', { options: refs.priorities })}
     {cell('comment', { className: 'comment-cell' })}
     {cell('source_note', { className: 'comment-cell' })}
-    <td className="action-col">{!isNew && (onSplit || onDelete) && <div className="row-actions">{onSplit && <button className="split-button" onClick={onSplit} title="Разбить платёж"><Scissors size={16}/></button>}{onDelete && <button className="danger-button" onClick={onDelete} title="Удалить"><Trash2 size={16}/></button>}</div>}</td>
+    <td className="action-col">{!isNew && (onInfo || onSplit || onDelete) && <div className="row-actions">{onInfo && <button className="info-button" onClick={onInfo} title="Информация и история изменений" aria-label={`Информация о записи №${item.id}`}><Info size={16}/></button>}{onSplit && <button className="split-button" onClick={onSplit} title="Разбить платёж"><Scissors size={16}/></button>}{onDelete && <button className="danger-button" onClick={onDelete} title="Удалить"><Trash2 size={16}/></button>}</div>}</td>
   </tr>
 }
 
@@ -555,6 +559,77 @@ function SplitPaymentModal({ item, refs, onClose, onSave }) {
 
 function canSplitPayment(item) {
   return Number(item?.amount) > 0 && Number(item?.installment_count || 0) <= 1 && !item?.split_group_id && !item?.actual_payment_date && !['Оплачено', 'Отменено'].includes(item?.status)
+}
+
+function ObligationHistoryModal({ item, notify, onClose }) {
+  const [data, setData] = useState(null)
+  const [loading, setLoading] = useState(true)
+  useEffect(() => {
+    let active = true
+    request(`/api/obligations/${item.id}/history`)
+      .then(result => { if (active) setData(result) })
+      .catch(error => { if (active) { notify(error.message, 'error'); onClose() } })
+      .finally(() => { if (active) setLoading(false) })
+    return () => { active = false }
+  }, [item.id])
+
+  const record = data?.record || item
+  return <div className="modal-backdrop obligation-history-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) onClose() }}>
+    <section className="modal obligation-history-modal" role="dialog" aria-modal="true" aria-label={`Информация о записи №${item.id}`}>
+      <header className="modal-head obligation-history-head">
+        <div><p className="eyebrow">Полный аудит реестра</p><h2>Информация о записи №{item.id}</h2><span>{record.counterparty || 'Контрагент не указан'}{record.document_number ? ` · ${record.document_number}` : ''}</span></div>
+        <button type="button" onClick={onClose} aria-label="Закрыть"><X/></button>
+      </header>
+      <div className="modal-body obligation-history-body">
+        {loading ? <div className="obligation-history-loading"><History size={25}/><strong>Загружаем историю изменений…</strong></div> : <>
+          <section className="obligation-history-summary">
+            <div><Clock3 size={19}/><span><small>Дата и время заведения</small><strong>{historyDateTime(record.created_at)}</strong><b>{record.created_by || 'Система'}</b></span></div>
+            <div><History size={19}/><span><small>Последнее изменение</small><strong>{historyDateTime(record.updated_at)}</strong><b>{record.updated_by || 'Система'}</b></span></div>
+            <div><Info size={19}/><span><small>Текущее состояние</small><strong>{record.status || 'Статус не указан'}</strong><b>{money(record.amount)}</b></span></div>
+          </section>
+          <section className="obligation-history-section">
+            <header><div><h3>История работы сотрудников</h3><span>{data.events.length} {historyEventWord(data.events.length)} в сохранённой истории</span></div></header>
+            {data.events.length === 0 ? <div className="obligation-history-empty"><History size={28}/><strong>Изменений после создания не найдено</strong><span>Дата и автор заведения указаны выше.</span></div>
+              : <div className="obligation-history-timeline">{data.events.map(event => <article className={`obligation-history-event action-${event.action} ${event.undone_at ? 'is-undone' : ''}`} key={event.id}>
+                <i><UserRound size={16}/></i>
+                <div className="obligation-history-event-content">
+                  <header><div><strong>{historyActionLabels[event.action] || event.description}</strong><span>{event.user}</span></div><time>{historyDateTime(event.created_at)}</time></header>
+                  {event.description && <p>{event.description}</p>}
+                  {event.undone_at && <div className="obligation-history-undone">Действие отменено {historyDateTime(event.undone_at)}</div>}
+                  {event.changes.length > 0 && <div className="obligation-history-changes">{event.changes.map(change => <div key={change.field}>
+                    <b>{historyFieldLabels[change.field] || change.field}</b>
+                    <span>{historyValue(change.field, change.before)}</span><ArrowRight size={14}/><strong>{historyValue(change.field, change.after)}</strong>
+                  </div>)}</div>}
+                </div>
+              </article>)}</div>}
+          </section>
+        </>}
+      </div>
+      <footer className="modal-footer"><button type="button" className="primary" onClick={onClose}>Закрыть</button></footer>
+    </section>
+  </div>
+}
+
+function historyDateTime(value) {
+  if (!value) return '—'
+  const match = String(value).match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?/)
+  return match ? `${match[3]}.${match[2]}.${match[1]} · ${match[4]}:${match[5]}:${match[6] || '00'}` : String(value)
+}
+
+function historyValue(field, value) {
+  if (value == null || value === '') return '—'
+  if (field === 'amount') return money(value)
+  if (dateFields.has(field)) return shortDate(String(value))
+  if (field === 'split_parent_id') return `№${value}`
+  return String(value)
+}
+
+function historyEventWord(count) {
+  const last = count % 10
+  const lastTwo = count % 100
+  if (last === 1 && lastTwo !== 11) return 'действие'
+  if (last >= 2 && last <= 4 && (lastTwo < 12 || lastTwo > 14)) return 'действия'
+  return 'действий'
 }
 
 function buildSplitPreview(amount, form) {
