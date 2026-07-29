@@ -7,12 +7,20 @@ import (
 	"time"
 )
 
-const executiveRegisteredStatusSQL = `BTRIM(COALESCE(status,'')) IN ('Зарегистрирован','Зарегистрировано')`
+const (
+	executiveRegisteredStatus = "Зарегистрирован"
+	executivePayableStatus    = "К оплате"
+	executiveStatusFilterSQL  = `(
+		($4='Зарегистрирован' AND BTRIM(COALESCE(status,'')) IN ('Зарегистрирован','Зарегистрировано'))
+		OR ($4='К оплате' AND BTRIM(COALESCE(status,''))='К оплате')
+	)`
+)
 
 type executiveFilters struct {
 	AsOf        string `json:"as_of"`
 	LegalEntity string `json:"legal_entity"`
 	AccountType string `json:"account_type"`
+	Status      string `json:"status"`
 }
 
 type executiveGroup struct {
@@ -53,10 +61,18 @@ func parseExecutiveFilters(r *http.Request) (executiveFilters, time.Time, error)
 	if err != nil {
 		return executiveFilters{}, time.Time{}, fmt.Errorf("некорректная дата отчёта")
 	}
+	status := strings.TrimSpace(r.URL.Query().Get("status"))
+	if status == "" {
+		status = executiveRegisteredStatus
+	}
+	if status != executiveRegisteredStatus && status != executivePayableStatus {
+		return executiveFilters{}, time.Time{}, fmt.Errorf("некорректный статус отчёта")
+	}
 	return executiveFilters{
 		AsOf:        asOf,
 		LegalEntity: strings.TrimSpace(r.URL.Query().Get("legal_entity")),
 		AccountType: strings.TrimSpace(r.URL.Query().Get("account_type")),
+		Status:      status,
 	}, reportDate, nil
 }
 
@@ -86,15 +102,15 @@ func executivePeriodDefinition(key string, reportDate time.Time) (executivePerio
 }
 
 func executiveBaseFilter(periodClause string) string {
-	return executiveRegisteredStatusSQL + `
-		AND planned_payment_date IS NOT NULL
+	return `planned_payment_date IS NOT NULL
 		AND ` + periodClause + `
 		AND ($2='' OR legal_entity=$2)
 		AND (
 			$3=''
 			OR ($3='` + blankAccountTypeFilter + `' AND NULLIF(BTRIM(account_type),'') IS NULL)
 			OR account_type=$3
-		)`
+		)
+		AND ` + executiveStatusFilterSQL
 }
 
 func (a *app) executiveDashboard(w http.ResponseWriter, r *http.Request) {
@@ -112,7 +128,7 @@ func (a *app) executiveDashboard(w http.ResponseWriter, r *http.Request) {
 			FROM obligations
 			WHERE `+executiveBaseFilter(clause)+`
 			GROUP BY 1
-			ORDER BY 3 DESC,1`, filters.AsOf, filters.LegalEntity, filters.AccountType)
+			ORDER BY 3 DESC,1`, filters.AsOf, filters.LegalEntity, filters.AccountType, filters.Status)
 		if queryErr != nil {
 			fail(w, http.StatusInternalServerError, "Не удалось рассчитать панель руководителя")
 			return
@@ -140,7 +156,7 @@ func (a *app) executiveDashboard(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"as_of": filters.AsOf, "legal_entity": filters.LegalEntity,
-		"account_type": filters.AccountType, "periods": periods,
+		"account_type": filters.AccountType, "status": filters.Status, "periods": periods,
 	})
 }
 
@@ -175,8 +191,8 @@ func (a *app) executiveDashboardDetails(w http.ResponseWriter, r *http.Request) 
 			COALESCE(to_char(approval_date,'YYYY-MM-DD'),'')
 		FROM obligations
 		WHERE `+executiveBaseFilter(clause)+`
-			AND COALESCE(NULLIF(BTRIM(cost_category),''),'Без статьи затрат')=$4
-		ORDER BY planned_payment_date,amount DESC,id`, filters.AsOf, filters.LegalEntity, filters.AccountType, category)
+			AND COALESCE(NULLIF(BTRIM(cost_category),''),'Без статьи затрат')=$5
+		ORDER BY planned_payment_date,amount DESC,id`, filters.AsOf, filters.LegalEntity, filters.AccountType, filters.Status, category)
 	if queryErr != nil {
 		fail(w, http.StatusInternalServerError, "Не удалось загрузить детализацию")
 		return

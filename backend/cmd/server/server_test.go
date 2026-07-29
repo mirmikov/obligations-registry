@@ -151,17 +151,42 @@ func TestExecutivePeriodDefinitionsUseCalendarBoundaries(t *testing.T) {
 	}
 }
 
-func TestExecutiveFiltersOnlyRegisteredStatuses(t *testing.T) {
+func TestExecutiveFiltersSupportRegisteredAndPayableStatuses(t *testing.T) {
 	filter := executiveBaseFilter("planned_payment_date < $1::date")
-	for _, expected := range []string{"Зарегистрирован", "Зарегистрировано", "planned_payment_date < $1::date", "legal_entity=$2", "account_type=$3", blankAccountTypeFilter, "NULLIF(BTRIM(account_type),'') IS NULL"} {
+	for _, expected := range []string{"Зарегистрирован", "Зарегистрировано", "К оплате", "$4", "planned_payment_date < $1::date", "legal_entity=$2", "account_type=$3", blankAccountTypeFilter, "NULLIF(BTRIM(account_type),'') IS NULL"} {
 		if !strings.Contains(filter, expected) {
 			t.Fatalf("executive filter %q does not contain %q", filter, expected)
 		}
 	}
-	for _, forbidden := range []string{"К оплате", "Оплачено", "Отменено"} {
+	for _, forbidden := range []string{"Оплачено", "Отменено"} {
 		if strings.Contains(filter, forbidden) {
 			t.Fatalf("executive filter includes forbidden status %q", forbidden)
 		}
+	}
+}
+
+func TestParseExecutiveFiltersDefaultsAndValidatesStatus(t *testing.T) {
+	defaultRequest := httptest.NewRequest("GET", "/?as_of=2026-07-29", nil)
+	filters, _, err := parseExecutiveFilters(defaultRequest)
+	if err != nil || filters.Status != executiveRegisteredStatus {
+		t.Fatalf("default status=%q err=%v", filters.Status, err)
+	}
+
+	payableRequest := httptest.NewRequest("GET", "/?as_of=2026-07-29&status=%D0%9A+%D0%BE%D0%BF%D0%BB%D0%B0%D1%82%D0%B5", nil)
+	filters, _, err = parseExecutiveFilters(payableRequest)
+	if err != nil || filters.Status != executivePayableStatus {
+		t.Fatalf("payable status=%q err=%v", filters.Status, err)
+	}
+
+	invalidRequest := httptest.NewRequest("GET", "/?as_of=2026-07-29&status=%D0%9E%D0%BF%D0%BB%D0%B0%D1%87%D0%B5%D0%BD%D0%BE", nil)
+	if _, _, err = parseExecutiveFilters(invalidRequest); err == nil {
+		t.Fatal("unsupported executive status accepted")
+	}
+}
+
+func TestBulkUpdateCanExplicitlyClearApprovalDate(t *testing.T) {
+	if !strings.Contains(bulkUpdateSQL, "WHEN $2 THEN NULLIF($3,'')::date") {
+		t.Fatalf("bulk update cannot explicitly clear approval date: %s", bulkUpdateSQL)
 	}
 }
 

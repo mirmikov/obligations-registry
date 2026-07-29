@@ -295,10 +295,18 @@ func (a *app) deleteObligation(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(204)
 }
 
+const bulkUpdateSQL = `UPDATE obligations SET
+	status=CASE WHEN $1='' THEN status ELSE $1 END,
+	approval_date=CASE WHEN $2 THEN NULLIF($3,'')::date WHEN $3='' THEN approval_date ELSE $3::date END,
+	actual_payment_date=CASE WHEN $4='' THEN actual_payment_date ELSE $4::date END,
+	updated_by=$5,updated_at=now()
+	WHERE id=ANY($6)`
+
 func (a *app) bulkUpdate(w http.ResponseWriter, r *http.Request) {
 	var input struct {
 		IDs               []int64 `json:"ids"`
 		Status            string  `json:"status"`
+		ApprovalDateSet   bool    `json:"approval_date_set"`
 		ApprovalDate      string  `json:"approval_date"`
 		ActualPaymentDate string  `json:"actual_payment_date"`
 	}
@@ -326,7 +334,7 @@ func (a *app) bulkUpdate(w http.ResponseWriter, r *http.Request) {
 		fail(w, 500, "Не удалось подготовить историю отмены")
 		return
 	}
-	result, err := tx.ExecContext(r.Context(), `UPDATE obligations SET status=CASE WHEN $1='' THEN status ELSE $1 END,approval_date=CASE WHEN $2='' THEN approval_date ELSE $2::date END,actual_payment_date=CASE WHEN $3='' THEN actual_payment_date ELSE $3::date END,updated_by=$4,updated_at=now() WHERE id=ANY($5)`, input.Status, input.ApprovalDate, input.ActualPaymentDate, user.ID, input.IDs)
+	result, err := tx.ExecContext(r.Context(), bulkUpdateSQL, input.Status, input.ApprovalDateSet, input.ApprovalDate, input.ActualPaymentDate, user.ID, input.IDs)
 	if err != nil {
 		fail(w, 400, "Не удалось обновить строки: "+err.Error())
 		return
