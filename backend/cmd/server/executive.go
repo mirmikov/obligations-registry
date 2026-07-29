@@ -11,7 +11,8 @@ const (
 	executiveRegisteredStatus = "Зарегистрирован"
 	executivePayableStatus    = "К оплате"
 	executiveStatusFilterSQL  = `(
-		($4='Зарегистрирован' AND BTRIM(COALESCE(status,'')) IN ('Зарегистрирован','Зарегистрировано'))
+		($4='' AND BTRIM(COALESCE(status,'')) IN ('Зарегистрирован','Зарегистрировано','К оплате'))
+		OR ($4='Зарегистрирован' AND BTRIM(COALESCE(status,'')) IN ('Зарегистрирован','Зарегистрировано'))
 		OR ($4='К оплате' AND BTRIM(COALESCE(status,''))='К оплате')
 	)`
 )
@@ -62,10 +63,7 @@ func parseExecutiveFilters(r *http.Request) (executiveFilters, time.Time, error)
 		return executiveFilters{}, time.Time{}, fmt.Errorf("некорректная дата отчёта")
 	}
 	status := strings.TrimSpace(r.URL.Query().Get("status"))
-	if status == "" {
-		status = executiveRegisteredStatus
-	}
-	if status != executiveRegisteredStatus && status != executivePayableStatus {
+	if status != "" && status != executiveRegisteredStatus && status != executivePayableStatus {
 		return executiveFilters{}, time.Time{}, fmt.Errorf("некорректный статус отчёта")
 	}
 	return executiveFilters{

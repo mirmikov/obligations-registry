@@ -151,9 +151,9 @@ func TestExecutivePeriodDefinitionsUseCalendarBoundaries(t *testing.T) {
 	}
 }
 
-func TestExecutiveFiltersSupportRegisteredAndPayableStatuses(t *testing.T) {
+func TestExecutiveFiltersSupportAllRegisteredAndPayableStatuses(t *testing.T) {
 	filter := executiveBaseFilter("planned_payment_date < $1::date")
-	for _, expected := range []string{"Зарегистрирован", "Зарегистрировано", "К оплате", "$4", "planned_payment_date < $1::date", "legal_entity=$2", "account_type=$3", blankAccountTypeFilter, "NULLIF(BTRIM(account_type),'') IS NULL"} {
+	for _, expected := range []string{"$4=''", "Зарегистрирован", "Зарегистрировано", "К оплате", "$4", "planned_payment_date < $1::date", "legal_entity=$2", "account_type=$3", blankAccountTypeFilter, "NULLIF(BTRIM(account_type),'') IS NULL"} {
 		if !strings.Contains(filter, expected) {
 			t.Fatalf("executive filter %q does not contain %q", filter, expected)
 		}
@@ -168,7 +168,7 @@ func TestExecutiveFiltersSupportRegisteredAndPayableStatuses(t *testing.T) {
 func TestParseExecutiveFiltersDefaultsAndValidatesStatus(t *testing.T) {
 	defaultRequest := httptest.NewRequest("GET", "/?as_of=2026-07-29", nil)
 	filters, _, err := parseExecutiveFilters(defaultRequest)
-	if err != nil || filters.Status != executiveRegisteredStatus {
+	if err != nil || filters.Status != "" {
 		t.Fatalf("default status=%q err=%v", filters.Status, err)
 	}
 
