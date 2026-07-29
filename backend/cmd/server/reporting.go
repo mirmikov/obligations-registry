@@ -11,7 +11,7 @@ import (
 )
 
 func (a *app) listReferences(w http.ResponseWriter, r *http.Request) {
-	rows, err := a.db.QueryContext(r.Context(), `SELECT id,kind,value,sort_order FROM reference_values WHERE active ORDER BY kind,sort_order,value`)
+	rows, err := a.db.QueryContext(r.Context(), `SELECT id,kind,value,sort_order FROM reference_values WHERE active AND kind <> $1 ORDER BY kind,sort_order,value`, executiveSettingsReferenceKind)
 	if err != nil {
 		fail(w, 500, "Не удалось загрузить справочники")
 		return

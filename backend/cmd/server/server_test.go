@@ -153,7 +153,7 @@ func TestExecutivePeriodDefinitionsUseCalendarBoundaries(t *testing.T) {
 
 func TestExecutiveFiltersSupportAllRegisteredAndPayableStatuses(t *testing.T) {
 	filter := executiveBaseFilter("planned_payment_date < $1::date")
-	for _, expected := range []string{"$4=''", "Зарегистрирован", "Зарегистрировано", "К оплате", "$4", "planned_payment_date < $1::date", "legal_entity=$2", "account_type=$3", blankAccountTypeFilter, "NULLIF(BTRIM(account_type),'') IS NULL"} {
+	for _, expected := range []string{"$4=''", "Зарегистрирован", "Зарегистрировано", "К оплате", "$4", "$5", "planned_payment_date < $1::date", "legal_entity=$2", "account_type=$3", blankAccountTypeFilter, "NULLIF(BTRIM(account_type),'') IS NULL", executiveSpecialMatchSQL} {
 		if !strings.Contains(filter, expected) {
 			t.Fatalf("executive filter %q does not contain %q", filter, expected)
 		}
@@ -162,6 +162,29 @@ func TestExecutiveFiltersSupportAllRegisteredAndPayableStatuses(t *testing.T) {
 		if strings.Contains(filter, forbidden) {
 			t.Fatalf("executive filter includes forbidden status %q", forbidden)
 		}
+	}
+}
+
+func TestExecutiveSpecialSectionMatchesRentAndKibirevWithoutDependingOnSpaces(t *testing.T) {
+	for _, expected := range []string{"cost_category", "Аренда", "counterparty", "ИП Кибирев О. А.", "REGEXP_REPLACE", "[[:space:]]+"} {
+		if !strings.Contains(executiveSpecialMatchSQL, expected) {
+			t.Fatalf("special section matcher does not contain %q: %s", expected, executiveSpecialMatchSQL)
+		}
+	}
+}
+
+func TestExecutiveSpecialSectionUsesSameFiltersAndMonthHorizon(t *testing.T) {
+	filter := executiveSpecialBaseFilter()
+	for _, expected := range []string{"date_trunc('month',$1::date)", "legal_entity=$2", "account_type=$3", "$4", executiveSpecialMatchSQL} {
+		if !strings.Contains(filter, expected) {
+			t.Fatalf("special section filter does not contain %q: %s", expected, filter)
+		}
+	}
+}
+
+func TestExecutiveSettingsAreKeptOutOfUserReferences(t *testing.T) {
+	if normalizeReferenceKind(executiveSettingsReferenceKind) != "" {
+		t.Fatal("internal executive settings must not be editable through reference endpoints")
 	}
 }
 
