@@ -2,9 +2,9 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { defaultExecutiveFilters, EXECUTIVE_FILTER_STATUSES, executiveUpdatePayload } from './executiveView.js'
 
-test('executive dashboard defaults to registered and offers payable status', () => {
-  assert.deepEqual(EXECUTIVE_FILTER_STATUSES, ['Зарегистрирован', 'К оплате'])
-  assert.equal(defaultExecutiveFilters('2026-07-29').status, 'Зарегистрирован')
+test('executive dashboard defaults to all allowed statuses and offers only registered and payable', () => {
+  assert.deepEqual(EXECUTIVE_FILTER_STATUSES, ['К оплате', 'Зарегистрирован'])
+  assert.equal(defaultExecutiveFilters('2026-07-29').status, '')
 })
 
 test('executive status update changes only status', () => {

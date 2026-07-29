@@ -1,7 +1,7 @@
-export const EXECUTIVE_FILTER_STATUSES = ['Зарегистрирован', 'К оплате']
+export const EXECUTIVE_FILTER_STATUSES = ['К оплате', 'Зарегистрирован']
 
 export function defaultExecutiveFilters(today) {
-  return { as_of: today, legal_entity: '', account_type: '', status: EXECUTIVE_FILTER_STATUSES[0] }
+  return { as_of: today, legal_entity: '', account_type: '', status: '' }
 }
 
 export function executiveUpdatePayload(id, field, value) {
