@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { AlertTriangle, CalendarClock, CalendarRange, Check, ChevronDown, ChevronRight, Layers3, Printer, RefreshCw, Search, X } from 'lucide-react'
+import { AlertTriangle, Building2, CalendarClock, CalendarRange, Check, ChevronDown, ChevronRight, Layers3, Printer, RefreshCw, Search, Settings2, X } from 'lucide-react'
 import { request } from './api'
 import { DateInput, money, PageHeader, shortDate } from './App'
 import { BLANK_ACCOUNT_TYPE_FILTER, filterSelectOptions } from './filterValues'
@@ -22,10 +22,18 @@ export default function ExecutiveDashboard({ notify }) {
   const [details, setDetails] = useState(null)
   const [detailsLoading, setDetailsLoading] = useState(false)
   const [detailsSaving, setDetailsSaving] = useState(() => new Set())
+  const [settings, setSettings] = useState({ kibirev_rent_enabled: true })
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [settingsSaving, setSettingsSaving] = useState(false)
   const query = useMemo(() => new URLSearchParams(Object.entries(filters).filter(([, value]) => value)).toString(), [filters])
 
   useEffect(() => {
-    request('/api/references').then(setRefs).catch(error => notify(error.message, 'error'))
+    Promise.all([request('/api/references'), request('/api/reports/executive/settings')])
+      .then(([referenceData, settingsData]) => {
+        setRefs(referenceData)
+        setSettings(settingsData)
+      })
+      .catch(error => notify(error.message, 'error'))
   }, [])
 
   useEffect(() => {
@@ -45,6 +53,7 @@ export default function ExecutiveDashboard({ notify }) {
       cost_category: group.cost_category,
     })
     setDetails({
+      kind: 'general',
       period,
       cost_category: group.cost_category,
       count: group.count,
@@ -62,21 +71,47 @@ export default function ExecutiveDashboard({ notify }) {
       .finally(() => setDetailsLoading(false))
   }
 
+  const openSpecialDetails = special => {
+    const params = new URLSearchParams(Object.entries(filters).filter(([, value]) => value))
+    setDetails({
+      kind: 'special',
+      period: { key: 'special', title: 'До конца месяца, включая просроченные', to: special.to },
+      cost_category: special.title,
+      count: special.count,
+      amount: special.amount,
+      paid_amount: 0,
+      outstanding_amount: special.amount,
+      items: [],
+      report_date: filters.as_of,
+      legal_entity: filters.legal_entity,
+      account_type: filters.account_type,
+      status: filters.status,
+    })
+    setDetailsLoading(true)
+    request(`/api/reports/executive/special-details?${params}`)
+      .then(result => setDetails(current => current ? { ...current, ...result, kind: 'special' } : current))
+      .catch(error => { setDetails(null); notify(error.message, 'error') })
+      .finally(() => setDetailsLoading(false))
+  }
+
   const saveDetailField = async (item, field, value) => {
     const key = `${item.id}:${field}`
     setDetailsSaving(current => new Set(current).add(key))
     const payload = executiveUpdatePayload(item.id, field, value)
     const currentDetails = details
-    const params = new URLSearchParams({
-      ...Object.fromEntries(Object.entries(filters).filter(([, filterValue]) => filterValue)),
-      period: currentDetails.period.key,
-      cost_category: currentDetails.cost_category,
-    })
+    const params = new URLSearchParams(Object.entries(filters).filter(([, filterValue]) => filterValue))
+    if (currentDetails.kind !== 'special') {
+      params.set('period', currentDetails.period.key)
+      params.set('cost_category', currentDetails.cost_category)
+    }
+    const detailsEndpoint = currentDetails.kind === 'special'
+      ? '/api/reports/executive/special-details'
+      : '/api/reports/executive/details'
     try {
       await request('/api/obligations/bulk', { method: 'POST', body: JSON.stringify(payload) })
       const [dashboardResult, detailsResult] = await Promise.all([
         request(`/api/reports/executive?${query}`),
-        request(`/api/reports/executive/details?${params}`),
+        request(`${detailsEndpoint}?${params}`),
       ])
       setData(dashboardResult)
       setDetails(current => current ? { ...current, ...detailsResult } : current)
@@ -94,6 +129,25 @@ export default function ExecutiveDashboard({ notify }) {
     }
   }
 
+  const saveSpecialSetting = async enabled => {
+    setSettingsSaving(true)
+    try {
+      const result = await request('/api/reports/executive/settings', {
+        method: 'PUT',
+        body: JSON.stringify({ kibirev_rent_enabled: enabled }),
+      })
+      setSettings(result)
+      setDetails(null)
+      const dashboardResult = await request(`/api/reports/executive?${query}`)
+      setData(dashboardResult)
+      notify(enabled ? 'Раздел аренды включён' : 'Раздел аренды отключён')
+    } catch (error) {
+      notify(error.message, 'error')
+    } finally {
+      setSettingsSaving(false)
+    }
+  }
+
   const refresh = () => {
     setLoading(true)
     request(`/api/reports/executive?${query}`)
@@ -107,7 +161,10 @@ export default function ExecutiveDashboard({ notify }) {
       eyebrow="Управленческая аналитика"
       title="Панель руководителя"
       subtitle="Контроль обязательств на выбранную дату"
-      actions={<button className="secondary" onClick={refresh} disabled={loading}><RefreshCw size={17}/>Обновить</button>}
+      actions={<>
+        <button className="secondary" onClick={() => setSettingsOpen(true)}><Settings2 size={17}/>Настройки</button>
+        <button className="secondary" onClick={refresh} disabled={loading}><RefreshCw size={17}/>Обновить</button>
+      </>}
     />
 
     <section className="executive-filters panel">
@@ -141,6 +198,8 @@ export default function ExecutiveDashboard({ notify }) {
       />
     </section>
 
+    {data.special_section && <ExecutiveSpecialCard special={data.special_section} onSelect={() => openSpecialDetails(data.special_section)}/>}
+
     <section className={`executive-grid ${loading ? 'is-loading' : ''}`} aria-busy={loading}>
       {loading && data.periods.length === 0
         ? ['overdue', 'week', 'month'].map(key => <ExecutiveSkeleton key={key}/>)
@@ -154,6 +213,12 @@ export default function ExecutiveDashboard({ notify }) {
       savingCells={detailsSaving}
       onCommit={saveDetailField}
       onClose={() => setDetails(null)}
+    />}
+    {settingsOpen && <ExecutiveSettingsModal
+      settings={settings}
+      saving={settingsSaving}
+      onChange={saveSpecialSetting}
+      onClose={() => setSettingsOpen(false)}
     />}
   </div>
 }
@@ -238,8 +303,55 @@ function ExecutiveSkeleton() {
   return <article className="executive-period executive-skeleton panel"><div/><div/><div/><div/><div/></article>
 }
 
+function ExecutiveSpecialCard({ special, onSelect }) {
+  return <section className="executive-special panel">
+    <header>
+      <div className="executive-special-icon"><Building2 size={23}/></div>
+      <div>
+        <span>Отдельный контур согласования · до {shortDate(special.to)}</span>
+        <h2>{special.title}</h2>
+        <p>Счета выделены из общей сводки, двойной учёт исключён</p>
+      </div>
+    </header>
+    <button type="button" className="executive-special-summary" onClick={onSelect}>
+      <div><span>Всего счетов</span><strong>{special.count.toLocaleString('ru-RU')}</strong></div>
+      <div><span>Общая сумма</span><strong>{money(special.amount)}</strong></div>
+      <div><span>Зарегистрировано</span><strong>{special.registered_count.toLocaleString('ru-RU')}</strong><small>{money(special.registered_amount)}</small></div>
+      <div><span>К оплате</span><strong>{special.payable_count.toLocaleString('ru-RU')}</strong><small>{money(special.payable_amount)}</small></div>
+      <ChevronRight size={20}/>
+    </button>
+  </section>
+}
+
+function ExecutiveSettingsModal({ settings, saving, onChange, onClose }) {
+  return <div className="modal-backdrop executive-settings-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) onClose() }}>
+    <section className="modal executive-settings-modal" role="dialog" aria-modal="true" aria-label="Настройки панели руководителя">
+      <header className="modal-head">
+        <div><p className="eyebrow">Только для администратора</p><h2>Настройки панели руководителя</h2></div>
+        <button type="button" onClick={onClose} title="Закрыть" aria-label="Закрыть"><X/></button>
+      </header>
+      <div className="executive-settings-body">
+        <div>
+          <Building2 size={22}/>
+          <span><strong>Аренда — ИП Кибирев О. А.</strong><small>Показывать отдельным разделом и исключать эти счета из общей сводки.</small></span>
+          <button
+            type="button"
+            className={`executive-setting-switch ${settings.kibirev_rent_enabled ? 'is-on' : ''}`}
+            role="switch"
+            aria-checked={settings.kibirev_rent_enabled}
+            disabled={saving}
+            onClick={() => onChange(!settings.kibirev_rent_enabled)}
+          ><i/><b>{settings.kibirev_rent_enabled ? 'Включено' : 'Отключено'}</b></button>
+        </div>
+      </div>
+    </section>
+  </div>
+}
+
 function ExecutiveDetails({ details, loading, statuses, savingCells, onCommit, onClose }) {
-  const statusOptions = statuses.length ? statuses : executiveStatusOptions.map(option => option.value)
+  const statusOptions = details.kind === 'special'
+    ? ['К оплате']
+    : (statuses.length ? statuses : executiveStatusOptions.map(option => option.value))
   return <div className="modal-backdrop executive-detail-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) onClose() }}>
     <section className="modal executive-detail-modal" role="dialog" aria-modal="true" aria-label={`Детализация: ${details.cost_category}`}>
       <header className="modal-head executive-detail-head">
@@ -256,6 +368,7 @@ function ExecutiveDetails({ details, loading, statuses, savingCells, onCommit, o
       <div className="executive-detail-scroll">
         {loading ? <div className="executive-detail-loading"><div className="loading-line"/><span>Загружаем обязательства…</span></div>
           : details.items.length === 0 ? <div className="executive-empty"><Layers3 size={28}/><strong>Записи не найдены</strong></div>
+            : details.kind === 'special' ? <ExecutiveSpecialDetailsTable details={details} statusOptions={statusOptions} savingCells={savingCells} onCommit={onCommit}/>
             : <table className="executive-detail-table">
               <thead><tr>
                 <th>Юридическое лицо</th><th>Плановая дата</th><th>Контрагент</th><th>Назначение платежа</th>
@@ -275,9 +388,36 @@ function ExecutiveDetails({ details, loading, statuses, savingCells, onCommit, o
               <tfoot><tr><td colSpan="4">Итого</td><td colSpan="2">{money(details.amount)}</td><td colSpan="3">{details.count.toLocaleString('ru-RU')} обязательств</td></tr></tfoot>
             </table>}
       </div>
-      {!loading && details.items.length > 0 && <ExecutivePrintReport details={details}/>}
+      {!loading && details.items.length > 0 && (details.kind === 'special'
+        ? <ExecutiveSpecialPrintReport details={details}/>
+        : <ExecutivePrintReport details={details}/>)}
     </section>
   </div>
+}
+
+function ExecutiveSpecialDetailsTable({ details, statusOptions, savingCells, onCommit }) {
+  return <table className="executive-detail-table executive-special-detail-table">
+    <thead><tr>
+      <th>Юридическое лицо</th><th>Плановая дата</th><th>Счёт</th><th>Назначение платежа</th><th>Комментарий</th>
+      <th>Сумма</th><th>Оплачено</th><th>Остаток</th><th>Статус</th><th>Дата утверждения</th>
+    </tr></thead>
+    <tbody>{details.items.map(item => <tr key={item.id}>
+      <td>{item.legal_entity || '—'}</td>
+      <td>{shortDate(item.planned_payment_date)}</td>
+      <td><strong>{item.document_number || '—'}</strong><small>{shortDate(item.document_date)}</small></td>
+      <td>{item.payment_purpose || '—'}</td>
+      <td>{item.comment || '—'}</td>
+      <td className="executive-detail-amount">{money(item.amount)}</td>
+      <td className="executive-detail-paid">{money(item.paid_amount)}</td>
+      <td className="executive-detail-outstanding">{money(item.outstanding_amount)}</td>
+      <ExecutiveStatusCell item={item} options={statusOptions} saving={savingCells.has(`${item.id}:status`)} onCommit={onCommit}/>
+      <ExecutiveApprovalDateCell item={item} saving={savingCells.has(`${item.id}:approval_date`)} onCommit={onCommit}/>
+    </tr>)}</tbody>
+    <tfoot><tr>
+      <td colSpan="5">Итого · {details.count.toLocaleString('ru-RU')} счетов</td>
+      <td>{money(details.amount)}</td><td>{money(details.paid_amount)}</td><td>{money(details.outstanding_amount)}</td><td colSpan="2"/>
+    </tr></tfoot>
+  </table>
 }
 
 function ExecutiveStatusCell({ item, options, saving, onCommit }) {
@@ -328,6 +468,42 @@ function ExecutiveApprovalDateCell({ item, saving, onCommit }) {
       : <button type="button" className="executive-cell-trigger executive-date-trigger" onClick={() => !saving && setEditing(true)} disabled={saving} aria-label={`Дата утверждения: ${shortDate(item.approval_date)}. Изменить`}>{shortDate(item.approval_date)}</button>}
     {saving && <i className="cell-saving-dot"/>}
   </td>
+}
+
+function ExecutiveSpecialPrintReport({ details }) {
+  const accountType = details.account_type === BLANK_ACCOUNT_TYPE_FILTER ? 'Не выбран (—)' : details.account_type || 'Все признаки учёта'
+  return <article className="executive-print-report executive-special-print-report">
+    <header className="executive-print-title">
+      <div>
+        <p>Панель руководителя · отдельный контур согласования</p>
+        <h1>{details.cost_category}</h1>
+        <span>До конца месяца, включая просроченные · отчёт на {shortDate(details.report_date)}</span>
+      </div>
+      <div className="executive-print-mark"><strong>ФИНРЕЕСТР</strong><span>Управленческий отчёт</span></div>
+    </header>
+    <section className="executive-print-filters">
+      <div><span>Юридическое лицо</span><strong>{details.legal_entity || 'Все юридические лица'}</strong></div>
+      <div><span>Признак учёта</span><strong>{accountType}</strong></div>
+      <div><span>Статус</span><strong>{details.status || 'Все'}</strong></div>
+      <div><span>Счетов</span><strong>{details.count.toLocaleString('ru-RU')}</strong></div>
+      <div><span>Общая сумма</span><strong>{money(details.amount)}</strong></div>
+      <div><span>Остаток</span><strong>{money(details.outstanding_amount)}</strong></div>
+    </section>
+    <table>
+      <thead><tr>
+        <th>№</th><th>Юридическое лицо</th><th>Плановая дата</th><th>Счёт / дата</th><th>Назначение платежа</th>
+        <th>Комментарий</th><th>Сумма</th><th>Оплачено</th><th>Остаток</th><th>Статус / утверждение</th>
+      </tr></thead>
+      <tbody>{details.items.map((item, index) => <tr key={item.id}>
+        <td>{index + 1}</td><td>{item.legal_entity || '—'}</td><td>{shortDate(item.planned_payment_date)}</td>
+        <td>{item.document_number || '—'}<br/>{shortDate(item.document_date)}</td><td>{item.payment_purpose || '—'}</td>
+        <td>{item.comment || '—'}</td><td>{money(item.amount)}</td><td>{money(item.paid_amount)}</td>
+        <td>{money(item.outstanding_amount)}</td><td>{item.status || '—'}<br/>{shortDate(item.approval_date)}</td>
+      </tr>)}</tbody>
+      <tfoot><tr><td colSpan="6">Итого · {details.count.toLocaleString('ru-RU')} счетов</td><td>{money(details.amount)}</td><td>{money(details.paid_amount)}</td><td>{money(details.outstanding_amount)}</td><td/></tr></tfoot>
+    </table>
+    <footer><span>Сформировано: {new Date().toLocaleString('ru-RU')}</span><span>Подпись: ____________________</span></footer>
+  </article>
 }
 
 function ExecutivePrintReport({ details }) {
