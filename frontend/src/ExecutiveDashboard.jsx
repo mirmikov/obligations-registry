@@ -135,8 +135,7 @@ export default function ExecutiveDashboard({ notify }) {
       <ExecutiveFilterSelect
         label="Статус"
         value={filters.status}
-        allLabel=""
-        allowAll={false}
+        allLabel="Все"
         options={executiveStatusOptions}
         onChange={value => setFilters(current => ({ ...current, status: value }))}
       />
@@ -346,7 +345,7 @@ function ExecutivePrintReport({ details }) {
       <div><span>Период</span><strong>{details.period.from ? `${shortDate(details.period.from)} — ${shortDate(details.period.to)}` : `до ${shortDate(details.period.to)}`}</strong></div>
       <div><span>Юридическое лицо</span><strong>{details.legal_entity || 'Все юридические лица'}</strong></div>
       <div><span>Признак учёта</span><strong>{accountType}</strong></div>
-      <div><span>Статус</span><strong>{details.status}</strong></div>
+      <div><span>Статус</span><strong>{details.status || 'Все'}</strong></div>
       <div><span>Обязательств</span><strong>{details.count.toLocaleString('ru-RU')}</strong></div>
       <div><span>Общая сумма</span><strong>{money(details.amount)}</strong></div>
     </section>
