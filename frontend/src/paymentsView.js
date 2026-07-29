@@ -7,6 +7,17 @@ export const paymentColumns = [
   { key: 'amount', label: 'Сумма' },
 ]
 
+export const paymentScreenColumns = [
+  ...paymentColumns,
+  { key: 'status', label: 'Статус', interactive: true },
+  { key: 'actual_payment_date', label: 'Фактическая дата оплаты', interactive: true },
+]
+
+export function paymentUpdatePayload(item, field, value) {
+  const { id, created_at, updated_at, overdue, due_soon, ...payload } = item
+  return { ...payload, [field]: value }
+}
+
 export function localTodayISO(date = new Date()) {
   const year = date.getFullYear()
   const month = String(date.getMonth() + 1).padStart(2, '0')

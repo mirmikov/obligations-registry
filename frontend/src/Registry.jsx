@@ -416,7 +416,7 @@ function EditableCell({ item, field, label, editable, saving, type = 'text', opt
   </td>
 }
 
-function InlineCellSelect({ label, value, options = [], allowCustom, onChoose, onCancel }) {
+export function InlineCellSelect({ label, value, options = [], allowCustom, onChoose, onCancel }) {
   const [search, setSearch] = useState('')
   const rootRef = useRef(null)
   const inputRef = useRef(null)
