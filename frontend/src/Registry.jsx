@@ -5,6 +5,7 @@ import { DateInput, money, PageHeader, roleLabel, shortDate } from './App'
 import { BLANK_ACCOUNT_TYPE_FILTER } from './filterValues'
 import { withDerivedObligationValues } from './obligationValues'
 import { getRegistryStickyOffsets } from './registryColumns'
+import { canStartRegistryDrag, getRegistryDragScroll, hasRegistryDragStarted } from './registryDragScroll'
 import usePresence from './usePresence'
 
 const emptyFilters = { q: '', counterparty: [], account_type: '', legal_entity: '', cost_category: '', priority: '', responsible: '', status: '', urgency: '', entry_date: '', document_date: '', planned_payment_date: '', approval_date: '', actual_payment_date: '', document_from: '', document_to: '', overdue: '' }
@@ -16,6 +17,7 @@ const defaultRegistryColumnWidths = [46, 220, 130, 130, 180, 120, 180, 135, 240,
 const minimumRegistryColumnWidths = [46, 130, 105, 100, 120, 90, 110, 110, 130, 90, 115, 115, 115, 110, 105, 115, 95, 120, 120, 108]
 const registryColumnWidthsKey = 'registry-table-column-widths-v1'
 const registryLargeFontKey = 'registry-table-large-font'
+const registryDragIgnoredSelector = 'button, input, select, textarea, a, label, [contenteditable="true"], [role="button"], [role="separator"], .inline-select-menu, .date-input-wrap'
 
 function readLargeFontPreference() {
   try { return window.localStorage.getItem(registryLargeFontKey) === 'true' } catch { return false }
@@ -65,6 +67,8 @@ export default function Registry({ user, notify }) {
   const latestViewRef = useRef(null)
   const columnWidthsRef = useRef(columnWidths)
   const resizeCleanupRef = useRef(null)
+  const tableDragRef = useRef(null)
+  const suppressTableClickRef = useRef(false)
   const { activeUsers, updateLocation, sessionId } = usePresence({ page: 'registry', page_label: 'Реестр обязательств', mode: 'view' })
   columnWidthsRef.current = columnWidths
 
@@ -165,6 +169,46 @@ export default function Registry({ user, notify }) {
     clearTimeout(scrollSaveTimerRef.current)
     scrollSaveTimerRef.current = setTimeout(() => request('/api/saved-view', { method: 'PUT', body: JSON.stringify(viewPayload()) }).catch(() => {}), 350)
   }
+  const startTableDrag = event => {
+    if (!canStartRegistryDrag(event.button, event.isPrimary) || event.target.closest(registryDragIgnoredSelector)) return
+    tableDragRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      scrollLeft: event.currentTarget.scrollLeft,
+      scrollTop: event.currentTarget.scrollTop,
+      dragging: false,
+    }
+    event.currentTarget.setPointerCapture?.(event.pointerId)
+  }
+  const moveTableDrag = event => {
+    const drag = tableDragRef.current
+    if (!drag || drag.pointerId !== event.pointerId) return
+    if (!drag.dragging && !hasRegistryDragStarted(drag.startX, drag.startY, event.clientX, event.clientY)) return
+    if (!drag.dragging) {
+      drag.dragging = true
+      event.currentTarget.classList.add('is-drag-panning')
+    }
+    const next = getRegistryDragScroll(drag.scrollLeft, drag.scrollTop, drag.startX, drag.startY, event.clientX, event.clientY)
+    event.preventDefault()
+    event.currentTarget.scrollLeft = next.left
+    event.currentTarget.scrollTop = next.top
+  }
+  const finishTableDrag = event => {
+    const drag = tableDragRef.current
+    if (!drag || drag.pointerId !== event.pointerId) return
+    suppressTableClickRef.current = drag.dragging
+    if (drag.dragging) window.setTimeout(() => { suppressTableClickRef.current = false }, 0)
+    tableDragRef.current = null
+    event.currentTarget.classList.remove('is-drag-panning')
+    if (event.currentTarget.hasPointerCapture?.(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
+  }
+  const suppressTableClick = event => {
+    if (!suppressTableClickRef.current) return
+    suppressTableClickRef.current = false
+    event.preventDefault()
+    event.stopPropagation()
+  }
   const totalPages = Math.max(1, Math.ceil(data.total / data.page_size))
   const allSelected = data.items.length > 0 && data.items.every(item => selected.includes(item.id))
   const selectedItem = selected.length === 1 ? rowsRef.current.get(selected[0]) : null
@@ -237,7 +281,7 @@ export default function Registry({ user, notify }) {
     <section className="table-card">
       {tableFullscreen && <div className="registry-fullscreen-controls"><FontSizeButton large={largeTableFont} onToggle={() => setLargeTableFont(value => !value)}/><button type="button" className="registry-fullscreen-exit" onClick={() => setTableFullscreen(false)} title="Вернуться к обычному виду" aria-label="Вернуться к обычному виду"><Minimize2 size={17}/><span>Обычный вид</span></button></div>}
       {selected.length > 0 && <div className="selection-bar"><span><Check size={16}/>{selected.length} выбрано</span>{selectedItem && <button onClick={() => setHistoryItem(selectedItem)}><Info size={15}/>Информация</button>}{user.role !== 'viewer' && selectedItem && canSplitPayment(selectedItem) && <button onClick={() => setSplitItem(selectedItem)}><Scissors size={15}/>Разбить платёж</button>}{user.role !== 'viewer' && <button onClick={() => setBulkOpen(true)}>Изменить статус и даты</button>}<button onClick={() => setSelected([])}>Снять выбор</button></div>}
-      <div ref={tableWrapRef} className="registry-table-wrap" onScroll={rememberScroll}><table className={`registry-table inline-registry ${largeTableFont ? 'registry-font-large' : ''}`} style={{ '--registry-table-width': `${tableWidth}px`, '--registry-counterparty-left': `${stickyOffsets.counterparty}px`, '--registry-entry-date-left': `${stickyOffsets.entryDate}px`, '--registry-account-type-left': `${stickyOffsets.accountType}px`, '--registry-legal-entity-left': `${stickyOffsets.legalEntity}px` }}><colgroup>{columnWidths.map((width, index) => <col key={index} style={{ width }}/>)}</colgroup><thead><tr><th className="check-col">{user.role !== 'viewer' ? <button type="button" className={`inline-add-row ${newRow ? 'active' : ''}`} onClick={addInlineRow} title={newRow ? 'Убрать новую строку' : 'Добавить строку'} aria-label={newRow ? 'Убрать новую строку' : 'Добавить строку'}><Plus size={16}/></button> : <input type="checkbox" checked={allSelected} onChange={toggleAll}/>}</th>
+      <div ref={tableWrapRef} className="registry-table-wrap" onScroll={rememberScroll} onPointerDown={startTableDrag} onPointerMove={moveTableDrag} onPointerUp={finishTableDrag} onPointerCancel={finishTableDrag} onLostPointerCapture={finishTableDrag} onClickCapture={suppressTableClick}><table className={`registry-table inline-registry ${largeTableFont ? 'registry-font-large' : ''}`} style={{ '--registry-table-width': `${tableWidth}px`, '--registry-counterparty-left': `${stickyOffsets.counterparty}px`, '--registry-entry-date-left': `${stickyOffsets.entryDate}px`, '--registry-account-type-left': `${stickyOffsets.accountType}px`, '--registry-legal-entity-left': `${stickyOffsets.legalEntity}px` }}><colgroup>{columnWidths.map((width, index) => <col key={index} style={{ width }}/>)}</colgroup><thead><tr><th className="check-col">{user.role !== 'viewer' ? <button type="button" className={`inline-add-row ${newRow ? 'active' : ''}`} onClick={addInlineRow} title={newRow ? 'Убрать новую строку' : 'Добавить строку'} aria-label={newRow ? 'Убрать новую строку' : 'Добавить строку'}><Plus size={16}/></button> : <input type="checkbox" checked={allSelected} onChange={toggleAll}/>}</th>
         <ColumnHead className="counterparty-head" label="Контрагент" field="counterparty" sort={sort} onSort={doSort} value={filters.counterparty} options={refs.counterparties} onFilter={value => setFilter('counterparty', value)} multiple {...resizeProps(1)}/>
         <ColumnHead className="entry-date-head" label="Дата внесения" field="entry_date" sort={sort} onSort={doSort} dateValue={filters.entry_date} onDateFilter={value => setFilter('entry_date', value)} {...resizeProps(2)}/>
         <ColumnHead className="account-type-head" label="Признак" value={filters.account_type} options={refs.account_types} onFilter={value => setFilter('account_type', value)} allowBlank {...resizeProps(3)}/>
