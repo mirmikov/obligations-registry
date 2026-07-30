@@ -157,16 +157,18 @@ func buildPaymentPlan(totalCents int64, startDate time.Time, input paymentSplitI
 	if input.Mode == "percentage" {
 		return buildPercentagePaymentPlan(totalCents, startDate, input.PercentageParts)
 	}
-	if input.PeriodValue == 0 {
-		input.PeriodValue = 1
-	}
-	if input.PeriodValue < 1 || input.PeriodValue > 365 {
-		return nil, errors.New("Период должен быть от 1 до 365")
-	}
-	switch input.PeriodUnit {
-	case "month", "week", "day":
-	default:
-		return nil, errors.New("Выберите периодичность платежей")
+	if input.Mode == "amount" {
+		if input.PeriodValue == 0 {
+			input.PeriodValue = 1
+		}
+		if input.PeriodValue < 1 || input.PeriodValue > 365 {
+			return nil, errors.New("Период должен быть от 1 до 365")
+		}
+		switch input.PeriodUnit {
+		case "month", "week", "day":
+		default:
+			return nil, errors.New("Выберите периодичность платежей")
+		}
 	}
 
 	amounts := []int64{}
@@ -213,7 +215,10 @@ func buildPaymentPlan(totalCents int64, startDate time.Time, input paymentSplitI
 
 	plan := make([]paymentInstallment, 0, len(amounts))
 	for index, cents := range amounts {
-		date := installmentDate(startDate, index, input.PeriodUnit, input.PeriodValue)
+		date := startDate
+		if input.Mode == "amount" {
+			date = installmentDate(startDate, index, input.PeriodUnit, input.PeriodValue)
+		}
 		plan = append(plan, paymentInstallment{Number: index + 1, Date: date.Format("2006-01-02"), Amount: float64(cents) / 100, cents: cents})
 	}
 	return plan, nil

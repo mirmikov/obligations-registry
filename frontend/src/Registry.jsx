@@ -508,7 +508,7 @@ function SelectField({ label, fieldKey, value, options = [], onChange, onFocus, 
 
 function SplitPaymentModal({ item, refs, onClose, onSave }) {
   const accountTypes = refs.account_types || []
-  const [form, setForm] = useState({ mode: 'count', count: '', payment_amount: '', start_date: '', period_unit: '', period_value: '', percentage_parts: [{ percent: '', account_type: '', planned_date: '' }, { percent: '', account_type: '', planned_date: '' }] })
+  const [form, setForm] = useState({ mode: 'count', count: '', payment_amount: '', start_date: item.planned_payment_date || '', period_unit: '', period_value: '', percentage_parts: [{ percent: '', account_type: '', planned_date: '' }, { percent: '', account_type: '', planned_date: '' }] })
   const [saving, setSaving] = useState(false)
   const preview = useMemo(() => buildSplitPreview(Number(item.amount), form), [item.amount, form])
   const update = (key, value) => setForm(current => ({ ...current, [key]: value }))
@@ -522,7 +522,7 @@ function SplitPaymentModal({ item, refs, onClose, onSave }) {
     if (preview.error || saving) return
     setSaving(true)
     try {
-      await onSave({ ...form, count: Number(form.count), payment_amount: form.mode === 'amount' ? Number(form.payment_amount) : null, period_value: Number(form.period_value), percentage_parts: form.mode === 'percentage' ? form.percentage_parts.map(part => ({ ...part, percent: Number(part.percent) })) : null })
+      await onSave({ ...form, count: Number(form.count), payment_amount: form.mode === 'amount' ? Number(form.payment_amount) : null, period_unit: form.mode === 'amount' ? form.period_unit : '', period_value: form.mode === 'amount' ? Number(form.period_value) : 0, percentage_parts: form.mode === 'percentage' ? form.percentage_parts.map(part => ({ ...part, percent: Number(part.percent) })) : null })
     } finally { setSaving(false) }
   }
   return <div className="modal-backdrop"><div className="modal split-payment-modal">
@@ -542,10 +542,15 @@ function SplitPaymentModal({ item, refs, onClose, onSave }) {
         </div>)}</div>
         <button type="button" className="split-percentage-add" onClick={addPercentagePart} disabled={form.percentage_parts.length >= 60}><Plus size={16}/>Добавить долю</button>
       </div> : <div className="split-settings-grid">
-        {form.mode === 'count' ? <label className="field"><span>Количество платежей</span><input type="number" min="2" max="60" value={form.count} onChange={event => update('count', event.target.value)}/></label> : <label className="field"><span>Сумма одного платежа, ₽</span><input type="number" min="0.01" step="0.01" value={form.payment_amount} onChange={event => update('payment_amount', event.target.value)} placeholder="Например, 50 000"/></label>}
-        <label className="field"><span>Дата первого платежа</span><DateInput value={form.start_date} onChange={value => update('start_date', value)} aria-label="Дата первого платежа"/></label>
-        <label className="field"><span>Повторять каждые</span><input type="number" min="1" max="365" value={form.period_value} onChange={event => update('period_value', event.target.value)}/></label>
-        <label className="field"><span>Период</span><select value={form.period_unit} onChange={event => update('period_unit', event.target.value)}><option value="">Выберите</option><option value="month">Месяц</option><option value="week">Неделя</option><option value="day">День</option></select></label>
+        {form.mode === 'count' ? <>
+          <label className="field"><span>Количество платежей</span><input type="number" min="2" max="60" value={form.count} onChange={event => update('count', event.target.value)}/></label>
+          <label className="field"><span>Плановая дата платежей</span><DateInput value={form.start_date} onChange={value => update('start_date', value)} aria-label="Плановая дата платежей"/></label>
+        </> : <>
+          <label className="field"><span>Сумма одного платежа, ₽</span><input type="number" min="0.01" step="0.01" value={form.payment_amount} onChange={event => update('payment_amount', event.target.value)} placeholder="Например, 50 000"/></label>
+          <label className="field"><span>Дата первого платежа</span><DateInput value={form.start_date} onChange={value => update('start_date', value)} aria-label="Дата первого платежа"/></label>
+          <label className="field"><span>Повторять каждые</span><input type="number" min="1" max="365" value={form.period_value} onChange={event => update('period_value', event.target.value)}/></label>
+          <label className="field"><span>Период</span><select value={form.period_unit} onChange={event => update('period_unit', event.target.value)}><option value="">Выберите</option><option value="month">Месяц</option><option value="week">Неделя</option><option value="day">День</option></select></label>
+        </>}
       </div>}
       {preview.error ? <div className="split-error">{preview.error}</div> : <div className="split-preview">
         <div className="split-preview-head"><div><strong>Предварительный график</strong><span>{preview.items.length} {paymentWord(preview.items.length)}</span></div><div><span>Итого</span><strong>{money(preview.total)}</strong></div></div>
@@ -661,10 +666,10 @@ function buildSplitPreview(amount, form) {
     if (items.some(part => part.amount < 0.01)) return { error: 'Одна из долей получается меньше одной копейки.', items: [], total: 0, percentageTotal: 100 }
     return { items, total: items.reduce((sum, part) => sum + part.amount, 0), hasRemainder: allocated.some(part => part.remainder !== 0n), error: '', percentageTotal: 100 }
   }
+  if (!form.start_date || !/^\d{4}-\d{2}-\d{2}$/.test(form.start_date)) return { error: form.mode === 'count' ? 'Выберите плановую дату платежей.' : 'Выберите дату первого платежа.', items: [], total: 0 }
   const interval = Number(form.period_value)
-  if (!form.start_date || !/^\d{4}-\d{2}-\d{2}$/.test(form.start_date)) return { error: 'Выберите дату первого платежа.', items: [], total: 0 }
-  if (!Number.isInteger(interval) || interval < 1 || interval > 365) return { error: 'Период должен быть целым числом от 1 до 365.', items: [], total: 0 }
-  if (!['month', 'week', 'day'].includes(form.period_unit)) return { error: 'Выберите период повторения.', items: [], total: 0 }
+  if (form.mode === 'amount' && (!Number.isInteger(interval) || interval < 1 || interval > 365)) return { error: 'Период должен быть целым числом от 1 до 365.', items: [], total: 0 }
+  if (form.mode === 'amount' && !['month', 'week', 'day'].includes(form.period_unit)) return { error: 'Выберите период повторения.', items: [], total: 0 }
   let amounts = []
   if (form.mode === 'count') {
     const count = Number(form.count)
@@ -680,7 +685,7 @@ function buildSplitPreview(amount, form) {
     let remainder = totalCents
     while (remainder > 0) { const part = Math.min(paymentCents, remainder); amounts.push(part); remainder -= part }
   }
-  const items = amounts.map((cents, index) => ({ number: index + 1, date: splitDate(form.start_date, index, form.period_unit, interval), amount: cents / 100 }))
+  const items = amounts.map((cents, index) => ({ number: index + 1, date: form.mode === 'count' ? form.start_date : splitDate(form.start_date, index, form.period_unit, interval), amount: cents / 100 }))
   return { items, total: amounts.reduce((sum, cents) => sum + cents, 0) / 100, hasRemainder: amounts.length > 1 && amounts.at(-1) !== amounts[0], error: '' }
 }
 
