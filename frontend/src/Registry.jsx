@@ -5,7 +5,7 @@ import { DateInput, money, PageHeader, roleLabel, shortDate } from './App'
 import { BLANK_ACCOUNT_TYPE_FILTER } from './filterValues'
 import { withDerivedObligationValues } from './obligationValues'
 import { getRegistryStickyOffsets } from './registryColumns'
-import { canStartRegistryDrag, getRegistryDragScroll, hasRegistryDragStarted } from './registryDragScroll'
+import { canContinueRegistryDrag, canStartRegistryDrag, getRegistryDragScroll, hasRegistryDragStarted } from './registryDragScroll'
 import usePresence from './usePresence'
 
 const emptyFilters = { q: '', counterparty: [], account_type: '', legal_entity: '', cost_category: '', priority: '', responsible: '', status: '', urgency: '', entry_date: '', document_date: '', planned_payment_date: '', approval_date: '', actual_payment_date: '', document_from: '', document_to: '', overdue: '' }
@@ -183,7 +183,7 @@ export default function Registry({ user, notify }) {
   }
   const moveTableDrag = event => {
     const drag = tableDragRef.current
-    if (!drag || drag.pointerId !== event.pointerId) return
+    if (!drag || drag.pointerId !== event.pointerId || !canContinueRegistryDrag(event.buttons)) return
     if (!drag.dragging && !hasRegistryDragStarted(drag.startX, drag.startY, event.clientX, event.clientY)) return
     if (!drag.dragging) {
       drag.dragging = true
