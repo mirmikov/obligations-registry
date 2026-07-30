@@ -78,7 +78,7 @@ function PaymentPrintReport({ data, filters }) {
 }
 
 function paymentValue(item, key) {
-  if (['planned_payment_date', 'approval_date', 'actual_payment_date'].includes(key)) return shortDate(item[key])
+  if (key === 'planned_payment_date') return shortDate(item[key])
   if (key === 'amount') return money(item[key])
   return item[key] || '—'
 }

@@ -3,10 +3,11 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import { paymentColumns, paymentScreenColumns, paymentUpdatePayload } from './paymentsView.js'
 
-test('screen places actual payment date before approval date without changing print columns', () => {
+test('screen places actual payment date before status without approval date', () => {
   assert.deepEqual(paymentScreenColumns.slice(0, paymentColumns.length), paymentColumns)
-  assert.deepEqual(paymentScreenColumns.slice(-3).map(column => column.key), ['status', 'actual_payment_date', 'approval_date'])
-  assert.ok(paymentScreenColumns.findIndex(column => column.key === 'actual_payment_date') < paymentScreenColumns.findIndex(column => column.key === 'approval_date'))
+  assert.deepEqual(paymentScreenColumns.slice(-2).map(column => column.key), ['actual_payment_date', 'status'])
+  assert.ok(paymentScreenColumns.findIndex(column => column.key === 'actual_payment_date') < paymentScreenColumns.findIndex(column => column.key === 'status'))
+  assert.equal(paymentScreenColumns.some(column => column.key === 'approval_date'), false)
   assert.equal(paymentColumns.some(column => ['status', 'actual_payment_date', 'approval_date'].includes(column.key)), false)
 })
 
