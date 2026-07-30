@@ -1,4 +1,4 @@
-export const REGISTRY_DRAG_THRESHOLD = 5
+export const REGISTRY_DRAG_THRESHOLD = 10
 
 export function canStartRegistryDrag(button, isPrimary = true) {
   return button === 0 && isPrimary
