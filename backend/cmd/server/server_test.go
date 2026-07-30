@@ -532,18 +532,17 @@ func TestObligationNormalizeMarksActualPaymentAsPaid(t *testing.T) {
 	}
 }
 
-func TestBuildPaymentPlanKeepsExactTotalAndMonthlyAnchor(t *testing.T) {
+func TestBuildPaymentPlanEqualPartsKeepsExactTotalWithoutPeriod(t *testing.T) {
 	start := time.Date(2027, time.January, 31, 0, 0, 0, 0, time.UTC)
-	plan, err := buildPaymentPlan(10000, start, paymentSplitInput{Mode: "count", Count: 3, PeriodUnit: "month", PeriodValue: 1})
+	plan, err := buildPaymentPlan(10000, start, paymentSplitInput{Mode: "count", Count: 3})
 	if err != nil {
 		t.Fatal(err)
 	}
 	wantCents := []int64{3333, 3333, 3334}
-	wantDates := []string{"2027-01-31", "2027-02-28", "2027-03-31"}
 	var total int64
 	for index, installment := range plan {
-		if installment.cents != wantCents[index] || installment.Date != wantDates[index] {
-			t.Fatalf("installment %d = %#v, want %d cents on %s", index+1, installment, wantCents[index], wantDates[index])
+		if installment.cents != wantCents[index] || installment.Date != "2027-01-31" {
+			t.Fatalf("installment %d = %#v, want %d cents on shared date", index+1, installment, wantCents[index])
 		}
 		total += installment.cents
 	}
