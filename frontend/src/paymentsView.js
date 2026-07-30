@@ -9,9 +9,8 @@ export const paymentColumns = [
 
 export const paymentScreenColumns = [
   ...paymentColumns,
-  { key: 'status', label: 'Статус', interactive: true },
   { key: 'actual_payment_date', label: 'Фактическая дата оплаты', interactive: true },
-  { key: 'approval_date', label: 'Дата утверждения' },
+  { key: 'status', label: 'Статус', interactive: true },
 ]
 
 export function paymentUpdatePayload(item, field, value) {
