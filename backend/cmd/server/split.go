@@ -21,6 +21,7 @@ type paymentSplitInput struct {
 	Count           int                          `json:"count"`
 	PaymentAmount   *json.Number                 `json:"payment_amount"`
 	StartDate       string                       `json:"start_date"`
+	PaymentDates    []string                     `json:"payment_dates"`
 	PeriodUnit      string                       `json:"period_unit"`
 	PeriodValue     int                          `json:"period_value"`
 	PercentageParts []paymentSplitPercentagePart `json:"percentage_parts"`
@@ -216,7 +217,16 @@ func buildPaymentPlan(totalCents int64, startDate time.Time, input paymentSplitI
 	plan := make([]paymentInstallment, 0, len(amounts))
 	for index, cents := range amounts {
 		date := startDate
-		if input.Mode == "amount" {
+		if (input.Mode == "count" || input.Mode == "") && len(input.PaymentDates) > 0 {
+			if len(input.PaymentDates) != len(amounts) {
+				return nil, errors.New("Количество дат в графике должно совпадать с количеством платежей")
+			}
+			parsedDate, parseErr := time.Parse("2006-01-02", input.PaymentDates[index])
+			if parseErr != nil {
+				return nil, fmt.Errorf("Некорректная плановая дата платежа %d", index+1)
+			}
+			date = parsedDate
+		} else if input.Mode == "amount" {
 			date = installmentDate(startDate, index, input.PeriodUnit, input.PeriodValue)
 		}
 		plan = append(plan, paymentInstallment{Number: index + 1, Date: date.Format("2006-01-02"), Amount: float64(cents) / 100, cents: cents})

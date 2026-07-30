@@ -532,22 +532,33 @@ func TestObligationNormalizeMarksActualPaymentAsPaid(t *testing.T) {
 	}
 }
 
-func TestBuildPaymentPlanEqualPartsKeepsExactTotalWithoutPeriod(t *testing.T) {
+func TestBuildPaymentPlanEqualPartsKeepsExactTotalWithCustomDates(t *testing.T) {
 	start := time.Date(2027, time.January, 31, 0, 0, 0, 0, time.UTC)
-	plan, err := buildPaymentPlan(10000, start, paymentSplitInput{Mode: "count", Count: 3})
+	wantDates := []string{"2027-01-31", "2027-02-15", "2027-03-08"}
+	plan, err := buildPaymentPlan(10000, start, paymentSplitInput{Mode: "count", Count: 3, PaymentDates: wantDates})
 	if err != nil {
 		t.Fatal(err)
 	}
 	wantCents := []int64{3333, 3333, 3334}
 	var total int64
 	for index, installment := range plan {
-		if installment.cents != wantCents[index] || installment.Date != "2027-01-31" {
-			t.Fatalf("installment %d = %#v, want %d cents on shared date", index+1, installment, wantCents[index])
+		if installment.cents != wantCents[index] || installment.Date != wantDates[index] {
+			t.Fatalf("installment %d = %#v, want %d cents on %s", index+1, installment, wantCents[index], wantDates[index])
 		}
 		total += installment.cents
 	}
 	if total != 10000 {
 		t.Fatalf("plan total = %d cents, want 10000", total)
+	}
+}
+
+func TestBuildPaymentPlanEqualPartsValidatesCustomDates(t *testing.T) {
+	start := time.Date(2027, time.January, 31, 0, 0, 0, 0, time.UTC)
+	if _, err := buildPaymentPlan(10000, start, paymentSplitInput{Mode: "count", Count: 3, PaymentDates: []string{"2027-01-31"}}); err == nil || !strings.Contains(err.Error(), "Количество дат") {
+		t.Fatalf("date count error = %v", err)
+	}
+	if _, err := buildPaymentPlan(10000, start, paymentSplitInput{Mode: "count", Count: 2, PaymentDates: []string{"2027-01-31", "not-a-date"}}); err == nil || !strings.Contains(err.Error(), "дата платежа 2") {
+		t.Fatalf("invalid date error = %v", err)
 	}
 }
 
