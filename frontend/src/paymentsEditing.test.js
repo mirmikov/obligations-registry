@@ -3,10 +3,11 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import { paymentColumns, paymentScreenColumns, paymentUpdatePayload } from './paymentsView.js'
 
-test('screen adds editable status and actual payment date without changing print columns', () => {
+test('screen places actual payment date before approval date without changing print columns', () => {
   assert.deepEqual(paymentScreenColumns.slice(0, paymentColumns.length), paymentColumns)
-  assert.deepEqual(paymentScreenColumns.slice(-2).map(column => column.key), ['status', 'actual_payment_date'])
-  assert.equal(paymentColumns.some(column => ['status', 'actual_payment_date'].includes(column.key)), false)
+  assert.deepEqual(paymentScreenColumns.slice(-3).map(column => column.key), ['status', 'actual_payment_date', 'approval_date'])
+  assert.ok(paymentScreenColumns.findIndex(column => column.key === 'actual_payment_date') < paymentScreenColumns.findIndex(column => column.key === 'approval_date'))
+  assert.equal(paymentColumns.some(column => ['status', 'actual_payment_date', 'approval_date'].includes(column.key)), false)
 })
 
 test('payment update payload preserves obligation fields and excludes read-only metadata', () => {
@@ -24,12 +25,18 @@ test('payment update payload preserves obligation fields and excludes read-only 
   }
   const payload = paymentUpdatePayload(item, 'actual_payment_date', '2026-07-29')
   assert.equal(payload.actual_payment_date, '2026-07-29')
-  assert.equal(payload.status, 'К оплате')
+  assert.equal(payload.status, 'Оплачено')
   assert.equal(payload.split_group_id, 'split-1')
   assert.equal(payload.installment_number, 2)
   assert.equal('id' in payload, false)
   assert.equal('created_at' in payload, false)
   assert.equal('overdue' in payload, false)
+})
+
+test('setting actual payment date explicitly marks payment as paid', () => {
+  const payload = paymentUpdatePayload({ id: 7, status: 'К оплате', actual_payment_date: '' }, 'actual_payment_date', '2026-07-30')
+  assert.equal(payload.actual_payment_date, '2026-07-30')
+  assert.equal(payload.status, 'Оплачено')
 })
 
 test('print report remains bound only to original paymentColumns', () => {
