@@ -11,11 +11,14 @@ export const paymentScreenColumns = [
   ...paymentColumns,
   { key: 'status', label: 'Статус', interactive: true },
   { key: 'actual_payment_date', label: 'Фактическая дата оплаты', interactive: true },
+  { key: 'approval_date', label: 'Дата утверждения' },
 ]
 
 export function paymentUpdatePayload(item, field, value) {
   const { id, created_at, updated_at, overdue, due_soon, ...payload } = item
-  return { ...payload, [field]: value }
+  const updated = { ...payload, [field]: value }
+  if (field === 'actual_payment_date' && value) updated.status = 'Оплачено'
+  return updated
 }
 
 export function localTodayISO(date = new Date()) {
