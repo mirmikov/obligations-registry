@@ -179,7 +179,6 @@ export default function Registry({ user, notify }) {
       scrollTop: event.currentTarget.scrollTop,
       dragging: false,
     }
-    event.currentTarget.setPointerCapture?.(event.pointerId)
   }
   const moveTableDrag = event => {
     const drag = tableDragRef.current
@@ -188,6 +187,7 @@ export default function Registry({ user, notify }) {
     if (!drag.dragging) {
       drag.dragging = true
       event.currentTarget.classList.add('is-drag-panning')
+      event.currentTarget.setPointerCapture?.(event.pointerId)
     }
     const next = getRegistryDragScroll(drag.scrollLeft, drag.scrollTop, drag.startX, drag.startY, event.clientX, event.clientY)
     event.preventDefault()

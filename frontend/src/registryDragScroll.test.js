@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import { canContinueRegistryDrag, canStartRegistryDrag, getRegistryDragScroll, hasRegistryDragStarted } from './registryDragScroll.js'
+
+const registrySource = readFileSync(new URL('./Registry.jsx', import.meta.url), 'utf8')
 
 test('registry drag starts only from the primary left mouse button', () => {
   assert.equal(canStartRegistryDrag(0, true), true)
@@ -17,8 +20,15 @@ test('registry drag continues only while the left mouse button remains pressed',
 })
 
 test('registry drag waits for deliberate pointer movement', () => {
-  assert.equal(hasRegistryDragStarted(100, 100, 103, 103), false)
-  assert.equal(hasRegistryDragStarted(100, 100, 105, 100), true)
+  assert.equal(hasRegistryDragStarted(100, 100, 109, 100), false)
+  assert.equal(hasRegistryDragStarted(100, 100, 110, 100), true)
+})
+
+test('registry keeps pointer capture away from ordinary cell clicks', () => {
+  const pointerDown = registrySource.slice(registrySource.indexOf('const startTableDrag'), registrySource.indexOf('const moveTableDrag'))
+  const dragActivation = registrySource.slice(registrySource.indexOf('if (!drag.dragging) {'), registrySource.indexOf('const next = getRegistryDragScroll'))
+  assert.equal(pointerDown.includes('setPointerCapture'), false)
+  assert.match(dragActivation, /drag\.dragging = true[\s\S]*setPointerCapture/)
 })
 
 test('registry drag scrolls horizontally, vertically and diagonally', () => {
