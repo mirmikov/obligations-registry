@@ -1,12 +1,19 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { canStartRegistryDrag, getRegistryDragScroll, hasRegistryDragStarted } from './registryDragScroll.js'
+import { canContinueRegistryDrag, canStartRegistryDrag, getRegistryDragScroll, hasRegistryDragStarted } from './registryDragScroll.js'
 
 test('registry drag starts only from the primary left mouse button', () => {
   assert.equal(canStartRegistryDrag(0, true), true)
   assert.equal(canStartRegistryDrag(1, true), false)
   assert.equal(canStartRegistryDrag(2, true), false)
   assert.equal(canStartRegistryDrag(0, false), false)
+})
+
+test('registry drag continues only while the left mouse button remains pressed', () => {
+  assert.equal(canContinueRegistryDrag(1), true)
+  assert.equal(canContinueRegistryDrag(3), true)
+  assert.equal(canContinueRegistryDrag(0), false)
+  assert.equal(canContinueRegistryDrag(2), false)
 })
 
 test('registry drag waits for deliberate pointer movement', () => {
