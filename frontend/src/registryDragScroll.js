@@ -4,6 +4,10 @@ export function canStartRegistryDrag(button, isPrimary = true) {
   return button === 0 && isPrimary
 }
 
+export function canContinueRegistryDrag(buttons) {
+  return (buttons & 1) === 1
+}
+
 export function hasRegistryDragStarted(startX, startY, currentX, currentY) {
   return Math.hypot(currentX - startX, currentY - startY) >= REGISTRY_DRAG_THRESHOLD
 }
