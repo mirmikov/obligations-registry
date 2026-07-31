@@ -4,11 +4,17 @@ import fs from 'node:fs'
 import { paymentColumns, paymentScreenColumns, paymentUpdatePayload } from './paymentsView.js'
 
 test('screen places actual payment date before status without approval date', () => {
-  assert.deepEqual(paymentScreenColumns.slice(0, paymentColumns.length), paymentColumns)
   assert.deepEqual(paymentScreenColumns.slice(-2).map(column => column.key), ['actual_payment_date', 'status'])
   assert.ok(paymentScreenColumns.findIndex(column => column.key === 'actual_payment_date') < paymentScreenColumns.findIndex(column => column.key === 'status'))
   assert.equal(paymentScreenColumns.some(column => column.key === 'approval_date'), false)
   assert.equal(paymentColumns.some(column => ['status', 'actual_payment_date', 'approval_date'].includes(column.key)), false)
+})
+
+test('screen shows document date instead of payment due date without changing print columns', () => {
+  assert.equal(paymentScreenColumns.some(column => column.key === 'planned_payment_date'), false)
+  assert.equal(paymentScreenColumns.find(column => column.key === 'document_date')?.label, 'Дата документа')
+  assert.equal(paymentColumns.some(column => column.key === 'document_date'), false)
+  assert.equal(paymentColumns.find(column => column.key === 'planned_payment_date')?.label, 'Срок оплаты')
 })
 
 test('payment update payload preserves obligation fields and excludes read-only metadata', () => {
