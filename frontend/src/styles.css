@@ -518,6 +518,80 @@ html[data-theme="dark"] ::-webkit-scrollbar{width:11px;height:11px}
 html[data-theme="dark"] ::-webkit-scrollbar-track{background:#101a1d}
 html[data-theme="dark"] ::-webkit-scrollbar-thumb{background:#385053;border:3px solid #101a1d;border-radius:8px}
 
+/* Dark coverage for reports, role tables and intentionally tinted controls. */
+html[data-theme="dark"] .credits-page{background:linear-gradient(180deg,#0e171a 0,#101c1f 440px,#0e171a 100%)}
+html[data-theme="dark"] .credits-toolbar{background:#162326;border-color:#2d4042;box-shadow:var(--shadow)}
+html[data-theme="dark"] .credits-toolbar label>span{color:#94a8a5}
+html[data-theme="dark"] .credits-toolbar select,html[data-theme="dark"] .credits-toolbar .date-input-wrap input{background:#101d20;border-color:#34494b;color:#e0ebe8}
+html[data-theme="dark"] .credits-source-note{background:#1d332f;color:#a8c8c0}
+html[data-theme="dark"] .credits-source-note span{color:#8fa7a2}
+html[data-theme="dark"] .report-kpi{background:#162326;border-color:#2d4042;box-shadow:var(--shadow)}
+html[data-theme="dark"] .report-kpi span,html[data-theme="dark"] .report-kpi small{color:#91a5a2}
+html[data-theme="dark"] .report-kpi strong{color:#edf4f2}
+html[data-theme="dark"] .report-kpi-icon{background:#203a34;color:#73c1ab}
+html[data-theme="dark"] .report-kpi.amber .report-kpi-icon{background:#3a2d1d;color:#e6ad65}
+html[data-theme="dark"] .report-kpi.red .report-kpi-icon{background:#3a2422;color:#ef8e7c}
+html[data-theme="dark"] .report-kpi.violet .report-kpi-icon{background:#30273b;color:#c3a3dc}
+html[data-theme="dark"] .report-kpi.mint .report-kpi-icon{background:#1d392f;color:#78c39f}
+html[data-theme="dark"] .creditor-card{background:#19282b;border-color:#304346;color:#dce8e5}
+html[data-theme="dark"] .creditor-card:hover,html[data-theme="dark"] .creditor-card.active{background:#203135;border-color:var(--creditor-color);box-shadow:0 5px 18px rgba(0,0,0,.3)}
+html[data-theme="dark"] .creditor-card-head span,html[data-theme="dark"] .creditor-card-foot b{color:#dbe7e4}
+html[data-theme="dark"] .creditor-card-foot{color:#91a5a2}
+html[data-theme="dark"] .creditor-share{background:#2c3f41}
+html[data-theme="dark"] .report-switch{background:#101d20}
+html[data-theme="dark"] .report-switch button{color:#9aadaa}
+html[data-theme="dark"] .report-switch button.active{background:#27413c;color:#91d2c0;box-shadow:0 2px 8px rgba(0,0,0,.3)}
+html[data-theme="dark"] .credits-chart-legend,html[data-theme="dark"] .credits-month-value,html[data-theme="dark"] .credits-month small{color:#91a5a2}
+html[data-theme="dark"] .credits-month-bar{background:#2a3e40}
+html[data-theme="dark"] .clear-creditor{background:#203a34;color:#8bcfbb}
+html[data-theme="dark"] .schedule-period{background:#162326;border-color:#304346}
+html[data-theme="dark"] .schedule-period>header{background:#1b2c2f;border-color:#304346}
+html[data-theme="dark"] .schedule-period>header span,html[data-theme="dark"] .schedule-date span{color:#91a4a2}
+html[data-theme="dark"] .schedule-period>header strong,html[data-theme="dark"] .schedule-period>header>b,html[data-theme="dark"] .schedule-date strong,html[data-theme="dark"] .schedule-payment strong,html[data-theme="dark"] .schedule-payment>b,html[data-theme="dark"] .schedule-day-total strong{color:#dce8e5}
+html[data-theme="dark"] .schedule-day,html[data-theme="dark"] .schedule-date,html[data-theme="dark"] .schedule-payment+.schedule-payment{border-color:#2c3f41}
+html[data-theme="dark"] .schedule-day.overdue{background:#302120}
+html[data-theme="dark"] .schedule-day-total{background:#19282b;border-color:#2c3f41}
+html[data-theme="dark"] .schedule-day-total span,html[data-theme="dark"] .schedule-day-total small,html[data-theme="dark"] .schedule-payment span{color:#91a4a2}
+html[data-theme="dark"] .schedule-more{background:#192a2d;border-color:#36504c;color:#8bcab8}
+html[data-theme="dark"] .schedule-empty strong,html[data-theme="dark"] .credits-empty strong{color:#cedbd8}
+html[data-theme="dark"] .credits-skeleton i{background:linear-gradient(90deg,#213235,#2b3e40,#213235);background-size:200% 100%}
+
+html[data-theme="dark"] .simple-table-head{background:#1b2b2e;color:#a5b7b4;border-color:#304346}
+html[data-theme="dark"] .simple-table-row{border-color:#2c3f41;color:#dce7e4}
+html[data-theme="dark"] .simple-table-row small{color:#8fa3a0}
+html[data-theme="dark"] .simple-table-row button{background:#223538;color:#a9c5bf}
+html[data-theme="dark"] .simple-table-row button:hover{background:#2a423d;color:#8ed1be}
+html[data-theme="dark"] .role{background:#213a34;color:#8dceb9}
+html[data-theme="dark"] .role-editor{background:#3b2e20;color:#e2b373}
+html[data-theme="dark"] .role-viewer{background:#29323b;color:#afc0d1}
+html[data-theme="dark"] .role-developer{background:#26344a;color:#abc6ee}
+html[data-theme="dark"] .user-avatar.developer{background:#26344a;color:#abc6ee}
+html[data-theme="dark"] .settings-nav i{background:#26383a;color:#b9cac6}
+
+html[data-theme="dark"] .registry-font-button.active{background:#234039;border-color:#4e8778;color:#8fd0bd}
+html[data-theme="dark"] .registry-page.is-table-fullscreen .registry-fullscreen-controls .registry-font-button{background:#19282b}
+html[data-theme="dark"] .registry-page.is-table-fullscreen .registry-fullscreen-controls .registry-font-button.active{background:#234039}
+html[data-theme="dark"] .header-filter-trigger:hover,html[data-theme="dark"] .header-filter.is-open .header-filter-trigger,html[data-theme="dark"] .header-filter.has-value .header-filter-trigger{background:#29413c;color:#83cbb7;border-color:#416f64}
+html[data-theme="dark"] .status-paid{background:#1f3b31;color:#84c8ad}
+html[data-theme="dark"] .status-to-pay{background:#352c40;color:#c8a9dc}
+html[data-theme="dark"] .status-registered{background:#273642;color:#a9c4d6}
+html[data-theme="dark"] .status-partial{background:#3a2d27;color:#d8aa92}
+html[data-theme="dark"] .status-cancelled{background:#303638;color:#b6c0c0}
+html[data-theme="dark"] .row-actions button,html[data-theme="dark"] .reference-list button{background:#223538;color:#a8c4be}
+html[data-theme="dark"] .row-actions .info-button{background:#263449;color:#a9c2e2}
+html[data-theme="dark"] .row-actions .danger-button,html[data-theme="dark"] .reference-list .reference-delete{background:#3a2624;color:#e89a8c}
+html[data-theme="dark"] .executive-period-overdue .executive-period-icon{background:#3a2422;color:#ef8e7c}
+html[data-theme="dark"] .executive-period-week .executive-period-icon{background:#3a2e1f;color:#e3ad64}
+html[data-theme="dark"] .executive-period-month .executive-period-icon{background:#1e3933;color:#7cc9b3}
+html[data-theme="dark"] .executive-status{background:#203a34;color:#89cdb9}
+html[data-theme="dark"] .executive-status.is-payable{background:#3a2d1e;color:#e4b16f}
+html[data-theme="dark"] .audit-icon,html[data-theme="dark"] .audit-icon.action-update{background:#203a34;color:#82cbb6}
+html[data-theme="dark"] .audit-icon.action-delete{background:#3a2523;color:#e99383}
+html[data-theme="dark"] .audit-icon.action-import{background:#293441;color:#abc0d4}
+html[data-theme="dark"] .kpi.danger .kpi-icon{background:#3a2422;color:#ef8e7c}
+html[data-theme="dark"] .kpi.warning .kpi-icon{background:#3a2d1d;color:#e6ad65}
+html[data-theme="dark"] .kpi.mint .kpi-icon{background:#1d392f;color:#78c39f}
+
 @media print{
   html[data-theme="dark"]{color-scheme:light;--ink:#18363d;--paper:#fff;--muted:#718186;background:#fff!important;color:#18363d!important}
   html[data-theme="dark"] body,html[data-theme="dark"] #root,html[data-theme="dark"] .app-shell,html[data-theme="dark"] .main,html[data-theme="dark"] .page,html[data-theme="dark"] .modal,html[data-theme="dark"] .executive-detail-backdrop{background:#fff!important;color:#18363d!important}

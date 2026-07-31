@@ -30,3 +30,19 @@ test('chat launcher is icon-only and dark mode keeps print output light', () => 
   assert.match(css, /html\[data-theme="dark"\]/)
   assert.match(css, /@media print[\s\S]*html\[data-theme="dark"\]/)
 })
+
+test('dark theme covers report and access-management surfaces', () => {
+  const css = fs.readFileSync(new URL('./styles.css', import.meta.url), 'utf8')
+  const darkStyles = css.slice(css.indexOf('html[data-theme="dark"]'))
+  for (const selector of [
+    '.credits-toolbar',
+    '.report-kpi',
+    '.creditor-card',
+    '.schedule-period',
+    '.simple-table-head',
+    '.simple-table-row button',
+    '.settings-nav i',
+    '.registry-font-button.active',
+    '.executive-period-overdue .executive-period-icon',
+  ]) assert.ok(darkStyles.includes(`html[data-theme="dark"] ${selector}`), `missing dark selector: ${selector}`)
+})
