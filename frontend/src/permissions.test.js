@@ -37,5 +37,6 @@ test('permission groups keep an independent vertical scroll area', () => {
   assert.match(styles, /\.user-access-body\{[^}]*height:0;[^}]*min-height:0;[^}]*overflow:hidden/)
   assert.match(styles, /\.permission-editor\{[^}]*min-height:0;[^}]*overflow:hidden/)
   assert.match(styles, /\.permission-groups\{[^}]*min-height:0;[^}]*flex:1 1 auto;[^}]*overflow-y:auto/)
+  assert.match(styles, /\.permission-groups\{[^}]*grid-auto-rows:max-content/)
   assert.match(styles, /\.user-access-modal>\.modal-head,\.user-access-modal>\.modal-footer\{flex:0 0 auto\}/)
 })
