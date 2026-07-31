@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { BarChart3, BellRing, BookOpen, ChartNoAxesCombined, ChevronDown, ChevronLeft, ChevronRight, CircleDollarSign, FileClock, Landmark, LogOut, Maximize2, Menu, MessageCircle, Minus, ReceiptText, Settings, Undo2, Users, X } from 'lucide-react'
+import { BarChart3, BellRing, BookOpen, ChartNoAxesCombined, ChevronDown, ChevronLeft, ChevronRight, CircleDollarSign, FileClock, Landmark, LogOut, Maximize2, Menu, MessageCircle, Minus, ReceiptText, Settings, ShieldCheck, Undo2, Users, X } from 'lucide-react'
 import { request } from './api'
 import Dashboard from './Dashboard'
 import Registry from './Registry'
@@ -12,16 +12,17 @@ import CreditsLeasing from './CreditsLeasing'
 import Chat from './Chat'
 import ExecutiveDashboard from './ExecutiveDashboard'
 import useChatNotifications from './useChatNotifications'
+import { can, firstAllowedPage, pagePermissions } from './permissions'
 
 const nav = [
-  { id: 'dashboard', label: 'Сводка', icon: BarChart3 },
-  { id: 'executive', label: 'Панель руководителя', icon: ChartNoAxesCombined, admin: true },
-  { id: 'registry', label: 'Реестр', icon: BookOpen, children: [{ id: 'credits-leasing', label: 'Кредиты и лизинги', icon: Landmark }] },
-  { id: 'payments', label: 'К оплате', icon: CircleDollarSign },
-  { id: 'chat', label: 'Чаты', icon: MessageCircle },
-  { id: 'references', label: 'Справочники', icon: Settings, editor: true },
-  { id: 'users', label: 'Пользователи', icon: Users, admin: true },
-  { id: 'audit', label: 'Журнал действий', icon: FileClock, admin: true },
+  { id: 'dashboard', label: 'Сводка', icon: BarChart3, permission: 'dashboard.view' },
+  { id: 'executive', label: 'Панель руководителя', icon: ChartNoAxesCombined, permission: 'executive.view' },
+  { id: 'registry', label: 'Реестр', icon: BookOpen, permission: 'registry.view', children: [{ id: 'credits-leasing', label: 'Кредиты и лизинги', icon: Landmark, permission: 'credits.view' }] },
+  { id: 'payments', label: 'К оплате', icon: CircleDollarSign, permission: 'payments.view' },
+  { id: 'chat', label: 'Чаты', icon: MessageCircle, permission: 'chat.view' },
+  { id: 'references', label: 'Справочники', icon: Settings, permission: 'references.view' },
+  { id: 'users', label: 'Пользователи', icon: Users, permission: 'users.view' },
+  { id: 'audit', label: 'Журнал действий', icon: FileClock, permission: 'audit.view' },
 ]
 
 export default function App() {
@@ -36,10 +37,11 @@ export default function App() {
   const [undoState, setUndoState] = useState({ available: false, remaining: 0, loading: true })
   const [undoing, setUndoing] = useState(false)
   const [dataRevision, setDataRevision] = useState(0)
+  const [maintenance, setMaintenance] = useState({ active: false, message: 'Ведется обновление программы' })
 
   const enterWorkspace = (nextUser, state = {}) => {
     setUser(nextUser)
-    setPage(isAllowedPage(state.page, nextUser) ? state.page : 'dashboard')
+    setPage(isAllowedPage(state.page, nextUser) ? state.page : firstAllowedPage(nextUser))
     setRegistryOpen(state.page === 'credits-leasing')
     setCollapsed(Boolean(state.sidebar_collapsed))
     setWorkspaceReady(true)
@@ -62,19 +64,35 @@ export default function App() {
     request('/api/workspace-state', { method: 'PUT', body: JSON.stringify({ page, sidebar_collapsed: collapsed }), keepalive: true }).catch(() => {})
   }, [page, collapsed, user?.id, workspaceReady])
   useEffect(() => {
-    if (!user) return undefined
+    if (!user || !can(user, 'registry.view')) return undefined
     let active = true
     const load = () => request('/api/undo').then(value => { if (active) setUndoState({ ...value, loading: false }) }).catch(() => { if (active) setUndoState(current => ({ ...current, loading: false })) })
     load()
     const timer = window.setInterval(load, 3000)
     return () => { active = false; window.clearInterval(timer) }
   }, [user?.id])
+  useEffect(() => {
+    if (!user) return undefined
+    let active = true
+    const refreshSession = () => request('/api/auth/me').then(next => {
+      if (!active) return
+      setUser(next)
+      setPage(current => isAllowedPage(current, next) ? current : firstAllowedPage(next))
+    }).catch(() => {})
+    const refreshStatus = () => request('/api/system/status').then(result => {
+      if (active) setMaintenance(result.maintenance || { active: false, message: 'Ведется обновление программы' })
+    }).catch(() => {})
+    refreshStatus()
+    const sessionTimer = window.setInterval(refreshSession, 15000)
+    const statusTimer = window.setInterval(refreshStatus, 10000)
+    return () => { active = false; window.clearInterval(sessionTimer); window.clearInterval(statusTimer) }
+  }, [user?.id])
 
   const notify = (message, type = 'success') => {
     setToast({ message, type }); window.setTimeout(() => setToast(null), 3500)
   }
-  const openChat = conversationID => { setChatTarget(conversationID || null); setPage('chat') }
-  const chatNotifications = useChatNotifications({ user, page, onOpenChat: openChat, notify })
+  const openChat = conversationID => { if (!can(user, 'chat.view')) return; setChatTarget(conversationID || null); setPage('chat') }
+  const chatNotifications = useChatNotifications({ user: can(user, 'chat.view') ? user : null, page, onOpenChat: openChat, notify })
   const logout = () => { localStorage.removeItem('registry_token'); setUser(null); setWorkspaceReady(false) }
   const undoLast = async () => {
     if (!undoState.available || undoing) return
@@ -88,34 +106,43 @@ export default function App() {
       setUndoState({ ...next, loading: false })
     } catch (error) { notify(error.message, 'error') } finally { setUndoing(false) }
   }
+  const toggleMaintenance = async () => {
+    try {
+      const result = await request('/api/system/maintenance', { method: 'PUT', body: JSON.stringify({ active: !maintenance.active }) })
+      setMaintenance(result.maintenance)
+      notify(result.maintenance.active ? 'Баннер обновления включён' : 'Баннер обновления выключен')
+    } catch (error) { notify(error.message, 'error') }
+  }
   if (checking) return <div className="splash"><ReceiptText size={42}/><span>Загружаем реестр…</span></div>
   if (!user) return <Login onLogin={enterWorkspace} />
 
   const pages = {
     dashboard: <Dashboard key={`dashboard-${dataRevision}`} notify={notify} />,
-    executive: <ExecutiveDashboard key={`executive-${dataRevision}`} notify={notify} />,
-    registry: <Registry key={`registry-${dataRevision}`} user={user} notify={notify} />,
+    executive: <ExecutiveDashboard key={`executive-${dataRevision}`} user={user} notify={notify} />,
+    registry: <Registry key={`registry-${dataRevision}`} user={user} notify={notify} maintenance={maintenance} onToggleMaintenance={toggleMaintenance} />,
     'credits-leasing': <CreditsLeasing key={`credits-${dataRevision}`} notify={notify} />,
     payments: <Payments key={`payments-${dataRevision}`} user={user} notify={notify} />,
     chat: <Chat user={user} notify={notify} initialConversationID={chatTarget} notificationPermission={chatNotifications.permission} onEnableNotifications={chatNotifications.requestPermission} />,
-    references: <References key={`references-${dataRevision}`} notify={notify} />,
-    users: <UsersPage key={`users-${dataRevision}`} notify={notify} />,
+    references: <References key={`references-${dataRevision}`} user={user} notify={notify} />,
+    users: <UsersPage key={`users-${dataRevision}`} user={user} notify={notify} />,
     audit: <Audit key={`audit-${dataRevision}`} notify={notify} />,
+    'access-denied': <div className="page access-denied-page"><section className="panel"><ShieldCheck size={32}/><h1>Нет доступных разделов</h1><p>Обратитесь к программисту, чтобы получить необходимые права.</p></section></div>,
   }
 
-  return <div className={`app-shell ${collapsed ? 'is-collapsed' : ''}`}>
+  return <div className={`app-shell ${collapsed ? 'is-collapsed' : ''} ${maintenance.active ? 'has-maintenance' : ''}`}>
     <aside className="sidebar">
       <div className="brand"><div className="brand-mark"><ReceiptText size={23}/></div><div><strong>ФинРеестр</strong><span>обязательства</span></div></div>
-      <nav>{nav.filter(item => isAllowedNavItem(item, user)).map(item => item.children ? <div className={`nav-group ${registryOpen ? 'is-open' : ''}`} key={item.id}><div className="nav-parent"><button className={page === item.id ? 'active' : ''} onClick={() => setPage(item.id)} title={item.label}><item.icon size={19}/><span>{item.label}</span></button><button type="button" className="nav-expand" onClick={() => setRegistryOpen(value => !value)} title={registryOpen ? 'Свернуть раздел' : 'Развернуть раздел'} aria-label={registryOpen ? 'Свернуть раздел Реестр' : 'Развернуть раздел Реестр'} aria-expanded={registryOpen}><ChevronDown size={16}/></button></div>{registryOpen && <div className="nav-children">{item.children.map(child => <button key={child.id} className={page === child.id ? 'active' : ''} onClick={() => setPage(child.id)} title={child.label}><child.icon size={17}/><span>{child.label}</span></button>)}</div>}</div> : <button key={item.id} className={page === item.id ? 'active' : ''} onClick={() => item.id === 'chat' ? openChat() : setPage(item.id)} title={item.label}><item.icon size={19}/><span>{item.label}</span>{item.id === 'chat' && chatNotifications.unread > 0 && <b className="nav-unread">{unreadLabel(chatNotifications.unread)}</b>}{item.id === 'payments' && <i/>}</button>)}</nav>
+      <nav>{nav.filter(item => isAllowedNavItem(item, user)).map(item => item.children ? <div className={`nav-group ${registryOpen ? 'is-open' : ''}`} key={item.id}><div className="nav-parent"><button className={page === item.id ? 'active' : ''} onClick={() => setPage(item.id)} title={item.label}><item.icon size={19}/><span>{item.label}</span></button><button type="button" className="nav-expand" onClick={() => setRegistryOpen(value => !value)} title={registryOpen ? 'Свернуть раздел' : 'Развернуть раздел'} aria-label={registryOpen ? 'Свернуть раздел Реестр' : 'Развернуть раздел Реестр'} aria-expanded={registryOpen}><ChevronDown size={16}/></button></div>{registryOpen && <div className="nav-children">{item.children.filter(child => can(user, child.permission)).map(child => <button key={child.id} className={page === child.id ? 'active' : ''} onClick={() => setPage(child.id)} title={child.label}><child.icon size={17}/><span>{child.label}</span></button>)}</div>}</div> : <button key={item.id} className={page === item.id ? 'active' : ''} onClick={() => item.id === 'chat' ? openChat() : setPage(item.id)} title={item.label}><item.icon size={19}/><span>{item.label}</span>{item.id === 'chat' && chatNotifications.unread > 0 && <b className="nav-unread">{unreadLabel(chatNotifications.unread)}</b>}{item.id === 'payments' && <i/>}</button>)}</nav>
       <div className="sidebar-bottom">
-        <button type="button" className={`undo-action ${undoing ? 'is-loading' : ''}`} onClick={undoLast} disabled={!undoState.available || undoState.loading || undoing || user.role === 'viewer'} title={undoState.available ? `Отменить: ${undoState.description}` : 'Нет действий для отмены'} aria-label={undoState.available ? `Отменить последнее действие: ${undoState.description}` : 'Нет действий для отмены'}><Undo2 size={18}/><span>{undoing ? 'Отменяем…' : 'Отменить действие'}</span>{undoState.remaining > 0 && <b>{Math.min(undoState.remaining, 500)}</b>}</button>
+        <button type="button" className={`undo-action ${undoing ? 'is-loading' : ''}`} onClick={undoLast} disabled={!undoState.available || undoState.loading || undoing || !can(user, 'registry.undo')} title={undoState.available ? `Отменить: ${undoState.description}` : 'Нет действий для отмены'} aria-label={undoState.available ? `Отменить последнее действие: ${undoState.description}` : 'Нет действий для отмены'}><Undo2 size={18}/><span>{undoing ? 'Отменяем…' : 'Отменить действие'}</span>{undoState.remaining > 0 && <b>{Math.min(undoState.remaining, 500)}</b>}</button>
         <button className="collapse" onClick={() => setCollapsed(v => !v)}>{collapsed ? <ChevronRight size={18}/> : <ChevronLeft size={18}/>}<span>Свернуть</span></button>
         <div className="profile"><div className="avatar">{user.name.slice(0, 1)}</div><div><strong>{user.name}</strong><span>{roleLabel(user.role)}</span></div><button onClick={logout} title="Выйти"><LogOut size={17}/></button></div>
       </div>
     </aside>
+    {maintenance.active && <div className="system-maintenance-banner" role="status">{maintenance.message || 'Ведется обновление программы'}</div>}
     <main className="main"><button className="mobile-menu" onClick={() => setCollapsed(v => !v)}><Menu/></button>{pages[page]}</main>
     <ChatNotificationStack notices={chatNotifications.notices} onDismiss={chatNotifications.dismissNotice} onOpen={openChat}/>
-    {page !== 'chat' && <ChatWidget user={user} notify={notify} unread={chatNotifications.unread} notificationPermission={chatNotifications.permission} onEnableNotifications={chatNotifications.requestPermission} onOpenFull={() => openChat()}/>}
+    {can(user, 'chat.view') && page !== 'chat' && <ChatWidget user={user} notify={notify} unread={chatNotifications.unread} notificationPermission={chatNotifications.permission} onEnableNotifications={chatNotifications.requestPermission} onOpenFull={() => openChat()}/>}
     {toast && <div className={`toast ${toast.type}`}>{toast.message}</div>}
   </div>
 }
@@ -167,9 +194,9 @@ function Login({ onLogin }) {
 }
 
 export function PageHeader({ eyebrow, title, subtitle, actions }) { return <header className="page-header"><div><p className="eyebrow">{eyebrow}</p><h1>{title}</h1>{subtitle && <span>{subtitle}</span>}</div>{actions && <div className="header-actions">{actions}</div>}</header> }
-function isAllowedNavItem(item, user) { return (!item.admin || user?.role === 'admin') && (!item.editor || user?.role === 'admin' || user?.role === 'editor') }
-function isAllowedPage(page, user) { return nav.some(item => (item.id === page || item.children?.some(child => child.id === page)) && isAllowedNavItem(item, user)) }
-export const roleLabel = role => ({ admin: 'Администратор', editor: 'Редактор', viewer: 'Зритель' }[role] || role)
+function isAllowedNavItem(item, user) { return can(user, item.permission) || item.children?.some(child => can(user, child.permission)) }
+function isAllowedPage(page, user) { return can(user, pagePermissions[page]) }
+export const roleLabel = role => ({ developer: 'Программист', admin: 'Администратор', editor: 'Редактор', viewer: 'Зритель' }[role] || role)
 export const money = value => new Intl.NumberFormat('ru-RU', {
   style: 'currency',
   currency: 'RUB',

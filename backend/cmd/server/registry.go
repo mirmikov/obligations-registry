@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -302,6 +303,12 @@ const bulkUpdateSQL = `UPDATE obligations SET
 	updated_by=$5,updated_at=now()
 	WHERE id=ANY($6)`
 
+const executiveBulkUpdateKey contextKey = "executive-bulk-update"
+
+func (a *app) executiveBulkUpdate(w http.ResponseWriter, r *http.Request) {
+	a.bulkUpdate(w, r.WithContext(context.WithValue(r.Context(), executiveBulkUpdateKey, true)))
+}
+
 func (a *app) bulkUpdate(w http.ResponseWriter, r *http.Request) {
 	var input struct {
 		IDs               []int64 `json:"ids"`
@@ -316,6 +323,12 @@ func (a *app) bulkUpdate(w http.ResponseWriter, r *http.Request) {
 	if len(input.IDs) == 0 {
 		fail(w, 400, "Не выбраны строки")
 		return
+	}
+	if executive, _ := r.Context().Value(executiveBulkUpdateKey).(bool); executive {
+		if input.ActualPaymentDate != "" || (input.Status != "" && input.Status != "К оплате" && input.Status != "Зарегистрирован") {
+			fail(w, http.StatusForbidden, "В панели руководителя можно менять только статус согласования и дату утверждения")
+			return
+		}
 	}
 	input.Status = automaticPaymentStatus(input.ActualPaymentDate, input.Status)
 	user := currentUser(r)
@@ -351,6 +364,61 @@ func (a *app) bulkUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	a.audit(r.Context(), user.ID, "bulk_update", "obligation", nil, map[string]any{"count": count})
 	writeJSON(w, 200, map[string]any{"updated": count})
+}
+
+func (a *app) updatePaymentFields(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		fail(w, 400, "Некорректный ID")
+		return
+	}
+	var input struct {
+		Status            string `json:"status"`
+		ActualPaymentDate string `json:"actual_payment_date"`
+	}
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	input.Status = automaticPaymentStatus(input.ActualPaymentDate, input.Status)
+	user := currentUser(r)
+	tx, err := a.db.BeginTx(r.Context(), nil)
+	if err != nil {
+		fail(w, 500, "Не удалось начать сохранение")
+		return
+	}
+	defer tx.Rollback()
+	beforeRow, err := snapshotOneObligation(r.Context(), tx, id)
+	if errors.Is(err, sql.ErrNoRows) {
+		fail(w, 404, "Запись не найдена")
+		return
+	}
+	if err != nil {
+		fail(w, 500, "Не удалось подготовить историю отмены")
+		return
+	}
+	before, _ := snapshotArray([]json.RawMessage{beforeRow})
+	result, err := tx.ExecContext(r.Context(), `
+		UPDATE obligations SET status=NULLIF($1,''),actual_payment_date=NULLIF($2,'')::date,updated_by=$3,updated_at=now()
+		WHERE id=$4`, input.Status, input.ActualPaymentDate, user.ID, id)
+	if err != nil {
+		fail(w, 400, "Не удалось сохранить платёж: "+err.Error())
+		return
+	}
+	if affected, _ := result.RowsAffected(); affected == 0 {
+		fail(w, 404, "Запись не найдена")
+		return
+	}
+	after, err := snapshotRows(r.Context(), tx, "obligations", []int64{id})
+	if err != nil || a.recordUndo(r.Context(), tx, user.ID, "update", fmt.Sprintf("Изменение оплаты обязательства №%d", id), undoPayload{Obligations: &undoChange{Before: before, After: after}}) != nil {
+		fail(w, 500, "Не удалось записать историю отмены")
+		return
+	}
+	if err = tx.Commit(); err != nil {
+		fail(w, 500, "Не удалось завершить сохранение")
+		return
+	}
+	a.audit(r.Context(), user.ID, "update", "obligation", &id, input)
+	writeJSON(w, 200, map[string]any{"id": id})
 }
 
 func (a *app) getObligation(ctxQuery string, args ...any) (obligation, error) {

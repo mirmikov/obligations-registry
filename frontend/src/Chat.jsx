@@ -2,8 +2,11 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { BellRing, Check, ChevronLeft, MessageCircle, Plus, Search, Send, UserPlus, Users, X } from 'lucide-react'
 import { request, requestBlob } from './api'
 import { roleLabel } from './App'
+import { can } from './permissions'
 
 export default function Chat({ user, notify, compact = false, initialConversationID = null, notificationPermission, onEnableNotifications }) {
+  const canSend = can(user, 'chat.send')
+  const canCreate = can(user, 'chat.create')
   const [contacts, setContacts] = useState([])
   const [conversations, setConversations] = useState([])
   const [selectedID, setSelectedID] = useState(null)
@@ -130,7 +133,7 @@ export default function Chat({ user, notify, compact = false, initialConversatio
 
   return <div className={`chat-page ${compact ? 'chat-page-compact' : ''} ${selected ? 'has-room' : ''}`}>
     <aside className="chat-list-panel">
-      <header><div><p>Команда</p><h1>Сообщения</h1></div><div className="chat-list-actions">{notificationPermission === 'default' && <button type="button" className="chat-enable-bell" onClick={onEnableNotifications} aria-label="Включить уведомления" title="Включить уведомления"><BellRing size={17}/></button>}<button type="button" onClick={() => setCreating(true)} aria-label="Начать новый чат" title="Начать новый чат"><Plus size={19}/></button></div></header>
+      <header><div><p>Команда</p><h1>Сообщения</h1></div><div className="chat-list-actions">{notificationPermission === 'default' && <button type="button" className="chat-enable-bell" onClick={onEnableNotifications} aria-label="Включить уведомления" title="Включить уведомления"><BellRing size={17}/></button>}{canCreate && <button type="button" onClick={() => setCreating(true)} aria-label="Начать новый чат" title="Начать новый чат"><Plus size={19}/></button>}</div></header>
       <label className="chat-search"><Search size={16}/><input value={search} onChange={event => setSearch(event.target.value)} placeholder="Поиск диалогов"/></label>
       <div className="chat-conversations">
         {filtered.map(item => <button type="button" key={item.id} className={item.id === selectedID ? 'active' : ''} onClick={() => setSelectedID(item.id)}>
@@ -160,13 +163,13 @@ export default function Chat({ user, notify, compact = false, initialConversatio
             </div></div>
           })}
         </div>
-        <form className={`chat-composer ${draftImage ? 'has-image' : ''}`} onSubmit={send}>
+        {canSend ? <form className={`chat-composer ${draftImage ? 'has-image' : ''}`} onSubmit={send}>
           {draftImage && <div className="chat-composer-preview"><img src={draftImage.url} alt="Изображение перед отправкой"/><span><strong>Изображение готово</strong><small>{formatFileSize(draftImage.file.size)}</small></span><button type="button" onClick={() => setDraftImage(current => { if (current?.url) URL.revokeObjectURL(current.url); return null })} aria-label="Удалить изображение" title="Удалить изображение"><X size={16}/></button></div>}
           <div className="chat-composer-main"><textarea value={draft} onChange={event => setDraft(event.target.value)} onPaste={pasteImage} onKeyDown={composerKeyDown} maxLength={4000} rows={1} placeholder="Напишите сообщение или вставьте изображение…"/><button type="submit" disabled={(!draft.trim() && !draftImage) || sending} aria-label="Отправить сообщение"><Send size={19}/></button></div>
-        </form>
-      </> : <div className="chat-no-room"><div><MessageCircle size={34}/></div><h2>Корпоративный чат</h2><p>Общайтесь с коллегами лично или создавайте группы для совместной работы.</p><button type="button" className="primary" onClick={() => setCreating(true)}><UserPlus size={17}/>Начать общение</button></div>}
+        </form> : <div className="chat-readonly-note">Доступен только просмотр сообщений</div>}
+      </> : <div className="chat-no-room"><div><MessageCircle size={34}/></div><h2>Корпоративный чат</h2><p>Общайтесь с коллегами лично или создавайте группы для совместной работы.</p>{canCreate && <button type="button" className="primary" onClick={() => setCreating(true)}><UserPlus size={17}/>Начать общение</button>}</div>}
     </main>
-    {creating && <NewChatModal currentUser={user} contacts={contacts} onClose={() => setCreating(false)} onCreated={conversationCreated} notify={notify}/>}
+    {creating && canCreate && <NewChatModal currentUser={user} contacts={contacts} onClose={() => setCreating(false)} onCreated={conversationCreated} notify={notify}/>}
     {viewingImage && <div className="chat-image-viewer" role="dialog" aria-modal="true" aria-label="Просмотр изображения" onClick={() => setViewingImage(null)}><button type="button" onClick={() => setViewingImage(null)} aria-label="Закрыть изображение" title="Закрыть"><X size={25}/></button><ChatImage path={viewingImage.path} alt={viewingImage.alt} fullscreen onClick={event => event.stopPropagation()}/></div>}
   </div>
 }

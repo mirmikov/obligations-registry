@@ -11,7 +11,9 @@ import (
 )
 
 func (a *app) listUsers(w http.ResponseWriter, r *http.Request) {
-	rows, err := a.db.QueryContext(r.Context(), `SELECT id,name,email,role,active,to_char(created_at,'YYYY-MM-DD') FROM users ORDER BY id`)
+	rows, err := a.db.QueryContext(r.Context(), `
+		SELECT u.id,u.name,u.email,u.role,u.active,to_char(u.created_at,'YYYY-MM-DD'),COALESCE(s.state,'{}'::jsonb)
+		FROM users u LEFT JOIN user_workspace_state s ON s.user_id=u.id ORDER BY u.id`)
 	if err != nil {
 		fail(w, 500, "Не удалось загрузить пользователей")
 		return
@@ -22,8 +24,16 @@ func (a *app) listUsers(w http.ResponseWriter, r *http.Request) {
 		var id int64
 		var name, email, role, created string
 		var active bool
-		if rows.Scan(&id, &name, &email, &role, &active, &created) == nil {
-			items = append(items, map[string]any{"id": id, "name": name, "email": email, "role": role, "active": active, "created_at": created})
+		var raw []byte
+		if rows.Scan(&id, &name, &email, &role, &active, &created, &raw) == nil {
+			developer := isDeveloperEmail(email)
+			permissions := permissionsFromState(raw, role)
+			displayRole := role
+			if developer {
+				displayRole = "developer"
+				permissions = fullPermissions()
+			}
+			items = append(items, map[string]any{"id": id, "name": name, "email": email, "role": displayRole, "active": active, "created_at": created, "permissions": permissions, "is_developer": developer})
 		}
 	}
 	writeJSON(w, 200, items)
@@ -33,6 +43,7 @@ func (a *app) createUser(w http.ResponseWriter, r *http.Request) {
 	var input struct {
 		Name, Email, Password, Role string
 		Active                      *bool
+		Permissions                 *permissionSet
 	}
 	if !decodeJSON(w, r, &input) {
 		return
@@ -40,6 +51,13 @@ func (a *app) createUser(w http.ResponseWriter, r *http.Request) {
 	if !validRole(input.Role) || len(input.Password) < 8 {
 		fail(w, 400, "Укажите роль и пароль не короче 8 символов")
 		return
+	}
+	if input.Permissions != nil && !currentUser(r).IsDeveloper {
+		fail(w, http.StatusForbidden, "Права может настраивать только программист")
+		return
+	}
+	if isDeveloperEmail(input.Email) {
+		input.Role = "admin"
 	}
 	hash, _ := bcrypt.GenerateFromPassword([]byte(input.Password), bcrypt.DefaultCost)
 	user := currentUser(r)
@@ -54,6 +72,12 @@ func (a *app) createUser(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		fail(w, 400, "Пользователь с такой почтой уже существует")
 		return
+	}
+	if input.Permissions != nil {
+		if err = saveUserPermissions(r.Context(), tx, id, normalizePermissions(*input.Permissions, input.Role)); err != nil {
+			fail(w, 500, "Не удалось сохранить права пользователя")
+			return
+		}
 	}
 	after, err := snapshotRows(r.Context(), tx, "users", []int64{id})
 	if err != nil || a.recordUndo(r.Context(), tx, user.ID, "create", "Создание пользователя «"+strings.TrimSpace(input.Name)+"»", undoPayload{Users: &undoChange{Before: emptySnapshot(), After: after}}) != nil {
@@ -77,32 +101,54 @@ func (a *app) updateUser(w http.ResponseWriter, r *http.Request) {
 	var input struct {
 		Name, Role, Password string
 		Active               *bool
+		Permissions          *permissionSet
 	}
 	if !decodeJSON(w, r, &input) {
 		return
+	}
+	if input.Role == "developer" {
+		input.Role = "admin"
 	}
 	if !validRole(input.Role) {
 		fail(w, 400, "Некорректная роль")
 		return
 	}
 	user := currentUser(r)
+	if input.Permissions != nil && !user.IsDeveloper {
+		fail(w, http.StatusForbidden, "Права может настраивать только программист")
+		return
+	}
 	tx, err := a.db.BeginTx(r.Context(), nil)
 	if err != nil {
 		fail(w, 500, "Не удалось начать сохранение")
 		return
 	}
 	defer tx.Rollback()
-	if err = tx.QueryRowContext(r.Context(), `SELECT id FROM users WHERE id=$1 FOR UPDATE`, id).Scan(&id); err == sql.ErrNoRows {
+	var targetEmail string
+	if err = tx.QueryRowContext(r.Context(), `SELECT id,email FROM users WHERE id=$1 FOR UPDATE`, id).Scan(&id, &targetEmail); err == sql.ErrNoRows {
 		fail(w, 404, "Пользователь не найден")
 		return
 	} else if err != nil {
 		fail(w, 500, "Не удалось подготовить историю отмены")
 		return
 	}
+	targetDeveloper := isDeveloperEmail(targetEmail)
+	if targetDeveloper {
+		input.Role = "admin"
+		active := true
+		input.Active = &active
+		input.Permissions = nil
+	}
 	before, err := snapshotRows(r.Context(), tx, "users", []int64{id})
 	if err != nil {
 		fail(w, 500, "Не удалось подготовить историю отмены")
 		return
+	}
+	if input.Permissions != nil {
+		if err = saveUserPermissions(r.Context(), tx, id, normalizePermissions(*input.Permissions, input.Role)); err != nil {
+			fail(w, 500, "Не удалось сохранить права пользователя")
+			return
+		}
 	}
 	if input.Password != "" {
 		if len(input.Password) < 8 {
