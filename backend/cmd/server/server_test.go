@@ -189,6 +189,25 @@ func TestExecutiveSettingsAreKeptOutOfUserReferences(t *testing.T) {
 	}
 }
 
+func TestCostCategoryResponsibleReferenceRoundTrip(t *testing.T) {
+	encoded := encodeCostCategoryResponsibleReference(17, "  Иванов И.И.  ")
+	value, ok := decodeCostCategoryResponsibleReference(encoded)
+	if !ok || value.CategoryID != 17 || value.Responsible != "Иванов И.И." {
+		t.Fatalf("decoded mapping = %#v, ok=%v", value, ok)
+	}
+	if normalizeReferenceKind(costCategoryResponsibleReferenceKind) != "" {
+		t.Fatal("internal cost-category mappings must not be editable through generic reference endpoints")
+	}
+}
+
+func TestCostCategoryResponsibleReferenceRejectsInvalidValues(t *testing.T) {
+	for _, value := range []string{"", `{}`, `{"category_id":0,"responsible":"Иванов"}`, `{"category_id":17,"responsible":" "}`} {
+		if _, ok := decodeCostCategoryResponsibleReference(value); ok {
+			t.Fatalf("invalid mapping %q was accepted", value)
+		}
+	}
+}
+
 func TestParseExecutiveFiltersDefaultsAndValidatesStatus(t *testing.T) {
 	defaultRequest := httptest.NewRequest("GET", "/?as_of=2026-07-29", nil)
 	filters, _, err := parseExecutiveFilters(defaultRequest)

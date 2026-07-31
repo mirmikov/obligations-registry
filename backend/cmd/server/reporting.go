@@ -10,6 +10,27 @@ import (
 	"time"
 )
 
+const costCategoryResponsibleReferenceKind = "cost_category_responsibles"
+
+type costCategoryResponsibleReference struct {
+	CategoryID  int64  `json:"category_id"`
+	Responsible string `json:"responsible"`
+}
+
+func encodeCostCategoryResponsibleReference(categoryID int64, responsible string) string {
+	value, _ := json.Marshal(costCategoryResponsibleReference{CategoryID: categoryID, Responsible: strings.TrimSpace(responsible)})
+	return string(value)
+}
+
+func decodeCostCategoryResponsibleReference(value string) (costCategoryResponsibleReference, bool) {
+	var result costCategoryResponsibleReference
+	if json.Unmarshal([]byte(value), &result) != nil || result.CategoryID <= 0 || strings.TrimSpace(result.Responsible) == "" {
+		return costCategoryResponsibleReference{}, false
+	}
+	result.Responsible = strings.TrimSpace(result.Responsible)
+	return result, true
+}
+
 func (a *app) listReferences(w http.ResponseWriter, r *http.Request) {
 	rows, err := a.db.QueryContext(r.Context(), `SELECT id,kind,value,sort_order FROM reference_values WHERE active AND kind <> $1 ORDER BY kind,sort_order,value`, executiveSettingsReferenceKind)
 	if err != nil {
@@ -26,9 +47,120 @@ func (a *app) listReferences(w http.ResponseWriter, r *http.Request) {
 			fail(w, 500, "Ошибка справочников")
 			return
 		}
+		if kind == costCategoryResponsibleReferenceKind {
+			mapping, ok := decodeCostCategoryResponsibleReference(value)
+			if ok {
+				result[kind] = append(result[kind], map[string]any{"id": id, "cost_category_id": mapping.CategoryID, "responsible": mapping.Responsible})
+			}
+			continue
+		}
 		result[kind] = append(result[kind], map[string]any{"id": id, "value": value, "sort_order": order})
 	}
 	writeJSON(w, 200, result)
+}
+
+func (a *app) setCostCategoryResponsible(w http.ResponseWriter, r *http.Request) {
+	categoryID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || categoryID <= 0 {
+		fail(w, http.StatusBadRequest, "Некорректная статья затрат")
+		return
+	}
+	var input struct {
+		Responsible string `json:"responsible"`
+	}
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	input.Responsible = strings.TrimSpace(input.Responsible)
+	user := currentUser(r)
+	tx, err := a.db.BeginTx(r.Context(), nil)
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Не удалось начать сохранение")
+		return
+	}
+	defer tx.Rollback()
+
+	var category string
+	if err = tx.QueryRowContext(r.Context(), `SELECT value FROM reference_values WHERE id=$1 AND kind='cost_categories' AND active FOR UPDATE`, categoryID).Scan(&category); err == sql.ErrNoRows {
+		fail(w, http.StatusNotFound, "Статья затрат не найдена")
+		return
+	} else if err != nil {
+		fail(w, http.StatusInternalServerError, "Не удалось проверить статью затрат")
+		return
+	}
+	if input.Responsible != "" {
+		var exists bool
+		if err = tx.QueryRowContext(r.Context(), `SELECT EXISTS(SELECT 1 FROM reference_values WHERE kind='responsibles' AND value=$1 AND active)`, input.Responsible).Scan(&exists); err != nil || !exists {
+			fail(w, http.StatusBadRequest, "Ответственный отсутствует в справочнике")
+			return
+		}
+	}
+
+	rows, err := tx.QueryContext(r.Context(), `SELECT id FROM reference_values WHERE kind=$1 AND sort_order=$2 FOR UPDATE`, costCategoryResponsibleReferenceKind, categoryID)
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Не удалось подготовить привязку")
+		return
+	}
+	var changedIDs []int64
+	for rows.Next() {
+		var id int64
+		if rows.Scan(&id) == nil {
+			changedIDs = append(changedIDs, id)
+		}
+	}
+	if err = rows.Err(); err != nil {
+		rows.Close()
+		fail(w, http.StatusInternalServerError, "Не удалось прочитать существующую привязку")
+		return
+	}
+	rows.Close()
+	before, err := snapshotRows(r.Context(), tx, "reference_values", changedIDs)
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Не удалось подготовить историю изменения")
+		return
+	}
+	if _, err = tx.ExecContext(r.Context(), `UPDATE reference_values SET active=false WHERE kind=$1 AND sort_order=$2`, costCategoryResponsibleReferenceKind, categoryID); err != nil {
+		fail(w, http.StatusInternalServerError, "Не удалось обновить привязку")
+		return
+	}
+	if input.Responsible != "" {
+		encoded := encodeCostCategoryResponsibleReference(categoryID, input.Responsible)
+		var mappingID int64
+		err = tx.QueryRowContext(r.Context(), `
+			INSERT INTO reference_values(kind,value,sort_order,active) VALUES($1,$2,$3,true)
+			ON CONFLICT(kind,value) DO UPDATE SET sort_order=excluded.sort_order,active=true
+			RETURNING id`, costCategoryResponsibleReferenceKind, encoded, categoryID).Scan(&mappingID)
+		if err != nil {
+			fail(w, http.StatusInternalServerError, "Не удалось сохранить привязку")
+			return
+		}
+		changedIDs = append(changedIDs, mappingID)
+	}
+	changedIDs = uniqueInt64s(changedIDs)
+	after, err := snapshotRows(r.Context(), tx, "reference_values", changedIDs)
+	if err != nil || a.recordUndo(r.Context(), tx, user.ID, "update", "Изменение ответственного для статьи затрат «"+category+"»", undoPayload{References: &undoChange{Before: before, After: after}}) != nil {
+		fail(w, http.StatusInternalServerError, "Не удалось записать историю изменения")
+		return
+	}
+	if err = tx.Commit(); err != nil {
+		fail(w, http.StatusInternalServerError, "Не удалось завершить сохранение")
+		return
+	}
+	a.audit(r.Context(), user.ID, "update", "reference", &categoryID, map[string]any{"kind": costCategoryResponsibleReferenceKind, "cost_category": category, "responsible": input.Responsible})
+	writeJSON(w, http.StatusOK, map[string]any{"cost_category_id": categoryID, "responsible": input.Responsible})
+}
+
+func uniqueInt64s(values []int64) []int64 {
+	seen := make(map[int64]struct{}, len(values))
+	result := make([]int64, 0, len(values))
+	for _, value := range values {
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	return result
 }
 
 func (a *app) addReference(w http.ResponseWriter, r *http.Request) {
