@@ -7,6 +7,7 @@ import { withDerivedObligationValues } from './obligationValues'
 import { getRegistryStickyOffsets } from './registryColumns'
 import { canContinueRegistryDrag, canStartRegistryDrag, getRegistryDragScroll, hasRegistryDragStarted } from './registryDragScroll'
 import { can } from './permissions'
+import { buildCostCategoryResponsibleMap, withDefaultResponsible } from './referenceDefaults'
 import usePresence from './usePresence'
 
 const emptyFilters = { q: '', counterparty: [], account_type: '', legal_entity: '', cost_category: '', priority: '', responsible: '', status: '', urgency: '', entry_date: '', document_date: '', planned_payment_date: '', approval_date: '', actual_payment_date: '', document_from: '', document_to: '', overdue: '' }
@@ -121,6 +122,7 @@ export default function Registry({ user, notify, maintenance, onToggleMaintenanc
   }, [largeTableFont])
   useEffect(() => () => resizeCleanupRef.current?.(), [])
   const tableWidth = useMemo(() => columnWidths.reduce((sum, width) => sum + width, 0), [columnWidths])
+  const responsibleByCostCategory = useMemo(() => buildCostCategoryResponsibleMap(refs), [refs])
   const stickyOffsets = useMemo(() => getRegistryStickyOffsets(columnWidths), [columnWidths])
   const setColumnWidth = (index, width, persist = true) => {
     const next = [...columnWidthsRef.current]
@@ -223,7 +225,7 @@ export default function Registry({ user, notify, maintenance, onToggleMaintenanc
     const current = rowsRef.current.get(item.id) || item
     if (sameCellValue(current[field], value)) { finishCellEdit(current); return true }
     const previousValue = current[field]
-    const next = withDerivedObligationValues({ ...current, [field]: value }, field)
+    const next = withDefaultResponsible(withDerivedObligationValues({ ...current, [field]: value }, field), field, responsibleByCostCategory)
     rowsRef.current.set(item.id, next)
     setData(state => ({ ...state, items: state.items.map(row => row.id === item.id ? next : row) }))
     const cellKey = `${item.id}:${field}`
@@ -246,7 +248,7 @@ export default function Registry({ user, notify, maintenance, onToggleMaintenanc
   const commitNewCell = async (item, field, rawValue) => {
     let value
     try { value = normalizeCellValue(field, rawValue) } catch (error) { notify(error.message, 'error'); return false }
-    const next = withDerivedObligationValues({ ...item, [field]: value }, field)
+    const next = withDefaultResponsible(withDerivedObligationValues({ ...item, [field]: value }, field), field, responsibleByCostCategory)
     setNewRow(next)
     if (sameCellValue(item[field], value) || creatingRef.current) return true
     creatingRef.current = true; markSaving(`new:${field}`, true)
