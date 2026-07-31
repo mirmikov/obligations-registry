@@ -271,7 +271,10 @@ func (a *app) saveWorkspaceState(w http.ResponseWriter, r *http.Request) {
 	}
 	value = normalizeWorkspaceState(value)
 	raw, _ := json.Marshal(value)
-	_, err := a.db.ExecContext(r.Context(), `INSERT INTO user_workspace_state(user_id,state,updated_at) VALUES($1,$2,now()) ON CONFLICT(user_id) DO UPDATE SET state=$2,updated_at=now()`, user.ID, raw)
+	_, err := a.db.ExecContext(r.Context(), `
+		INSERT INTO user_workspace_state(user_id,state,updated_at) VALUES($1,$2,now())
+		ON CONFLICT(user_id) DO UPDATE
+		SET state=COALESCE(user_workspace_state.state,'{}'::jsonb) || $2::jsonb,updated_at=now()`, user.ID, raw)
 	if err != nil {
 		fail(w, 500, "Не удалось сохранить рабочее место")
 		return

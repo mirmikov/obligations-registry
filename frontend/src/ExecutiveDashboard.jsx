@@ -5,6 +5,7 @@ import { DateInput, money, PageHeader, shortDate } from './App'
 import { BLANK_ACCOUNT_TYPE_FILTER, filterSelectOptions } from './filterValues'
 import { defaultExecutiveFilters, EXECUTIVE_FILTER_STATUSES, executiveUpdatePayload } from './executiveView'
 import { localTodayISO } from './paymentsView'
+import { can } from './permissions'
 
 const periodIcons = {
   overdue: AlertTriangle,
@@ -14,7 +15,7 @@ const periodIcons = {
 
 const executiveStatusOptions = EXECUTIVE_FILTER_STATUSES.map(value => ({ value, label: value }))
 
-export default function ExecutiveDashboard({ notify }) {
+export default function ExecutiveDashboard({ user, notify }) {
   const [refs, setRefs] = useState({})
   const [filters, setFilters] = useState(() => defaultExecutiveFilters(localTodayISO()))
   const [data, setData] = useState({ periods: [] })
@@ -108,7 +109,7 @@ export default function ExecutiveDashboard({ notify }) {
       ? '/api/reports/executive/special-details'
       : '/api/reports/executive/details'
     try {
-      await request('/api/obligations/bulk', { method: 'POST', body: JSON.stringify(payload) })
+      await request('/api/reports/executive/obligations/bulk', { method: 'POST', body: JSON.stringify(payload) })
       const [dashboardResult, detailsResult] = await Promise.all([
         request(`/api/reports/executive?${query}`),
         request(`${detailsEndpoint}?${params}`),
@@ -162,7 +163,7 @@ export default function ExecutiveDashboard({ notify }) {
       title="Панель руководителя"
       subtitle="Контроль обязательств на выбранную дату"
       actions={<>
-        <button className="secondary" onClick={() => setSettingsOpen(true)}><Settings2 size={17}/>Настройки</button>
+        {can(user, 'executive.settings') && <button className="secondary" onClick={() => setSettingsOpen(true)}><Settings2 size={17}/>Настройки</button>}
         <button className="secondary" onClick={refresh} disabled={loading}><RefreshCw size={17}/>Обновить</button>
       </>}
     />
@@ -211,6 +212,7 @@ export default function ExecutiveDashboard({ notify }) {
       loading={detailsLoading}
       statuses={(refs.statuses || []).map(item => item.value)}
       savingCells={detailsSaving}
+      editable={can(user, 'executive.approve')}
       onCommit={saveDetailField}
       onClose={() => setDetails(null)}
     />}
@@ -348,7 +350,7 @@ function ExecutiveSettingsModal({ settings, saving, onChange, onClose }) {
   </div>
 }
 
-function ExecutiveDetails({ details, loading, statuses, savingCells, onCommit, onClose }) {
+function ExecutiveDetails({ details, loading, statuses, savingCells, editable, onCommit, onClose }) {
   const statusOptions = details.kind === 'special'
     ? ['К оплате']
     : (statuses.length ? statuses : executiveStatusOptions.map(option => option.value))
@@ -368,7 +370,7 @@ function ExecutiveDetails({ details, loading, statuses, savingCells, onCommit, o
       <div className="executive-detail-scroll">
         {loading ? <div className="executive-detail-loading"><div className="loading-line"/><span>Загружаем обязательства…</span></div>
           : details.items.length === 0 ? <div className="executive-empty"><Layers3 size={28}/><strong>Записи не найдены</strong></div>
-            : details.kind === 'special' ? <ExecutiveSpecialDetailsTable details={details} statusOptions={statusOptions} savingCells={savingCells} onCommit={onCommit}/>
+            : details.kind === 'special' ? <ExecutiveSpecialDetailsTable details={details} statusOptions={statusOptions} savingCells={savingCells} editable={editable} onCommit={onCommit}/>
             : <table className="executive-detail-table">
               <thead><tr>
                 <th>Юридическое лицо</th><th>Плановая дата</th><th>Контрагент</th><th>Назначение платежа</th>
@@ -382,8 +384,8 @@ function ExecutiveDetails({ details, loading, statuses, savingCells, onCommit, o
                 <td>{item.comment || '—'}</td>
                 <td className="executive-detail-amount">{money(item.amount)}</td>
                 <td>{item.responsible || '—'}</td>
-                <ExecutiveStatusCell item={item} options={statusOptions} saving={savingCells.has(`${item.id}:status`)} onCommit={onCommit}/>
-                <ExecutiveApprovalDateCell item={item} saving={savingCells.has(`${item.id}:approval_date`)} onCommit={onCommit}/>
+                <ExecutiveStatusCell item={item} options={statusOptions} saving={savingCells.has(`${item.id}:status`)} editable={editable} onCommit={onCommit}/>
+                <ExecutiveApprovalDateCell item={item} saving={savingCells.has(`${item.id}:approval_date`)} editable={editable} onCommit={onCommit}/>
               </tr>)}</tbody>
               <tfoot><tr><td colSpan="4">Итого</td><td colSpan="2">{money(details.amount)}</td><td colSpan="3">{details.count.toLocaleString('ru-RU')} обязательств</td></tr></tfoot>
             </table>}
@@ -395,7 +397,7 @@ function ExecutiveDetails({ details, loading, statuses, savingCells, onCommit, o
   </div>
 }
 
-function ExecutiveSpecialDetailsTable({ details, statusOptions, savingCells, onCommit }) {
+function ExecutiveSpecialDetailsTable({ details, statusOptions, savingCells, editable, onCommit }) {
   return <table className="executive-detail-table executive-special-detail-table">
     <thead><tr>
       <th>Юридическое лицо</th><th>Плановая дата</th><th>Счёт</th><th>Назначение платежа</th><th>Комментарий</th>
@@ -410,8 +412,8 @@ function ExecutiveSpecialDetailsTable({ details, statusOptions, savingCells, onC
       <td className="executive-detail-amount">{money(item.amount)}</td>
       <td className="executive-detail-paid">{money(item.paid_amount)}</td>
       <td className="executive-detail-outstanding">{money(item.outstanding_amount)}</td>
-      <ExecutiveStatusCell item={item} options={statusOptions} saving={savingCells.has(`${item.id}:status`)} onCommit={onCommit}/>
-      <ExecutiveApprovalDateCell item={item} saving={savingCells.has(`${item.id}:approval_date`)} onCommit={onCommit}/>
+      <ExecutiveStatusCell item={item} options={statusOptions} saving={savingCells.has(`${item.id}:status`)} editable={editable} onCommit={onCommit}/>
+      <ExecutiveApprovalDateCell item={item} saving={savingCells.has(`${item.id}:approval_date`)} editable={editable} onCommit={onCommit}/>
     </tr>)}</tbody>
     <tfoot><tr>
       <td colSpan="5">Итого · {details.count.toLocaleString('ru-RU')} счетов</td>
@@ -420,7 +422,7 @@ function ExecutiveSpecialDetailsTable({ details, statusOptions, savingCells, onC
   </table>
 }
 
-function ExecutiveStatusCell({ item, options, saving, onCommit }) {
+function ExecutiveStatusCell({ item, options, saving, editable, onCommit }) {
   const [editing, setEditing] = useState(false)
   const rootRef = useRef(null)
   useEffect(() => {
@@ -441,6 +443,7 @@ function ExecutiveStatusCell({ item, options, saving, onCommit }) {
     }
     if (await onCommit(item, 'status', value)) setEditing(false)
   }
+  if (!editable) return <td><span className={`executive-status ${item.status === 'К оплате' ? 'is-payable' : ''}`}>{item.status || 'Не указан'}</span></td>
   return <td ref={rootRef} className={`executive-editable-cell ${editing ? 'is-editing' : ''} ${saving ? 'is-saving' : ''}`}>
     <button type="button" className="executive-cell-trigger" onClick={() => !saving && setEditing(current => !current)} disabled={saving} aria-label={`Статус: ${item.status}. Изменить`}>
       <span className={`executive-status ${item.status === 'К оплате' ? 'is-payable' : ''}`}>{item.status || 'Не указан'}</span><ChevronDown size={14}/>
@@ -452,8 +455,9 @@ function ExecutiveStatusCell({ item, options, saving, onCommit }) {
   </td>
 }
 
-function ExecutiveApprovalDateCell({ item, saving, onCommit }) {
+function ExecutiveApprovalDateCell({ item, saving, editable, onCommit }) {
   const [editing, setEditing] = useState(false)
+  if (!editable) return <td>{shortDate(item.approval_date)}</td>
   return <td className={`executive-editable-cell executive-date-cell ${editing ? 'is-editing' : ''} ${saving ? 'is-saving' : ''}`}>
     {editing
       ? <DateInput

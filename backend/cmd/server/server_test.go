@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"mime/multipart"
 	"net/http"
@@ -549,6 +550,57 @@ func TestBuildPaymentPlanEqualPartsKeepsExactTotalWithCustomDates(t *testing.T) 
 	}
 	if total != 10000 {
 		t.Fatalf("plan total = %d cents, want 10000", total)
+	}
+}
+
+func TestDeveloperEmailIsUniqueAndCaseInsensitive(t *testing.T) {
+	if !isDeveloperEmail("MIRMIKOV@MIRT-MED.RU") || isDeveloperEmail("other@mirt-med.ru") {
+		t.Fatal("developer identity must be tied only to the configured email")
+	}
+}
+
+func TestRolePermissionPresetsPreserveExistingAccess(t *testing.T) {
+	viewer := defaultPermissions("viewer")
+	editor := defaultPermissions("editor")
+	admin := defaultPermissions("admin")
+	if !viewer["registry.view"] || viewer["registry.edit"] {
+		t.Fatal("viewer preset must remain read-only")
+	}
+	if !editor["registry.edit"] || !editor["references.edit"] || editor["registry.import"] {
+		t.Fatal("editor preset must preserve editing without import")
+	}
+	if !admin["registry.import"] || !admin["executive.settings"] || !admin["users.manage"] {
+		t.Fatal("administrator preset must preserve full operational access")
+	}
+}
+
+func TestExplicitPermissionsAreAllowListed(t *testing.T) {
+	value := normalizePermissions(permissionSet{"registry.view": true, "unknown.root": true}, "viewer")
+	if !value["registry.view"] || value["unknown.root"] {
+		t.Fatal("only catalog permissions may be saved")
+	}
+}
+
+func TestExecutiveApprovalEndpointRejectsPaymentFields(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/api/reports/executive/obligations/bulk", strings.NewReader(`{"ids":[1],"actual_payment_date":"2026-07-31"}`))
+	recorder := httptest.NewRecorder()
+	(&app{}).executiveBulkUpdate(recorder, req)
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("expected forbidden for payment field, got %d", recorder.Code)
+	}
+}
+
+func TestPermissionMiddlewareUsesIndividualPermission(t *testing.T) {
+	handler := (&app{}).requirePermission("registry.delete")(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	user := authUser{Permissions: permissionSet{"registry.delete": true}}
+	req := httptest.NewRequest(http.MethodDelete, "/api/obligations/1", nil)
+	req = req.WithContext(context.WithValue(req.Context(), userKey, user))
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf("expected allowed permission, got %d", recorder.Code)
 	}
 }
 

@@ -13,10 +13,12 @@ import (
 )
 
 type authUser struct {
-	ID    int64  `json:"id"`
-	Name  string `json:"name"`
-	Email string `json:"email"`
-	Role  string `json:"role"`
+	ID          int64         `json:"id"`
+	Name        string        `json:"name"`
+	Email       string        `json:"email"`
+	Role        string        `json:"role"`
+	Permissions permissionSet `json:"permissions"`
+	IsDeveloper bool          `json:"is_developer"`
 }
 
 type contextKey string
@@ -36,6 +38,11 @@ func (a *app) login(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusUnauthorized, "Неверная почта или пароль")
 		return
 	}
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Ошибка входа")
+		return
+	}
+	user, err = a.loadAuthUser(r.Context(), user.ID)
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "Ошибка входа")
 		return
@@ -67,35 +74,24 @@ func (a *app) authorize(next http.Handler) http.Handler {
 			fail(w, http.StatusUnauthorized, "Некорректная сессия")
 			return
 		}
-		id, err := strconv.ParseInt(claims["sub"].(string), 10, 64)
+		subject, ok := claims["sub"].(string)
+		if !ok {
+			fail(w, http.StatusUnauthorized, "Некорректная сессия")
+			return
+		}
+		id, err := strconv.ParseInt(subject, 10, 64)
 		if err != nil {
 			fail(w, http.StatusUnauthorized, "Некорректная сессия")
 			return
 		}
-		user := authUser{ID: id, Name: stringClaim(claims, "name"), Email: stringClaim(claims, "email"), Role: stringClaim(claims, "role")}
+		user, err := a.loadAuthUser(r.Context(), id)
+		if err != nil {
+			fail(w, http.StatusUnauthorized, "Сессия недействительна")
+			return
+		}
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), userKey, user)))
 	})
 }
 
-func stringClaim(claims jwt.MapClaims, key string) string {
-	value, _ := claims[key].(string)
-	return value
-}
 func currentUser(r *http.Request) authUser               { return r.Context().Value(userKey).(authUser) }
 func (a *app) me(w http.ResponseWriter, r *http.Request) { writeJSON(w, http.StatusOK, currentUser(r)) }
-
-func (a *app) requireRole(roles ...string) func(http.Handler) http.Handler {
-	allowed := map[string]bool{}
-	for _, role := range roles {
-		allowed[role] = true
-	}
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if !allowed[currentUser(r).Role] {
-				fail(w, http.StatusForbidden, "Недостаточно прав")
-				return
-			}
-			next.ServeHTTP(w, r)
-		})
-	}
-}
