@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { BarChart3, BellRing, BookOpen, ChartNoAxesCombined, ChevronDown, ChevronLeft, ChevronRight, CircleDollarSign, FileClock, Landmark, LogOut, Maximize2, Menu, MessageCircle, Minus, ReceiptText, Settings, ShieldCheck, Undo2, Users, X } from 'lucide-react'
+import { BarChart3, BellRing, BookOpen, ChartNoAxesCombined, ChevronDown, ChevronLeft, ChevronRight, CircleDollarSign, FileClock, Landmark, LogOut, Maximize2, Menu, MessageCircle, Minus, Moon, ReceiptText, Settings, ShieldCheck, Sun, Undo2, Users, X } from 'lucide-react'
 import { request } from './api'
 import Dashboard from './Dashboard'
 import Registry from './Registry'
@@ -13,6 +13,7 @@ import Chat from './Chat'
 import ExecutiveDashboard from './ExecutiveDashboard'
 import useChatNotifications from './useChatNotifications'
 import { can, firstAllowedPage, pagePermissions } from './permissions'
+import { applyTheme, resolveTheme, THEME_STORAGE_KEY } from './theme'
 
 const nav = [
   { id: 'dashboard', label: 'Сводка', icon: BarChart3, permission: 'dashboard.view' },
@@ -26,6 +27,7 @@ const nav = [
 ]
 
 export default function App() {
+  const [theme, setTheme] = useState(() => resolveTheme(localStorage.getItem(THEME_STORAGE_KEY), window.matchMedia?.('(prefers-color-scheme: dark)').matches))
   const [user, setUser] = useState(null)
   const [checking, setChecking] = useState(Boolean(localStorage.getItem('registry_token')))
   const [page, setPage] = useState('dashboard')
@@ -38,6 +40,8 @@ export default function App() {
   const [undoing, setUndoing] = useState(false)
   const [dataRevision, setDataRevision] = useState(0)
   const [maintenance, setMaintenance] = useState({ active: false, message: 'Ведется обновление программы' })
+
+  useEffect(() => { applyTheme(theme) }, [theme])
 
   const enterWorkspace = (nextUser, state = {}) => {
     setUser(nextUser)
@@ -135,6 +139,7 @@ export default function App() {
       <nav>{nav.filter(item => isAllowedNavItem(item, user)).map(item => item.children ? <div className={`nav-group ${registryOpen ? 'is-open' : ''}`} key={item.id}><div className="nav-parent"><button className={page === item.id ? 'active' : ''} onClick={() => setPage(item.id)} title={item.label}><item.icon size={19}/><span>{item.label}</span></button><button type="button" className="nav-expand" onClick={() => setRegistryOpen(value => !value)} title={registryOpen ? 'Свернуть раздел' : 'Развернуть раздел'} aria-label={registryOpen ? 'Свернуть раздел Реестр' : 'Развернуть раздел Реестр'} aria-expanded={registryOpen}><ChevronDown size={16}/></button></div>{registryOpen && <div className="nav-children">{item.children.filter(child => can(user, child.permission)).map(child => <button key={child.id} className={page === child.id ? 'active' : ''} onClick={() => setPage(child.id)} title={child.label}><child.icon size={17}/><span>{child.label}</span></button>)}</div>}</div> : <button key={item.id} className={page === item.id ? 'active' : ''} onClick={() => item.id === 'chat' ? openChat() : setPage(item.id)} title={item.label}><item.icon size={19}/><span>{item.label}</span>{item.id === 'chat' && chatNotifications.unread > 0 && <b className="nav-unread">{unreadLabel(chatNotifications.unread)}</b>}{item.id === 'payments' && <i/>}</button>)}</nav>
       <div className="sidebar-bottom">
         <button type="button" className={`undo-action ${undoing ? 'is-loading' : ''}`} onClick={undoLast} disabled={!undoState.available || undoState.loading || undoing || !can(user, 'registry.undo')} title={undoState.available ? `Отменить: ${undoState.description}` : 'Нет действий для отмены'} aria-label={undoState.available ? `Отменить последнее действие: ${undoState.description}` : 'Нет действий для отмены'}><Undo2 size={18}/><span>{undoing ? 'Отменяем…' : 'Отменить действие'}</span>{undoState.remaining > 0 && <b>{Math.min(undoState.remaining, 500)}</b>}</button>
+        <button type="button" className="theme-toggle" onClick={() => setTheme(value => value === 'dark' ? 'light' : 'dark')} title={theme === 'dark' ? 'Включить светлую тему' : 'Включить тёмную тему'} aria-label={theme === 'dark' ? 'Включить светлую тему' : 'Включить тёмную тему'} aria-pressed={theme === 'dark'}>{theme === 'dark' ? <Sun size={18}/> : <Moon size={18}/>}<span>{theme === 'dark' ? 'Светлая тема' : 'Тёмная тема'}</span></button>
         <button className="collapse" onClick={() => setCollapsed(v => !v)}>{collapsed ? <ChevronRight size={18}/> : <ChevronLeft size={18}/>}<span>Свернуть</span></button>
         <div className="profile"><div className="avatar">{user.name.slice(0, 1)}</div><div><strong>{user.name}</strong><span>{roleLabel(user.role)}</span></div><button onClick={logout} title="Выйти"><LogOut size={17}/></button></div>
       </div>
@@ -153,7 +158,7 @@ function ChatWidget({ user, notify, unread, notificationPermission, onEnableNoti
     {open ? <section className="chat-widget-panel">
       <header className="chat-widget-bar"><div><MessageCircle size={16}/><strong>Чат команды</strong>{unread > 0 && <b className="chat-widget-unread">{unreadLabel(unread)}</b>}</div><div><button type="button" onClick={onOpenFull} title="Открыть чат на всю страницу" aria-label="Открыть чат на всю страницу"><Maximize2 size={16}/></button><button type="button" onClick={() => setOpen(false)} title="Свернуть чат" aria-label="Свернуть чат"><Minus size={18}/></button></div></header>
       <Chat user={user} notify={notify} compact notificationPermission={notificationPermission} onEnableNotifications={onEnableNotifications}/>
-    </section> : <div className="chat-widget-closed">{notificationPermission === 'default' && <button type="button" className="chat-notification-enable" onClick={onEnableNotifications} title="Включить уведомления о сообщениях"><BellRing size={16}/><span>Включить уведомления</span></button>}<button type="button" className="chat-widget-launcher" onClick={() => setOpen(true)} title="Открыть чат" aria-label={`Открыть чат${unread ? `, непрочитанных сообщений: ${unread}` : ''}`}><MessageCircle size={24}/><span>Чат</span>{unread > 0 && <b>{unreadLabel(unread)}</b>}</button></div>}
+    </section> : <div className="chat-widget-closed">{notificationPermission === 'default' && <button type="button" className="chat-notification-enable" onClick={onEnableNotifications} title="Включить уведомления о сообщениях"><BellRing size={16}/><span>Включить уведомления</span></button>}<button type="button" className="chat-widget-launcher" onClick={() => setOpen(true)} title="Открыть чат" aria-label={`Открыть чат${unread ? `, непрочитанных сообщений: ${unread}` : ''}`}><MessageCircle size={24}/>{unread > 0 && <b>{unreadLabel(unread)}</b>}</button></div>}
   </div>
 }
 
