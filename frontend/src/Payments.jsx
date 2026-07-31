@@ -80,7 +80,7 @@ function PaymentPrintReport({ data, filters }) {
 }
 
 function paymentValue(item, key) {
-  if (key === 'planned_payment_date') return shortDate(item[key])
+  if (key === 'planned_payment_date' || key === 'document_date') return shortDate(item[key])
   if (key === 'amount') return money(item[key])
   return item[key] || '—'
 }

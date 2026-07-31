@@ -8,7 +8,9 @@ export const paymentColumns = [
 ]
 
 export const paymentScreenColumns = [
-  ...paymentColumns,
+  ...paymentColumns.map(column => column.key === 'planned_payment_date'
+    ? { key: 'document_date', label: 'Дата документа' }
+    : column),
   { key: 'actual_payment_date', label: 'Фактическая дата оплаты', interactive: true },
   { key: 'status', label: 'Статус', interactive: true },
 ]
