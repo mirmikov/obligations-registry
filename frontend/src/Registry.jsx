@@ -4,6 +4,7 @@ import { download, request } from './api'
 import { DateInput, money, PageHeader, roleLabel, shortDate } from './App'
 import { BLANK_ACCOUNT_TYPE_FILTER } from './filterValues'
 import { withDerivedObligationValues } from './obligationValues'
+import { mergeCurrentObligationRecord } from './obligationHistoryView'
 import { getRegistryStickyOffsets } from './registryColumns'
 import { canContinueRegistryDrag, canStartRegistryDrag, getRegistryDragScroll, hasRegistryDragStarted } from './registryDragScroll'
 import { can } from './permissions'
@@ -639,7 +640,7 @@ export function ObligationHistoryModal({ item, notify, onClose }) {
     return () => { active = false }
   }, [item.id])
 
-  const record = data?.record || item
+  const record = mergeCurrentObligationRecord(item, data?.record)
   return <div className="modal-backdrop obligation-history-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) onClose() }}>
     <section className="modal obligation-history-modal" role="dialog" aria-modal="true" aria-label={`Информация о записи №${item.id}`}>
       <header className="modal-head obligation-history-head">
