@@ -17,6 +17,11 @@ migration_setting="$(awk -F= '/^RUN_DATABASE_MIGRATIONS=/ {value=tolower($2)} EN
 [[ "$migration_setting" == "false" || "$migration_setting" == "0" || "$migration_setting" == "no" || "$migration_setting" == "off" ]] || fail "в .env должно быть RUN_DATABASE_MIGRATIONS=false"
 unset RUN_DATABASE_MIGRATIONS
 
+# The backend sees only a public status file, never the protected dump directory.
+backup_status_dir="$(dirname "$project_dir")/backup-status/obligations-registry"
+mkdir -p "$backup_status_dir"
+chmod 755 "$backup_status_dir"
+
 db_container_before="$(docker compose ps -q db)"
 [[ -n "$db_container_before" ]] || fail "контейнер PostgreSQL не запущен"
 docker compose exec -T db pg_isready -U registry -d registry >/dev/null || fail "PostgreSQL не готов"

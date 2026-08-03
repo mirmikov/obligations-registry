@@ -1,0 +1,12 @@
+[Unit]
+Description=Run obligations-registry database backup daily at 18:00 Moscow time
+
+[Timer]
+OnCalendar=*-*-* 18:00:00 Europe/Moscow
+AccuracySec=1s
+RandomizedDelaySec=0
+Persistent=true
+Unit=obligations-registry-backup.service
+
+[Install]
+WantedBy=timers.target

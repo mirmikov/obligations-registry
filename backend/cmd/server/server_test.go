@@ -244,6 +244,46 @@ func TestDatabaseMigrationsCanBeDisabledForProductionCodeDeploy(t *testing.T) {
 	}
 }
 
+func TestBackupStatusUsesMoscowScheduleAndDetectsOverdueRun(t *testing.T) {
+	location, err := time.LoadLocation(backupTimezone)
+	if err != nil {
+		t.Fatal(err)
+	}
+	value := backupStatusFile{Success: true, Valid: true, CompletedAt: "2026-08-02T18:00:04+03:00", Version: "abc1234"}
+	before := buildBackupStatus(time.Date(2026, 8, 3, 17, 59, 0, 0, location), value, nil)
+	if before.State != "completed" || before.TodayCompleted {
+		t.Fatalf("before scheduled run = %#v", before)
+	}
+	after := buildBackupStatus(time.Date(2026, 8, 3, 18, 0, 1, 0, location), value, nil)
+	if after.State != "overdue" || after.NextRun != "2026-08-04T18:00:00+03:00" {
+		t.Fatalf("after missed run = %#v", after)
+	}
+}
+
+func TestBackupStatusRecognizesSuccessfulBackupToday(t *testing.T) {
+	location, err := time.LoadLocation(backupTimezone)
+	if err != nil {
+		t.Fatal(err)
+	}
+	value := backupStatusFile{Success: true, Valid: true, CompletedAt: "2026-08-03T18:00:03+03:00", BackupName: "registry.dump", Version: "abc1234", DatabaseVersion: "17.5", SizeBytes: 42}
+	status := buildBackupStatus(time.Date(2026, 8, 3, 18, 1, 0, 0, location), value, nil)
+	if status.State != "completed" || !status.TodayCompleted || !status.Valid || status.Version != "abc1234" {
+		t.Fatalf("successful status = %#v", status)
+	}
+}
+
+func TestBackupStatusIsReturnedOnlyToDeveloper(t *testing.T) {
+	ordinary := systemStatusPayload(authUser{IsDeveloper: false}, maintenanceState{}, time.Now())
+	if _, ok := ordinary["backup"]; ok {
+		t.Fatal("backup status was exposed to an ordinary user")
+	}
+	t.Setenv("BACKUP_STATUS_FILE", filepath.Join(t.TempDir(), "missing.json"))
+	developer := systemStatusPayload(authUser{IsDeveloper: true}, maintenanceState{}, time.Now())
+	if _, ok := developer["backup"]; !ok {
+		t.Fatal("backup status was not returned to the developer")
+	}
+}
+
 func TestUndoHistoryLimitIsFiveHundredPerUser(t *testing.T) {
 	if maxUndoOperationsPerUser != 500 {
 		t.Fatalf("undo history limit = %d, want 500", maxUndoOperationsPerUser)
