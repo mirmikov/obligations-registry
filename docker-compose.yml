@@ -25,12 +25,14 @@ services:
       ADMIN_EMAIL: ${ADMIN_EMAIL:-admin}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-Qazxsw21}
       RUN_DATABASE_MIGRATIONS: ${RUN_DATABASE_MIGRATIONS:-true}
+      BACKUP_STATUS_FILE: /data/backup_status/latest-backup-status.json
       TZ: Europe/Moscow
     depends_on:
       db:
         condition: service_healthy
     volumes:
       - chat_uploads:/data/chat_uploads
+      - ${REGISTRY_BACKUP_STATUS_DIR:-../backup-status/obligations-registry}:/data/backup_status:ro
     restart: unless-stopped
 
   frontend:

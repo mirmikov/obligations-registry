@@ -1,0 +1,17 @@
+[Unit]
+Description=Daily verified backup of obligations-registry PostgreSQL
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+User=mirmikov
+Group=mirmikov
+SupplementaryGroups=docker
+WorkingDirectory=/home/mirmikov/obligations-registry
+Environment=TZ=Europe/Moscow
+ExecStart=/home/mirmikov/obligations-registry/ops/production/scheduled-backup.sh
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+UMask=0077

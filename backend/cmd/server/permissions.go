@@ -188,7 +188,16 @@ func (a *app) readMaintenanceState(ctx context.Context) maintenanceState {
 }
 
 func (a *app) getSystemStatus(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"maintenance": a.readMaintenanceState(r.Context())})
+	user := currentUser(r)
+	writeJSON(w, http.StatusOK, systemStatusPayload(user, a.readMaintenanceState(r.Context()), time.Now()))
+}
+
+func systemStatusPayload(user authUser, maintenance maintenanceState, now time.Time) map[string]any {
+	value := map[string]any{"maintenance": maintenance}
+	if user.IsDeveloper {
+		value["backup"] = readBackupStatus(now)
+	}
+	return value
 }
 
 func (a *app) updateMaintenance(w http.ResponseWriter, r *http.Request) {
