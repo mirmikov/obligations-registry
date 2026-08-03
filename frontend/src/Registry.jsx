@@ -15,6 +15,12 @@ const dateFields = new Set(['entry_date', 'document_date', 'planned_payment_date
 const fieldLabels = { counterparty: 'Контрагент', entry_date: 'Дата внесения', document_number: 'Документ', document_date: 'Дата документа', legal_entity: 'Юрлицо', cost_category: 'Статья затрат', amount: 'Сумма, ₽', deferment_days: 'Отсрочка, дней', planned_payment_date: 'Плановая оплата', approval_date: 'Дата утверждения', actual_payment_date: 'Фактическая оплата', status: 'Статус', urgency: 'Срочность', responsible: 'Ответственный', priority: 'Приоритет', account_type: 'Признак учёта', comment: 'Комментарий', source_note: 'Условия оплаты' }
 const historyFieldLabels = { ...fieldLabels, split_group_id: 'Группа платежей', split_parent_id: 'Исходный платёж', installment_number: 'Номер платежа', installment_count: 'Количество платежей' }
 const historyActionLabels = { create: 'Запись создана', update: 'Запись изменена', bulk_update: 'Массовое изменение', split: 'Платёж разбит', delete: 'Запись удалена' }
+const historyCurrentFields = [
+  ['account_type', 'Признак учёта'], ['legal_entity', 'Юридическое лицо'], ['counterparty', 'Контрагент'], ['document_number', 'Документ'],
+  ['document_date', 'Дата документа'], ['cost_category', 'Статья затрат'], ['amount', 'Сумма'], ['planned_payment_date', 'Плановая дата оплаты'],
+  ['approval_date', 'Дата утверждения'], ['actual_payment_date', 'Фактическая дата оплаты'], ['status', 'Статус'], ['urgency', 'Срочность'],
+  ['responsible', 'Ответственный'], ['priority', 'Приоритет'], ['comment', 'Комментарий'], ['source_note', 'Условия оплаты'],
+]
 const defaultRegistryColumnWidths = [46, 220, 130, 130, 180, 120, 180, 135, 240, 110, 145, 145, 145, 160, 135, 160, 120, 240, 240, 118]
 const minimumRegistryColumnWidths = [46, 130, 105, 100, 120, 90, 110, 110, 130, 90, 115, 115, 115, 110, 105, 115, 95, 120, 120, 108]
 const registryColumnWidthsKey = 'registry-table-column-widths-v1'
@@ -621,7 +627,7 @@ function canSplitPayment(item) {
   return Number(item?.amount) > 0 && Number(item?.installment_count || 0) <= 1 && !item?.split_group_id && !item?.actual_payment_date && !['Оплачено', 'Отменено'].includes(item?.status)
 }
 
-function ObligationHistoryModal({ item, notify, onClose }) {
+export function ObligationHistoryModal({ item, notify, onClose }) {
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
   useEffect(() => {
@@ -646,6 +652,10 @@ function ObligationHistoryModal({ item, notify, onClose }) {
             <div><Clock3 size={19}/><span><small>Дата и время заведения</small><strong>{historyDateTime(record.created_at)}</strong><b>{record.created_by || 'Система'}</b></span></div>
             <div><History size={19}/><span><small>Последнее изменение</small><strong>{historyDateTime(record.updated_at)}</strong><b>{record.updated_by || 'Система'}</b></span></div>
             <div><Info size={19}/><span><small>Текущее состояние</small><strong>{record.status || 'Статус не указан'}</strong><b>{money(record.amount)}</b></span></div>
+          </section>
+          <section className="obligation-current-section">
+            <header><h3>Подробная информация о платеже</h3><span>Актуальные значения из основного реестра обязательств</span></header>
+            <div className="obligation-current-grid">{historyCurrentFields.map(([field, label]) => <div className={field === 'comment' || field === 'source_note' ? 'wide' : ''} key={field}><small>{label}</small><strong>{historyValue(field, record[field])}</strong></div>)}</div>
           </section>
           <section className="obligation-history-section">
             <header><div><h3>История работы сотрудников</h3><span>{data.events.length} {historyEventWord(data.events.length)} в сохранённой истории</span></div></header>
