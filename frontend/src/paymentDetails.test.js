@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import test from 'node:test'
+import { mergeCurrentObligationRecord } from './obligationHistoryView.js'
 
 const payments = fs.readFileSync(new URL('./Payments.jsx', import.meta.url), 'utf8')
 const registry = fs.readFileSync(new URL('./Registry.jsx', import.meta.url), 'utf8')
@@ -24,4 +25,16 @@ test('payment drilldown does not change print report columns', () => {
   const printReport = payments.slice(payments.indexOf('function PaymentPrintReport'))
   assert.match(printReport, /paymentColumns\.map\(column => <th/)
   assert.doesNotMatch(printReport, /payment-details-button/)
+})
+
+test('payment drilldown keeps current payment values while preserving audit authors', () => {
+  const record = mergeCurrentObligationRecord(
+    { legal_entity: 'ООО «Мирт»', document_date: '2026-08-03', created_by: '' },
+    { legal_entity: '', document_date: '', created_by: 'Администратор', updated_by: 'Редактор' },
+  )
+
+  assert.equal(record.legal_entity, 'ООО «Мирт»')
+  assert.equal(record.document_date, '2026-08-03')
+  assert.equal(record.created_by, 'Администратор')
+  assert.equal(record.updated_by, 'Редактор')
 })
