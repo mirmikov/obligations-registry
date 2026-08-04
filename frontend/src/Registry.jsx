@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { AlertTriangle, ArrowRight, CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, Clock3, Download, Eye, FileText, FileUp, Filter, History, Info, LocateFixed, Maximize2, Minimize2, Paperclip, Plus, RotateCcw, Scissors, Search, Trash2, UserRound, X } from 'lucide-react'
+import { createPortal } from 'react-dom'
+import { AlertTriangle, ArrowRight, CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, Clock3, Download, ExternalLink, FileText, FileUp, Filter, History, Info, LoaderCircle, LocateFixed, Maximize2, Minimize2, Paperclip, Plus, RotateCcw, Scissors, Search, Trash2, UserRound, X } from 'lucide-react'
 import { download, request, requestBlob } from './api'
 import { DateInput, money, PageHeader, roleLabel, shortDate } from './App'
 import { BLANK_ACCOUNT_TYPE_FILTER } from './filterValues'
@@ -98,7 +99,7 @@ export default function Registry({ user, notify, maintenance, onToggleMaintenanc
   }, [filters, page, sort])
   const load = () => { setLoading(true); request(`/api/obligations?${query}`).then(result => { const lastPage = Math.max(1, Math.ceil(result.total / result.page_size)); if (page > lastPage) { setPage(lastPage); return }; rowsRef.current = new Map(result.items.map(item => [item.id, item])); setData(result) }).catch(e => notify(e.message, 'error')).finally(() => setLoading(false)) }
   const updateScanMeta = (id, meta) => {
-    const scanValues = meta ? { has_scan: true, scan_name: meta.name, scan_size: meta.size } : { has_scan: false, scan_name: '', scan_size: 0 }
+    const scanValues = meta ? { has_scan: true, scan_name: meta.name, scan_size: meta.size, scan_updated_at: meta.updated_at } : { has_scan: false, scan_name: '', scan_size: 0, scan_updated_at: '' }
     setData(current => ({ ...current, items: current.items.map(item => item.id === id ? { ...item, ...scanValues } : item) }))
     const current = rowsRef.current.get(id)
     if (current) rowsRef.current.set(id, { ...current, ...scanValues })
@@ -459,8 +460,29 @@ function ObligationScanControl({ item, editable, notify, onChanged }) {
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
+  const [preview, setPreview] = useState({ loading: false, url: '', type: '', error: '' })
+  const [previewVersion, setPreviewVersion] = useState(0)
   const inputRef = useRef(null)
   const chooseFile = () => inputRef.current?.click()
+  const closeModal = () => { if (!busy) { setOpen(false); setConfirmDelete(false) } }
+  useEffect(() => {
+    if (!open || !item.has_scan) return
+    let active = true
+    let objectURL = ''
+    setPreview({ loading: true, url: '', type: '', error: '' })
+    requestBlob(`/api/obligations/${item.id}/scan`).then(blob => {
+      if (!active) return
+      objectURL = URL.createObjectURL(blob)
+      setPreview({ loading: false, url: objectURL, type: blob.type, error: '' })
+    }).catch(error => { if (active) setPreview({ loading: false, url: '', type: '', error: error.message }) })
+    return () => { active = false; if (objectURL) URL.revokeObjectURL(objectURL) }
+  }, [open, item.id, item.has_scan, item.scan_name, item.scan_size, previewVersion])
+  useEffect(() => {
+    if (!open) return
+    const closeOnEscape = event => { if (event.key === 'Escape') closeModal() }
+    document.addEventListener('keydown', closeOnEscape)
+    return () => document.removeEventListener('keydown', closeOnEscape)
+  }, [open, busy])
   const upload = async event => {
     const file = event.target.files?.[0]
     event.target.value = ''
@@ -470,17 +492,7 @@ function ObligationScanControl({ item, editable, notify, onChanged }) {
     setBusy(true)
     try {
       const meta = await request(`/api/obligations/${item.id}/scan`, { method: 'POST', body: form })
-      onChanged(meta); setOpen(true); notify('Скан документа сохранён')
-    } catch (error) { notify(error.message, 'error') } finally { setBusy(false) }
-  }
-  const view = async () => {
-    setBusy(true)
-    try {
-      const blob = await requestBlob(`/api/obligations/${item.id}/scan`)
-      const url = URL.createObjectURL(blob)
-      const link = document.createElement('a')
-      link.href = url; link.target = '_blank'; link.rel = 'noopener'; link.click()
-      window.setTimeout(() => URL.revokeObjectURL(url), 60000)
+      onChanged(meta); setConfirmDelete(false); setPreviewVersion(version => version + 1); setOpen(true); notify('Скан документа сохранён')
     } catch (error) { notify(error.message, 'error') } finally { setBusy(false) }
   }
   const remove = async () => {
@@ -493,14 +505,17 @@ function ObligationScanControl({ item, editable, notify, onChanged }) {
   }
   return <>
     <input ref={inputRef} className="scan-file-input" type="file" accept="application/pdf,image/png,image/jpeg,image/webp" onChange={upload}/>
-    <button type="button" className={`scan-cell-button ${item.has_scan ? 'has-scan' : ''}`} disabled={busy || (!editable && !item.has_scan)} onClick={() => item.has_scan ? setOpen(true) : chooseFile()} title={item.has_scan ? `Скан: ${item.scan_name}` : editable ? 'Загрузить скан документа' : 'Скан не загружен'} aria-label={item.has_scan ? `Открыть скан документа для записи №${item.id}` : `Загрузить скан документа для записи №${item.id}`}>
-      {item.has_scan ? <FileText size={15}/> : <Paperclip size={15}/>}<span>{busy ? '…' : item.has_scan ? 'Скан' : 'Загрузить'}</span>
+    <button type="button" className={`scan-cell-button ${item.has_scan ? 'has-scan' : ''}`} disabled={busy || (!editable && !item.has_scan)} onClick={() => { setConfirmDelete(false); item.has_scan ? setOpen(true) : chooseFile() }} title={item.has_scan ? `Открыть: ${item.scan_name}` : editable ? 'Загрузить скан документа' : 'Скан не загружен'} aria-label={item.has_scan ? `Открыть скан документа для записи №${item.id}` : `Загрузить скан документа для записи №${item.id}`}>
+      {item.has_scan ? <FileText size={16}/> : <Paperclip size={16}/>}<span>{busy ? '…' : 'Скан'}</span>{item.has_scan && <i aria-hidden="true"/>}
     </button>
-    {open && <div className="modal-backdrop scan-modal-backdrop" onMouseDown={event => { if (event.target === event.currentTarget && !busy) setOpen(false) }}><section className="modal scan-document-modal" role="dialog" aria-modal="true" aria-label={`Скан документа для записи №${item.id}`}>
-      <header className="modal-head"><div><p className="eyebrow">Документ платежа</p><h2>Скан документа</h2><span>{item.scan_name || 'Файл прикреплён к записи'}</span></div><button type="button" onClick={() => setOpen(false)} aria-label="Закрыть"><X size={18}/></button></header>
-      <div className="scan-document-body"><div className="scan-document-icon"><FileText size={34}/></div><div><strong>{item.scan_name}</strong><span>{formatFileSize(item.scan_size)}</span><small>Запись №{item.id} · {item.counterparty || 'Контрагент не указан'}</small></div></div>
-      <footer className="modal-footer scan-document-actions"><button type="button" className="secondary" disabled={busy} onClick={view}><Eye size={16}/>Просмотреть</button>{editable && <><button type="button" className="secondary" disabled={busy} onClick={chooseFile}><FileUp size={16}/>Загрузить новый</button><button type="button" className="danger" disabled={busy} onClick={remove}><Trash2 size={16}/>{confirmDelete ? 'Подтвердить удаление' : 'Удалить'}</button></>}</footer>
-    </section></div>}
+    {open && createPortal(<div className="modal-backdrop scan-modal-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) closeModal() }}><section className="modal scan-document-modal" role="dialog" aria-modal="true" aria-label={`Скан документа для записи №${item.id}`}>
+      <header className="modal-head scan-document-head"><div><p className="eyebrow">Документ платежа · запись №{item.id}</p><h2>Просмотр скана</h2><span title={item.scan_name}>{item.scan_name || 'Файл прикреплён к записи'}</span></div><button type="button" onClick={closeModal} aria-label="Закрыть"><X size={18}/></button></header>
+      <div className="scan-document-layout">
+        <aside className="scan-document-summary"><div className="scan-document-icon"><FileText size={30}/></div><div className="scan-document-meta"><strong title={item.scan_name}>{item.scan_name}</strong><span>{formatFileSize(item.scan_size)}</span>{item.scan_updated_at && <span>Загружен {formatScanDate(item.scan_updated_at)}</span>}<small>{item.counterparty || 'Контрагент не указан'}{item.document_number ? ` · ${item.document_number}` : ''}</small></div></aside>
+        <div className="scan-document-preview" aria-live="polite">{preview.loading ? <div className="scan-preview-state"><LoaderCircle className="spin" size={30}/><strong>Загружаем документ…</strong></div> : preview.error ? <div className="scan-preview-state error"><AlertTriangle size={30}/><strong>{preview.error}</strong><button type="button" className="secondary" onClick={() => setPreviewVersion(version => version + 1)}>Повторить</button></div> : preview.url ? (preview.type.startsWith('image/') ? <img src={preview.url} alt={`Скан ${item.scan_name}`}/> : <iframe src={preview.url} title={`Скан ${item.scan_name}`}/>) : null}</div>
+      </div>
+      <footer className="modal-footer scan-document-actions">{preview.url && <a className="secondary" href={preview.url} target="_blank" rel="noopener noreferrer"><ExternalLink size={16}/>Открыть отдельно</a>}{editable && <><button type="button" className="secondary" disabled={busy} onClick={chooseFile}><FileUp size={16}/>Заменить файл</button><button type="button" className={`danger ${confirmDelete ? 'confirming' : ''}`} disabled={busy} onClick={remove}><Trash2 size={16}/>{confirmDelete ? 'Нажмите ещё раз для удаления' : 'Удалить'}</button></>}</footer>
+    </section></div>, document.body)}
   </>
 }
 
@@ -509,6 +524,11 @@ function formatFileSize(bytes) {
   if (size < 1024) return `${size} Б`
   if (size < 1024 * 1024) return `${Math.round(size / 1024)} КБ`
   return `${(size / (1024 * 1024)).toLocaleString('ru-RU', { maximumFractionDigits: 1 })} МБ`
+}
+
+function formatScanDate(value) {
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString('ru-RU', { dateStyle: 'short', timeStyle: 'short' })
 }
 
 function EditableCell({ item, field, label, editable, saving, type = 'text', options, allowCustom = false, className = '', render, onCommit, onStartEdit, onFinishEdit }) {
