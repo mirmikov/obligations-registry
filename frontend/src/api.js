@@ -25,7 +25,7 @@ export async function requestBlob(path) {
     localStorage.removeItem('registry_token')
     window.dispatchEvent(new Event('registry:logout'))
   }
-  if (!response.ok) throw new Error('Не удалось загрузить изображение')
+  if (!response.ok) throw new Error('Не удалось загрузить файл')
   return response.blob()
 }
 

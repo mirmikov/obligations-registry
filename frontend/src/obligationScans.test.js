@@ -15,9 +15,18 @@ test('registry selection cell is split into selection and scan controls', () => 
 test('scan control uploads, views, replaces and deletes a document', () => {
   assert.match(registry, /form\.append\('scan', file\)/)
   assert.match(registry, /requestBlob\(`\/api\/obligations\/\$\{item\.id\}\/scan`\)/)
-  assert.match(registry, /Загрузить новый/)
-  assert.match(registry, /Подтвердить удаление/)
+  assert.match(registry, /Заменить файл/)
+  assert.match(registry, /Нажмите ещё раз для удаления/)
+  assert.match(registry, /<iframe src=\{preview\.url\}/)
+  assert.match(registry, /createPortal\(<div className="modal-backdrop scan-modal-backdrop"/)
   assert.match(registry, /accept="application\/pdf,image\/png,image\/jpeg,image\/webp"/)
+})
+
+test('scan modal is adaptive and cannot be clipped by the table cell', () => {
+  assert.match(registry, /document\.body\)/)
+  assert.match(styles, /\.scan-document-modal\{[^}]*height:min\(820px/)
+  assert.match(styles, /\.scan-document-preview iframe,\.scan-document-preview img/)
+  assert.match(styles, /@media\(max-width:760px\).*\.scan-document-layout\{grid-template-columns:1fr/s)
 })
 
 test('scan control follows registry edit permissions', () => {

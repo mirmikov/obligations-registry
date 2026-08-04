@@ -47,6 +47,7 @@ type obligationUpdateInput struct {
 	HasScan           bool   `json:"has_scan"`
 	ScanName          string `json:"scan_name,omitempty"`
 	ScanSize          int64  `json:"scan_size,omitempty"`
+	ScanUpdatedAt     string `json:"scan_updated_at,omitempty"`
 }
 
 type obligation struct {
@@ -63,6 +64,7 @@ type obligation struct {
 	HasScan           bool   `json:"has_scan"`
 	ScanName          string `json:"scan_name,omitempty"`
 	ScanSize          int64  `json:"scan_size,omitempty"`
+	ScanUpdatedAt     string `json:"scan_updated_at,omitempty"`
 }
 
 const obligationColumns = `id,COALESCE(source_row,0),COALESCE(account_type,''),COALESCE(to_char(entry_date,'YYYY-MM-DD'),''),COALESCE(counterparty,''),COALESCE(legal_entity,''),COALESCE(cost_category,''),COALESCE(priority,''),COALESCE(responsible,''),COALESCE(document_number,''),deferment_days,COALESCE(to_char(document_date,'YYYY-MM-DD'),''),amount::float8,COALESCE(to_char(planned_payment_date,'YYYY-MM-DD'),''),COALESCE(to_char(approval_date,'YYYY-MM-DD'),''),COALESCE(to_char(actual_payment_date,'YYYY-MM-DD'),''),COALESCE(status,''),COALESCE(urgency,''),COALESCE(comment,''),COALESCE(source_note,''),to_char(created_at,'YYYY-MM-DD HH24:MI'),to_char(updated_at,'YYYY-MM-DD HH24:MI'),COALESCE(planned_payment_date<CURRENT_DATE AND COALESCE(status,'') NOT IN ('Оплачено','Отменено'),false),COALESCE(planned_payment_date BETWEEN CURRENT_DATE AND CURRENT_DATE+3 AND COALESCE(status,'') NOT IN ('Оплачено','Отменено'),false),COALESCE(split_group_id,''),split_parent_id,COALESCE(installment_number,0),COALESCE(installment_count,0)`
@@ -174,6 +176,7 @@ func (a *app) listObligations(w http.ResponseWriter, r *http.Request) {
 			item.HasScan = true
 			item.ScanName = scan.OriginalName
 			item.ScanSize = scan.Size
+			item.ScanUpdatedAt = scan.UpdatedAt
 		}
 		items = append(items, item)
 	}
