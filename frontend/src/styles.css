@@ -584,6 +584,41 @@ html[data-theme="dark"] .status-cancelled{background:#303638;color:#b6c0c0}
 html[data-theme="dark"] .row-actions button,html[data-theme="dark"] .reference-list button{background:#223538;color:#a8c4be}
 html[data-theme="dark"] .row-actions .info-button{background:#263449;color:#a9c2e2}
 html[data-theme="dark"] .row-actions .danger-button,html[data-theme="dark"] .reference-list .reference-delete{background:#3a2624;color:#e89a8c}
+
+/* Registry selection and document scans */
+.inline-registry{--registry-row-height:68px}
+.inline-registry .check-col{padding:0!important}
+.registry-row-controls{width:100%;height:var(--registry-row-height);display:grid;grid-template-rows:32px 1fr;align-items:center;justify-items:center}
+.registry-row-selector{width:100%;height:32px;display:grid;place-items:center;border-bottom:1px solid #e4ece9;cursor:pointer}
+.registry-row-selector input{position:absolute;opacity:0;pointer-events:none}
+.registry-row-selector span{width:19px;height:19px;border:1.5px solid #afc2bc;border-radius:6px;background:#fff;color:transparent;display:grid;place-items:center;transition:.16s ease}
+.registry-row-selector:hover span{border-color:#4d8b7d;background:#f0f7f4}
+.registry-row-selector input:focus-visible+span{outline:3px solid rgba(55,126,110,.2);outline-offset:2px}
+.registry-row-selector input:checked+span{border-color:#27725f;background:#27725f;color:#fff;box-shadow:0 3px 9px rgba(39,114,95,.24)}
+.scan-file-input{display:none}
+.scan-cell-button{width:100%;height:35px;padding:2px 1px;border:0;background:transparent;color:#839592;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;font-size:7px;font-weight:800;line-height:1;cursor:pointer}
+.scan-cell-button:hover{background:#edf5f2;color:#286d5e}
+.scan-cell-button.has-scan{color:#24715f;background:#e8f3ef}
+.scan-cell-button:disabled{cursor:default;opacity:.48}
+.scan-modal-backdrop{z-index:360}
+.scan-document-modal{width:min(570px,calc(100vw - 30px))}
+.scan-document-body{margin:18px 20px;padding:18px;border:1px solid #dce7e3;border-radius:13px;background:#f7faf9;display:flex;align-items:center;gap:15px}
+.scan-document-icon{width:58px;height:58px;border-radius:14px;background:#dfefe9;color:#28715f;display:grid;place-items:center;flex:none}
+.scan-document-body>div:last-child{min-width:0;display:flex;flex-direction:column;gap:4px}
+.scan-document-body strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#23474a;font-size:14px}
+.scan-document-body span,.scan-document-body small{color:#718487;font-size:11px}
+.scan-document-actions{display:flex;gap:8px;flex-wrap:wrap}
+.scan-document-actions button{display:flex;align-items:center;justify-content:center;gap:7px}
+.scan-document-actions .danger{margin-left:auto;background:#a84b3d;color:#fff;border-color:#a84b3d}
+html[data-theme="dark"] .registry-row-selector{border-color:#304245}
+html[data-theme="dark"] .registry-row-selector span{background:#172629;border-color:#506562}
+html[data-theme="dark"] .registry-row-selector input:checked+span{background:#54a68f;border-color:#54a68f;color:#10201d}
+html[data-theme="dark"] .scan-cell-button:hover{background:#213638;color:#8bc8b7}
+html[data-theme="dark"] .scan-cell-button.has-scan{background:#213b35;color:#83c6b2}
+html[data-theme="dark"] .scan-document-body{background:#19282b;border-color:#34474a}
+html[data-theme="dark"] .scan-document-icon{background:#254039;color:#86cbb8}
+html[data-theme="dark"] .scan-document-body strong{color:#e0ebe8}
+html[data-theme="dark"] .scan-document-body span,html[data-theme="dark"] .scan-document-body small{color:#9bb0ac}
 html[data-theme="dark"] .executive-period-overdue .executive-period-icon{background:#3a2422;color:#ef8e7c}
 html[data-theme="dark"] .executive-period-week .executive-period-icon{background:#3a2e1f;color:#e3ad64}
 html[data-theme="dark"] .executive-period-month .executive-period-icon{background:#1e3933;color:#7cc9b3}

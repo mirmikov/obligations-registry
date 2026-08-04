@@ -44,6 +44,9 @@ type obligationUpdateInput struct {
 	SplitParentID     *int64 `json:"split_parent_id"`
 	InstallmentNumber int    `json:"installment_number"`
 	InstallmentCount  int    `json:"installment_count"`
+	HasScan           bool   `json:"has_scan"`
+	ScanName          string `json:"scan_name,omitempty"`
+	ScanSize          int64  `json:"scan_size,omitempty"`
 }
 
 type obligation struct {
@@ -57,6 +60,9 @@ type obligation struct {
 	SplitParentID     *int64 `json:"split_parent_id"`
 	InstallmentNumber int    `json:"installment_number"`
 	InstallmentCount  int    `json:"installment_count"`
+	HasScan           bool   `json:"has_scan"`
+	ScanName          string `json:"scan_name,omitempty"`
+	ScanSize          int64  `json:"scan_size,omitempty"`
 }
 
 const obligationColumns = `id,COALESCE(source_row,0),COALESCE(account_type,''),COALESCE(to_char(entry_date,'YYYY-MM-DD'),''),COALESCE(counterparty,''),COALESCE(legal_entity,''),COALESCE(cost_category,''),COALESCE(priority,''),COALESCE(responsible,''),COALESCE(document_number,''),deferment_days,COALESCE(to_char(document_date,'YYYY-MM-DD'),''),amount::float8,COALESCE(to_char(planned_payment_date,'YYYY-MM-DD'),''),COALESCE(to_char(approval_date,'YYYY-MM-DD'),''),COALESCE(to_char(actual_payment_date,'YYYY-MM-DD'),''),COALESCE(status,''),COALESCE(urgency,''),COALESCE(comment,''),COALESCE(source_note,''),to_char(created_at,'YYYY-MM-DD HH24:MI'),to_char(updated_at,'YYYY-MM-DD HH24:MI'),COALESCE(planned_payment_date<CURRENT_DATE AND COALESCE(status,'') NOT IN ('Оплачено','Отменено'),false),COALESCE(planned_payment_date BETWEEN CURRENT_DATE AND CURRENT_DATE+3 AND COALESCE(status,'') NOT IN ('Оплачено','Отменено'),false),COALESCE(split_group_id,''),split_parent_id,COALESCE(installment_number,0),COALESCE(installment_count,0)`
@@ -163,6 +169,11 @@ func (a *app) listObligations(w http.ResponseWriter, r *http.Request) {
 			log.Printf("scan obligation: %v", err)
 			fail(w, 500, "Ошибка чтения реестра")
 			return
+		}
+		if scan, ok := readObligationScan(item.ID); ok {
+			item.HasScan = true
+			item.ScanName = scan.OriginalName
+			item.ScanSize = scan.Size
 		}
 		items = append(items, item)
 	}

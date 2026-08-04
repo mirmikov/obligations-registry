@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -430,6 +431,52 @@ func TestReadChatMessageInputAcceptsClipboardPNG(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(directory, "9", name)); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestObligationScanAcceptsSupportedDocuments(t *testing.T) {
+	for name, payload := range map[string][]byte{
+		"scan.pdf":  []byte("%PDF-1.7\nscan"),
+		"scan.png":  []byte("\x89PNG\r\n\x1a\nscan"),
+		"scan.jpg":  []byte("\xff\xd8\xff\xe0scan"),
+		"scan.webp": []byte("RIFF\x08\x00\x00\x00WEBPscan"),
+	} {
+		contentType, extension, ok := detectObligationScan(payload)
+		if !ok || contentType == "" || extension != filepath.Ext(name) {
+			t.Fatalf("%s rejected: type=%q extension=%q", name, contentType, extension)
+		}
+	}
+	if _, _, ok := detectObligationScan([]byte("plain text")); ok {
+		t.Fatal("plain text accepted as a document scan")
+	}
+}
+
+func TestObligationScanCanBeReplacedAndRemoved(t *testing.T) {
+	directory := t.TempDir()
+	t.Setenv("OBLIGATION_SCAN_DIR", directory)
+	first, err := saveObligationScan(42, "old.pdf", []byte("%PDF-1.7\nold"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := saveObligationScan(42, "new.pdf", []byte("%PDF-1.7\nnew"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.StoredName == second.StoredName {
+		t.Fatal("replacement reused stored filename")
+	}
+	actual, ok := readObligationScan(42)
+	if !ok || actual.OriginalName != "new.pdf" {
+		t.Fatalf("current scan = %#v, %v", actual, ok)
+	}
+	if _, err = os.Stat(filepath.Join(directory, "42", first.StoredName)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("old scan was not removed: %v", err)
+	}
+	if err = removeObligationScan(42); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok = readObligationScan(42); ok {
+		t.Fatal("removed scan is still visible")
 	}
 }
 
