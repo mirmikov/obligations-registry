@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { AlertTriangle, ArrowRight, CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, Clock3, Download, FileUp, Filter, History, Info, LocateFixed, Maximize2, Minimize2, Plus, RotateCcw, Scissors, Search, Trash2, UserRound, X } from 'lucide-react'
-import { download, request } from './api'
+import { AlertTriangle, ArrowRight, CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, Clock3, Download, Eye, FileText, FileUp, Filter, History, Info, LocateFixed, Maximize2, Minimize2, Paperclip, Plus, RotateCcw, Scissors, Search, Trash2, UserRound, X } from 'lucide-react'
+import { download, request, requestBlob } from './api'
 import { DateInput, money, PageHeader, roleLabel, shortDate } from './App'
 import { BLANK_ACCOUNT_TYPE_FILTER } from './filterValues'
 import { withDerivedObligationValues } from './obligationValues'
@@ -22,8 +22,8 @@ const historyCurrentFields = [
   ['approval_date', 'Дата утверждения'], ['actual_payment_date', 'Фактическая дата оплаты'], ['status', 'Статус'], ['urgency', 'Срочность'],
   ['responsible', 'Ответственный'], ['priority', 'Приоритет'], ['comment', 'Комментарий'], ['source_note', 'Условия оплаты'],
 ]
-const defaultRegistryColumnWidths = [46, 220, 130, 130, 180, 120, 180, 135, 240, 110, 145, 145, 145, 160, 135, 160, 120, 240, 240, 118]
-const minimumRegistryColumnWidths = [46, 130, 105, 100, 120, 90, 110, 110, 130, 90, 115, 115, 115, 110, 105, 115, 95, 120, 120, 108]
+const defaultRegistryColumnWidths = [58, 220, 130, 130, 180, 120, 180, 135, 240, 110, 145, 145, 145, 160, 135, 160, 120, 240, 240, 118]
+const minimumRegistryColumnWidths = [58, 130, 105, 100, 120, 90, 110, 110, 130, 90, 115, 115, 115, 110, 105, 115, 95, 120, 120, 108]
 const registryColumnWidthsKey = 'registry-table-column-widths-v1'
 const registryLargeFontKey = 'registry-table-large-font'
 const registryDragIgnoredSelector = 'button, input, select, textarea, a, label, [contenteditable="true"], [role="button"], [role="separator"], .inline-select-menu, .date-input-wrap'
@@ -97,6 +97,12 @@ export default function Registry({ user, notify, maintenance, onToggleMaintenanc
     return params.toString()
   }, [filters, page, sort])
   const load = () => { setLoading(true); request(`/api/obligations?${query}`).then(result => { const lastPage = Math.max(1, Math.ceil(result.total / result.page_size)); if (page > lastPage) { setPage(lastPage); return }; rowsRef.current = new Map(result.items.map(item => [item.id, item])); setData(result) }).catch(e => notify(e.message, 'error')).finally(() => setLoading(false)) }
+  const updateScanMeta = (id, meta) => {
+    const scanValues = meta ? { has_scan: true, scan_name: meta.name, scan_size: meta.size } : { has_scan: false, scan_name: '', scan_size: 0 }
+    setData(current => ({ ...current, items: current.items.map(item => item.id === id ? { ...item, ...scanValues } : item) }))
+    const current = rowsRef.current.get(id)
+    if (current) rowsRef.current.set(id, { ...current, ...scanValues })
+  }
   useEffect(() => { if (!viewReady) return; const timer = setTimeout(load, 220); return () => clearTimeout(timer) }, [query, viewReady])
   const viewPayload = () => ({ filters, page, sort, scroll_left: scrollPositionRef.current.left, scroll_top: scrollPositionRef.current.top, fullscreen: tableFullscreen })
   latestViewRef.current = viewReady ? viewPayload() : null
@@ -308,7 +314,7 @@ export default function Registry({ user, notify, maintenance, onToggleMaintenanc
         <ColumnHead label="Ответственный" value={filters.responsible} options={refs.responsibles} onFilter={value => setFilter('responsible', value)} {...resizeProps(15)}/>
         <ColumnHead label="Приоритет" value={filters.priority} options={refs.priorities} onFilter={value => setFilter('priority', value)} {...resizeProps(16)}/>
         <PlainColumnHead label="Комментарий" {...resizeProps(17)}/><PlainColumnHead label="Условия оплаты" {...resizeProps(18)}/><th className="action-col"/></tr></thead>
-      <tbody>{newRow && <RegistryRow item={newRow} refs={refs} editable isNew savingCells={savingCells} onCommit={commitNewCell} onStartEdit={startCellEdit} onFinishEdit={finishCellEdit} onDelete={() => setNewRow(null)}/>} {loading ? <SkeletonRows/> : data.items.length === 0 && !newRow ? <tr><td colSpan="20"><div className="empty-state"><Search size={27}/><strong>Ничего не найдено</strong><span>Измените или сбросьте фильтры</span></div></td></tr> : data.items.map(item => <RegistryRow key={item.id} item={item} refs={refs} editable={can(user, 'registry.edit')} selected={selected.includes(item.id)} savingCells={savingCells} onToggle={() => setSelected(s => s.includes(item.id) ? s.filter(id => id !== item.id) : [...s, item.id])} onCommit={commitCell} onStartEdit={startCellEdit} onFinishEdit={finishCellEdit} onInfo={() => setHistoryItem(item)} onSplit={can(user, 'registry.split') && canSplitPayment(item) ? () => setSplitItem(item) : null} onDelete={can(user, 'registry.delete') ? () => remove(item.id) : null}/>)}</tbody></table></div>
+      <tbody>{newRow && <RegistryRow item={newRow} refs={refs} editable isNew savingCells={savingCells} onCommit={commitNewCell} onStartEdit={startCellEdit} onFinishEdit={finishCellEdit} onDelete={() => setNewRow(null)}/>} {loading ? <SkeletonRows/> : data.items.length === 0 && !newRow ? <tr><td colSpan="20"><div className="empty-state"><Search size={27}/><strong>Ничего не найдено</strong><span>Измените или сбросьте фильтры</span></div></td></tr> : data.items.map(item => <RegistryRow key={item.id} item={item} refs={refs} editable={can(user, 'registry.edit')} selected={selected.includes(item.id)} savingCells={savingCells} onToggle={() => setSelected(s => s.includes(item.id) ? s.filter(id => id !== item.id) : [...s, item.id])} onCommit={commitCell} onStartEdit={startCellEdit} onFinishEdit={finishCellEdit} onScanChanged={meta => updateScanMeta(item.id, meta)} notify={notify} onInfo={() => setHistoryItem(item)} onSplit={can(user, 'registry.split') && canSplitPayment(item) ? () => setSplitItem(item) : null} onDelete={can(user, 'registry.delete') ? () => remove(item.id) : null}/>)}</tbody></table></div>
       <footer className="table-footer"><div className="table-footer-summary" aria-live="polite" aria-busy={loading}><span>Показано {data.items.length} из {data.total.toLocaleString('ru-RU')}</span><span className="table-footer-total"><b>Сумма по фильтрам</b><strong>{loading ? 'Считаем…' : money(data.filtered_amount)}</strong></span></div><div><button disabled={page === 1} onClick={() => setPage(p => p - 1)}><ChevronLeft size={17}/></button><span>Страница <b>{page}</b> из {totalPages}</span><button disabled={page === totalPages} onClick={() => setPage(p => p + 1)}><ChevronRight size={17}/></button></div></footer>
     </section>
     {bulkOpen && (
@@ -422,11 +428,11 @@ function hasActiveFilters(filters) {
   return Object.values(filters).some(value => Array.isArray(value) ? value.length > 0 : Boolean(value))
 }
 
-function RegistryRow({ item, refs, editable, isNew = false, selected, savingCells, onToggle, onCommit, onStartEdit, onFinishEdit, onInfo, onSplit, onDelete }) {
+function RegistryRow({ item, refs, editable, isNew = false, selected, savingCells, onToggle, onCommit, onStartEdit, onFinishEdit, onScanChanged, notify, onInfo, onSplit, onDelete }) {
   const saving = field => savingCells.has(`${isNew ? 'new' : item.id}:${field}`)
   const cell = (field, props = {}) => <EditableCell item={item} field={field} label={fieldLabels[field]} editable={editable} saving={saving(field)} onCommit={onCommit} onStartEdit={onStartEdit} onFinishEdit={onFinishEdit} {...props}/>
   return <tr className={`${isNew ? 'inline-new-row' : rowTone(item)}`}>
-    <td className="check-col">{isNew ? <button type="button" className="cancel-inline-row" onClick={onDelete} title="Отменить новую строку"><X size={14}/></button> : <input type="checkbox" checked={selected} onChange={onToggle}/>}</td>
+    <td className="check-col">{isNew ? <button type="button" className="cancel-inline-row" onClick={onDelete} title="Отменить новую строку"><X size={14}/></button> : <div className="registry-row-controls"><label className="registry-row-selector" title="Выбрать строку"><input type="checkbox" checked={selected} onChange={onToggle}/><span aria-hidden="true"><Check size={12}/></span></label><ObligationScanControl item={item} editable={editable} notify={notify} onChanged={onScanChanged}/></div>}</td>
     {cell('counterparty', { className: 'counterparty-cell', options: refs.counterparties, allowCustom: true })}
     {cell('entry_date', { type: 'date', className: 'entry-date-cell' })}
     {cell('account_type', { options: refs.account_types, className: 'account-type-cell' })}
@@ -447,6 +453,62 @@ function RegistryRow({ item, refs, editable, isNew = false, selected, savingCell
     {cell('source_note', { className: 'comment-cell' })}
     <td className="action-col">{!isNew && (onInfo || onSplit || onDelete) && <div className="row-actions">{onInfo && <button className="info-button" onClick={onInfo} title="Информация и история изменений" aria-label={`Информация о записи №${item.id}`}><Info size={16}/></button>}{onSplit && <button className="split-button" onClick={onSplit} title="Разбить платёж"><Scissors size={16}/></button>}{onDelete && <button className="danger-button" onClick={onDelete} title="Удалить"><Trash2 size={16}/></button>}</div>}</td>
   </tr>
+}
+
+function ObligationScanControl({ item, editable, notify, onChanged }) {
+  const [open, setOpen] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState(false)
+  const inputRef = useRef(null)
+  const chooseFile = () => inputRef.current?.click()
+  const upload = async event => {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (!file) return
+    const form = new FormData()
+    form.append('scan', file)
+    setBusy(true)
+    try {
+      const meta = await request(`/api/obligations/${item.id}/scan`, { method: 'POST', body: form })
+      onChanged(meta); setOpen(true); notify('Скан документа сохранён')
+    } catch (error) { notify(error.message, 'error') } finally { setBusy(false) }
+  }
+  const view = async () => {
+    setBusy(true)
+    try {
+      const blob = await requestBlob(`/api/obligations/${item.id}/scan`)
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url; link.target = '_blank'; link.rel = 'noopener'; link.click()
+      window.setTimeout(() => URL.revokeObjectURL(url), 60000)
+    } catch (error) { notify(error.message, 'error') } finally { setBusy(false) }
+  }
+  const remove = async () => {
+    if (!confirmDelete) { setConfirmDelete(true); return }
+    setBusy(true)
+    try {
+      await request(`/api/obligations/${item.id}/scan`, { method: 'DELETE' })
+      onChanged(null); setOpen(false); setConfirmDelete(false); notify('Скан документа удалён')
+    } catch (error) { notify(error.message, 'error') } finally { setBusy(false) }
+  }
+  return <>
+    <input ref={inputRef} className="scan-file-input" type="file" accept="application/pdf,image/png,image/jpeg,image/webp" onChange={upload}/>
+    <button type="button" className={`scan-cell-button ${item.has_scan ? 'has-scan' : ''}`} disabled={busy || (!editable && !item.has_scan)} onClick={() => item.has_scan ? setOpen(true) : chooseFile()} title={item.has_scan ? `Скан: ${item.scan_name}` : editable ? 'Загрузить скан документа' : 'Скан не загружен'} aria-label={item.has_scan ? `Открыть скан документа для записи №${item.id}` : `Загрузить скан документа для записи №${item.id}`}>
+      {item.has_scan ? <FileText size={15}/> : <Paperclip size={15}/>}<span>{busy ? '…' : item.has_scan ? 'Скан' : 'Загрузить'}</span>
+    </button>
+    {open && <div className="modal-backdrop scan-modal-backdrop" onMouseDown={event => { if (event.target === event.currentTarget && !busy) setOpen(false) }}><section className="modal scan-document-modal" role="dialog" aria-modal="true" aria-label={`Скан документа для записи №${item.id}`}>
+      <header className="modal-head"><div><p className="eyebrow">Документ платежа</p><h2>Скан документа</h2><span>{item.scan_name || 'Файл прикреплён к записи'}</span></div><button type="button" onClick={() => setOpen(false)} aria-label="Закрыть"><X size={18}/></button></header>
+      <div className="scan-document-body"><div className="scan-document-icon"><FileText size={34}/></div><div><strong>{item.scan_name}</strong><span>{formatFileSize(item.scan_size)}</span><small>Запись №{item.id} · {item.counterparty || 'Контрагент не указан'}</small></div></div>
+      <footer className="modal-footer scan-document-actions"><button type="button" className="secondary" disabled={busy} onClick={view}><Eye size={16}/>Просмотреть</button>{editable && <><button type="button" className="secondary" disabled={busy} onClick={chooseFile}><FileUp size={16}/>Загрузить новый</button><button type="button" className="danger" disabled={busy} onClick={remove}><Trash2 size={16}/>{confirmDelete ? 'Подтвердить удаление' : 'Удалить'}</button></>}</footer>
+    </section></div>}
+  </>
+}
+
+function formatFileSize(bytes) {
+  const size = Number(bytes) || 0
+  if (size < 1024) return `${size} Б`
+  if (size < 1024 * 1024) return `${Math.round(size / 1024)} КБ`
+  return `${(size / (1024 * 1024)).toLocaleString('ru-RU', { maximumFractionDigits: 1 })} МБ`
 }
 
 function EditableCell({ item, field, label, editable, saving, type = 'text', options, allowCustom = false, className = '', render, onCommit, onStartEdit, onFinishEdit }) {
