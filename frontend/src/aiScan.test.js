@@ -10,7 +10,7 @@ test('registry exposes AI scan only through create permission and accepts docume
   assert.match(registry, /can\(user, 'registry\.create'\).*AI сканирование/s)
   assert.match(registry, /accept="application\/pdf,image\/png,image\/jpeg"/)
   assert.match(registry, /request\('\/api\/obligations\/ai-scan'/)
-  assert.match(registry, /result\.status === 'processing'.*\/api\/obligations\/ai-scan\/\$\{result\.batch\}/s)
+  assert.match(registry, /result\.status === 'processing'.*\/api\/obligations\/ai-scan\/\$\{result\.batch\}\/status/s)
 })
 
 test('AI scan keeps recognized and accountant fields separate', () => {

@@ -74,7 +74,7 @@ func main() {
 	mux.Handle("POST /api/chat/conversations/{id}/read", a.authorize(a.requirePermission("chat.view")(http.HandlerFunc(a.markChatRead))))
 	mux.Handle("GET /api/obligations", a.authorize(a.requirePermission("registry.view")(http.HandlerFunc(a.listObligations))))
 	mux.Handle("POST /api/obligations/ai-scan", a.authorize(a.requirePermission("registry.create")(http.HandlerFunc(a.analyzeObligationScan))))
-	mux.Handle("GET /api/obligations/ai-scan/{batch}", a.authorize(a.requirePermission("registry.create")(http.HandlerFunc(a.aiScanStatus))))
+	mux.Handle("GET /api/obligations/ai-scan/{batch}/status", a.authorize(a.requirePermission("registry.create")(http.HandlerFunc(a.aiScanStatus))))
 	mux.Handle("GET /api/obligations/ai-scan/{batch}/{page}", a.authorize(a.requirePermission("registry.create")(http.HandlerFunc(a.serveAIScanPage))))
 	mux.Handle("POST /api/obligations/ai-scan/{batch}/commit", a.authorize(a.requirePermission("registry.create")(http.HandlerFunc(a.commitAIScan))))
 	mux.Handle("GET /api/obligations/{id}/history", a.authorize(a.requirePermission("registry.view")(http.HandlerFunc(a.obligationHistory))))

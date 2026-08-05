@@ -298,7 +298,7 @@ export default function Registry({ user, notify, maintenance, onToggleMaintenanc
       setAIScan({ ...result, loading: true, filename: file.name, error: '' })
       for (let attempt = 0; result.status === 'processing' && attempt < 360; attempt++) {
         await new Promise(resolve => window.setTimeout(resolve, 2000))
-        result = await request(`/api/obligations/ai-scan/${result.batch}`)
+        result = await request(`/api/obligations/ai-scan/${result.batch}/status`)
       }
       if (result.status === 'processing') throw new Error('Распознавание не завершилось за 12 минут. Разделите PDF на части')
       if (result.status === 'error') throw new Error(result.error || 'Не удалось распознать документ')
