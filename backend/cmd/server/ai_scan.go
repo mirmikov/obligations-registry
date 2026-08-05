@@ -212,7 +212,30 @@ func (a *app) processAIScanBatch(token, directory string, pages []string) {
 		// fast while weak scans get one focused recovery attempt.
 		if suggestion.DocumentNumber == "" || suggestion.DocumentDate == "" {
 			if fallback, fallbackErr := runTesseractWithPSM(ctx, pages[index], "6"); fallbackErr == nil && strings.TrimSpace(fallback) != "" {
-				suggestion = parseAIScanText(text+"\n"+fallback, counterparties, legalEntities)
+				candidate := parseAIScanText(text+"\n"+fallback, counterparties, legalEntities)
+				// The fallback exists only to recover missing values. Never let its
+				// denser layout replace a field the primary pass already recognized.
+				if suggestion.Counterparty != "" {
+					candidate.Counterparty = suggestion.Counterparty
+					candidate.Confidence["counterparty"] = suggestion.Confidence["counterparty"]
+				}
+				if suggestion.LegalEntity != "" {
+					candidate.LegalEntity = suggestion.LegalEntity
+					candidate.Confidence["legal_entity"] = suggestion.Confidence["legal_entity"]
+				}
+				if suggestion.DocumentNumber != "" {
+					candidate.DocumentNumber = suggestion.DocumentNumber
+					candidate.Confidence["document_number"] = suggestion.Confidence["document_number"]
+				}
+				if suggestion.DocumentDate != "" {
+					candidate.DocumentDate = suggestion.DocumentDate
+					candidate.Confidence["document_date"] = suggestion.Confidence["document_date"]
+				}
+				if suggestion.Amount != nil {
+					candidate.Amount = suggestion.Amount
+					candidate.Confidence["amount"] = suggestion.Confidence["amount"]
+				}
+				suggestion = candidate
 			}
 		}
 		suggestion.Page = index + 1
