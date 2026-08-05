@@ -27,7 +27,7 @@ export default function AIScanModal({ state, references, onChange, onRetry, onCl
         <div><p className="eyebrow">Локальное распознавание · данные не покидают сервер</p><h2><ScanLine size={22}/>AI сканирование</h2><span>{state.filename}</span></div>
         <button type="button" onClick={onClose} disabled={state.loading || state.saving} aria-label="Закрыть"><X/></button>
       </header>
-      {state.loading ? <div className="ai-scan-state"><LoaderCircle className="spin" size={38}/><strong>Распознаём страницы документа</strong><span>Проверяем ориентацию, текст, суммы и реквизиты. Многостраничный PDF может обрабатываться несколько минут.</span></div>
+      {state.loading ? <div className="ai-scan-state"><LoaderCircle className="spin" size={38}/><strong>Распознаём страницы документа{state.pages ? ` · ${state.pages}` : ''}</strong><span>Задание выполняется в фоне: проверяем ориентацию, текст, суммы и реквизиты. Многостраничный PDF может обрабатываться несколько минут.</span></div>
         : state.error ? <div className="ai-scan-state error"><AlertTriangle size={38}/><strong>Документ не распознан</strong><span>{state.error}</span><button type="button" className="primary" onClick={onRetry}>Выбрать другой файл</button></div>
         : <div className="ai-scan-layout">
           <aside className="ai-scan-pages">

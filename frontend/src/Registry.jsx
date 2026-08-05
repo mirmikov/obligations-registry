@@ -294,7 +294,14 @@ export default function Registry({ user, notify, maintenance, onToggleMaintenanc
     setAIScan({ loading: true, filename: file.name, error: '' })
     const body = new FormData(); body.append('scan', file)
     try {
-      const result = await request('/api/obligations/ai-scan', { method: 'POST', body })
+      let result = await request('/api/obligations/ai-scan', { method: 'POST', body })
+      setAIScan({ ...result, loading: true, filename: file.name, error: '' })
+      for (let attempt = 0; result.status === 'processing' && attempt < 360; attempt++) {
+        await new Promise(resolve => window.setTimeout(resolve, 2000))
+        result = await request(`/api/obligations/ai-scan/${result.batch}`)
+      }
+      if (result.status === 'processing') throw new Error('Распознавание не завершилось за 12 минут. Разделите PDF на части')
+      if (result.status === 'error') throw new Error(result.error || 'Не удалось распознать документ')
       const items = result.items.map(item => ({
         page: item.page,
         include: !item.duplicate,

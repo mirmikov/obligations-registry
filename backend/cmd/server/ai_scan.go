@@ -33,9 +33,12 @@ const (
 )
 
 type aiScanBatchMeta struct {
-	OriginalName string    `json:"original_name"`
-	CreatedAt    time.Time `json:"created_at"`
-	PageCount    int       `json:"page_count"`
+	OriginalName string             `json:"original_name"`
+	CreatedAt    time.Time          `json:"created_at"`
+	PageCount    int                `json:"page_count"`
+	Status       string             `json:"status"`
+	Error        string             `json:"error,omitempty"`
+	Items        []aiScanSuggestion `json:"items,omitempty"`
 }
 
 type aiScanSuggestion struct {
@@ -139,7 +142,7 @@ func (a *app) analyzeObligationScan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 4*time.Minute)
+	ctx, cancel := context.WithTimeout(r.Context(), 80*time.Second)
 	defer cancel()
 	pages, err := prepareAIScanPages(ctx, inputPath, contentType, directory)
 	if err != nil {
@@ -151,9 +154,48 @@ func (a *app) analyzeObligationScan(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusBadRequest, fmt.Sprintf("Документ должен содержать от 1 до %d страниц", maxAIScanPages))
 		return
 	}
-	counterparties, legalEntities, err := a.aiScanReferences(r.Context())
+	meta := aiScanBatchMeta{OriginalName: cleanObligationScanName(header.Filename, extension), CreatedAt: time.Now().UTC(), PageCount: len(pages), Status: "processing"}
+	if err = writeAIScanBatchMeta(directory, meta); err != nil {
+		fail(w, http.StatusInternalServerError, "Не удалось завершить анализ")
+		return
+	}
+	success = true
+	user := currentUser(r)
+	a.audit(r.Context(), user.ID, "analyze", "obligation_ai_scan", nil, map[string]any{"name": meta.OriginalName, "pages": len(pages)})
+	go a.processAIScanBatch(token, directory, pages)
+	writeJSON(w, http.StatusAccepted, map[string]any{"batch": token, "pages": len(pages), "engine": "Локальное OCR", "status": "processing"})
+}
+
+func writeAIScanBatchMeta(directory string, meta aiScanBatchMeta) error {
+	payload, err := json.Marshal(meta)
 	if err != nil {
-		fail(w, http.StatusInternalServerError, "Не удалось загрузить справочники")
+		return err
+	}
+	temporary := filepath.Join(directory, "metadata.json.tmp")
+	if err = os.WriteFile(temporary, payload, 0640); err != nil {
+		return err
+	}
+	return os.Rename(temporary, filepath.Join(directory, "metadata.json"))
+}
+
+func (a *app) processAIScanBatch(token, directory string, pages []string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Minute)
+	defer cancel()
+	_, meta, ok := readAIScanBatch(token)
+	if !ok {
+		return
+	}
+	failBatch := func(message string, err error) {
+		if err != nil {
+			log.Printf("AI scan batch %s: %v", token, err)
+		}
+		meta.Status = "error"
+		meta.Error = message
+		_ = writeAIScanBatchMeta(directory, meta)
+	}
+	counterparties, legalEntities, err := a.aiScanReferences(ctx)
+	if err != nil {
+		failBatch("Не удалось загрузить справочники для распознавания", err)
 		return
 	}
 	ocrTexts, ocrErrors := recognizeAIScanPages(ctx, pages, directory)
@@ -165,22 +207,31 @@ func (a *app) analyzeObligationScan(w http.ResponseWriter, r *http.Request) {
 		}
 		suggestion := parseAIScanText(text, counterparties, legalEntities)
 		suggestion.Page = index + 1
-		suggestion.Duplicate = a.aiScanDuplicate(r.Context(), suggestion)
+		suggestion.Duplicate = a.aiScanDuplicate(ctx, suggestion)
 		if ocrErr != nil {
 			suggestion.Warnings = append(suggestion.Warnings, "Страница распознана не полностью — проверьте значения вручную")
 		}
 		suggestions = append(suggestions, suggestion)
 	}
-	meta := aiScanBatchMeta{OriginalName: cleanObligationScanName(header.Filename, extension), CreatedAt: time.Now().UTC(), PageCount: len(pages)}
-	payload, _ := json.Marshal(meta)
-	if err = os.WriteFile(filepath.Join(directory, "metadata.json"), payload, 0640); err != nil {
-		fail(w, http.StatusInternalServerError, "Не удалось завершить анализ")
+	if ctx.Err() != nil {
+		failBatch("Распознавание заняло слишком много времени. Попробуйте разделить PDF", ctx.Err())
 		return
 	}
-	success = true
-	user := currentUser(r)
-	a.audit(r.Context(), user.ID, "analyze", "obligation_ai_scan", nil, map[string]any{"name": meta.OriginalName, "pages": len(pages)})
-	writeJSON(w, http.StatusOK, map[string]any{"batch": token, "pages": len(pages), "engine": "Локальное OCR", "items": suggestions})
+	meta.Status = "ready"
+	meta.Items = suggestions
+	meta.Error = ""
+	if err = writeAIScanBatchMeta(directory, meta); err != nil {
+		log.Printf("save AI scan batch %s: %v", token, err)
+	}
+}
+
+func (a *app) aiScanStatus(w http.ResponseWriter, r *http.Request) {
+	_, meta, ok := readAIScanBatch(r.PathValue("batch"))
+	if !ok {
+		fail(w, http.StatusNotFound, "Результат анализа не найден")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"batch": r.PathValue("batch"), "pages": meta.PageCount, "engine": "Локальное OCR", "status": meta.Status, "error": meta.Error, "items": meta.Items})
 }
 
 func recognizeAIScanPages(ctx context.Context, pages []string, directory string) ([]string, []error) {
@@ -568,7 +619,7 @@ func readAIScanBatch(token string) (string, aiScanBatchMeta, bool) {
 	}
 	data, err := os.ReadFile(filepath.Join(directory, "metadata.json"))
 	var meta aiScanBatchMeta
-	if err != nil || json.Unmarshal(data, &meta) != nil || meta.PageCount < 1 || meta.PageCount > maxAIScanPages || time.Since(meta.CreatedAt) > aiScanLifetime {
+	if err != nil || json.Unmarshal(data, &meta) != nil || meta.PageCount < 1 || meta.PageCount > maxAIScanPages || time.Since(meta.CreatedAt) > aiScanLifetime || (meta.Status != "processing" && meta.Status != "ready" && meta.Status != "error") {
 		return "", aiScanBatchMeta{}, false
 	}
 	return directory, meta, true
@@ -604,6 +655,10 @@ func (a *app) commitAIScan(w http.ResponseWriter, r *http.Request) {
 	directory, meta, ok := readAIScanBatch(token)
 	if !ok {
 		fail(w, http.StatusNotFound, "Результат анализа истёк. Загрузите документ повторно")
+		return
+	}
+	if meta.Status != "ready" {
+		fail(w, http.StatusConflict, "Распознавание ещё не завершено")
 		return
 	}
 	var input struct {
