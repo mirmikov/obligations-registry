@@ -217,7 +217,10 @@ func prepareAIScanPages(ctx context.Context, inputPath, contentType, directory s
 func recognizeAIScanPage(ctx context.Context, pagePath, directory string, page int) (string, error) {
 	text, err := runTesseract(ctx, pagePath)
 	bestText, bestScore := text, aiScanTextScore(text)
-	if err == nil && bestScore >= 120 {
+	// Tesseract's PSM 1 already performs orientation detection. Rotation is a
+	// fallback only for genuinely unreadable pages; retrying a readable but
+	// sparse invoice three times makes multi-page batches unnecessarily slow.
+	if err == nil && (bestScore >= 70 || len([]rune(strings.TrimSpace(text))) >= 800) {
 		return bestText, nil
 	}
 	var lastErr = err
