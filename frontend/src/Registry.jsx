@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { AlertTriangle, ArrowRight, CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, Clock3, Download, ExternalLink, FileText, FileUp, Filter, History, Info, LoaderCircle, LocateFixed, Maximize2, Minimize2, Paperclip, Plus, RotateCcw, Scissors, Search, Trash2, UserRound, X } from 'lucide-react'
+import { AlertTriangle, ArrowRight, CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, Clock3, Download, ExternalLink, FileText, FileUp, Filter, History, Info, LoaderCircle, LocateFixed, Maximize2, Minimize2, Paperclip, Plus, RotateCcw, ScanLine, Scissors, Search, Trash2, UserRound, X } from 'lucide-react'
 import { download, request, requestBlob } from './api'
 import { DateInput, money, PageHeader, roleLabel, shortDate } from './App'
 import { BLANK_ACCOUNT_TYPE_FILTER } from './filterValues'
@@ -11,6 +11,7 @@ import { canContinueRegistryDrag, canStartRegistryDrag, getRegistryDragScroll, h
 import { can } from './permissions'
 import { buildCostCategoryResponsibleMap, withDefaultResponsible } from './referenceDefaults'
 import usePresence from './usePresence'
+import AIScanModal from './AIScanModal'
 
 const emptyFilters = { q: '', counterparty: [], account_type: '', legal_entity: '', cost_category: '', priority: '', responsible: '', status: '', urgency: '', entry_date: '', document_date: '', planned_payment_date: '', approval_date: '', actual_payment_date: '', document_from: '', document_to: '', overdue: '' }
 const dateFields = new Set(['entry_date', 'document_date', 'planned_payment_date', 'approval_date', 'actual_payment_date'])
@@ -63,11 +64,13 @@ export default function Registry({ user, notify, maintenance, onToggleMaintenanc
   const [bulkOpen, setBulkOpen] = useState(false)
   const [splitItem, setSplitItem] = useState(null)
   const [historyItem, setHistoryItem] = useState(null)
+  const [aiScan, setAIScan] = useState(null)
   const [tableFullscreen, setTableFullscreen] = useState(false)
   const [largeTableFont, setLargeTableFont] = useState(readLargeFontPreference)
   const [columnWidths, setColumnWidths] = useState(readColumnWidths)
   const [viewReady, setViewReady] = useState(false)
   const importRef = useRef()
+  const aiScanRef = useRef()
   const tableWrapRef = useRef()
   const rowsRef = useRef(new Map())
   const saveQueues = useRef(new Map())
@@ -285,9 +288,40 @@ export default function Registry({ user, notify, maintenance, onToggleMaintenanc
     } catch (error) { notify(error.message, 'error'); throw error }
   }
   const importFile = async event => { const file = event.target.files?.[0]; if (!file) return; const body = new FormData(); body.append('file', file); try { const result = await request('/api/obligations/import.xlsx', { method: 'POST', body }); notify(`База обновлена: ${result.updated} изменено, ${result.created} добавлено`); load(); request('/api/references').then(setRefs).catch(e => notify(e.message, 'error')) } catch (e) { notify(e.message, 'error') } finally { event.target.value = '' } }
+  const analyzeScan = async event => {
+    const file = event.target.files?.[0]
+    if (!file) return
+    setAIScan({ loading: true, filename: file.name, error: '' })
+    const body = new FormData(); body.append('scan', file)
+    try {
+      const result = await request('/api/obligations/ai-scan', { method: 'POST', body })
+      const items = result.items.map(item => ({
+        page: item.page,
+        include: !item.duplicate,
+        duplicate: item.duplicate,
+        warnings: item.warnings || [],
+        confidence: item.confidence || {},
+        values: { ...blankObligation(), status: '', counterparty: item.counterparty || '', legal_entity: item.legal_entity || '', document_number: item.document_number || '', document_date: item.document_date || '', amount: item.amount ?? null },
+      }))
+      setAIScan({ ...result, filename: file.name, items, loading: false, error: '' })
+    } catch (error) {
+      setAIScan({ loading: false, filename: file.name, error: error.message })
+    } finally { event.target.value = '' }
+  }
+  const saveAIScan = async items => {
+    setAIScan(current => ({ ...current, saving: true }))
+    try {
+      const result = await request(`/api/obligations/ai-scan/${aiScan.batch}/commit`, { method: 'POST', body: JSON.stringify({ items: items.map(item => ({ page: item.page, values: strip(item.values) })) }) })
+      notify(`Из скана добавлено ${result.created} обязательств`)
+      setAIScan(null); setPage(1); load()
+    } catch (error) {
+      setAIScan(current => ({ ...current, saving: false }))
+      notify(error.message, 'error')
+    }
+  }
   const doSort = key => setSort(current => ({ key, order: current.key === key && current.order === 'asc' ? 'desc' : 'asc' }))
   return <div className={`page registry-page ${tableFullscreen ? 'is-table-fullscreen' : ''}`}>
-    <PageHeader eyebrow="Рабочая область" title="Реестр обязательств" subtitle={`${data.total.toLocaleString('ru-RU')} записей с учётом фильтров`} actions={<><PresenceCluster users={activeUsers} currentSession={sessionId}/>{user.is_developer && <button className={`maintenance-toggle ${maintenance?.active ? 'is-active' : ''}`} onClick={onToggleMaintenance}><AlertTriangle size={17}/>{maintenance?.active ? 'Завершить обновление' : 'Начать обновление'}</button>}{can(user, 'registry.import') && <><input ref={importRef} type="file" accept=".xlsx" hidden onChange={importFile}/><button className="secondary" onClick={() => importRef.current.click()}><FileUp size={17}/>Импорт</button></>}{can(user, 'registry.export') && <button className="secondary" onClick={() => download(`/api/obligations/export.xlsx?${query}`, 'Реестр обязательств.xlsx')}><Download size={17}/>Excel</button>}<button className="secondary registry-width-reset" onClick={resetColumnWidths} title="Вернуть стандартную ширину всех столбцов"><RotateCcw size={16}/>Ширина</button><FontSizeButton large={largeTableFont} onToggle={() => setLargeTableFont(value => !value)}/><button className="secondary registry-fullscreen-button" onClick={() => setTableFullscreen(true)} title="Открыть таблицу на весь экран" aria-label="Открыть таблицу на весь экран"><Maximize2 size={17}/></button></>}/>
+    <PageHeader eyebrow="Рабочая область" title="Реестр обязательств" subtitle={`${data.total.toLocaleString('ru-RU')} записей с учётом фильтров`} actions={<><PresenceCluster users={activeUsers} currentSession={sessionId}/>{user.is_developer && <button className={`maintenance-toggle ${maintenance?.active ? 'is-active' : ''}`} onClick={onToggleMaintenance}><AlertTriangle size={17}/>{maintenance?.active ? 'Завершить обновление' : 'Начать обновление'}</button>}{can(user, 'registry.create') && <><input ref={aiScanRef} type="file" accept="application/pdf,image/png,image/jpeg" hidden onChange={analyzeScan}/><button className="primary ai-scan-launch" onClick={() => aiScanRef.current.click()}><ScanLine size={17}/>AI сканирование</button></>}{can(user, 'registry.import') && <><input ref={importRef} type="file" accept=".xlsx" hidden onChange={importFile}/><button className="secondary" onClick={() => importRef.current.click()}><FileUp size={17}/>Импорт</button></>}{can(user, 'registry.export') && <button className="secondary" onClick={() => download(`/api/obligations/export.xlsx?${query}`, 'Реестр обязательств.xlsx')}><Download size={17}/>Excel</button>}<button className="secondary registry-width-reset" onClick={resetColumnWidths} title="Вернуть стандартную ширину всех столбцов"><RotateCcw size={16}/>Ширина</button><FontSizeButton large={largeTableFont} onToggle={() => setLargeTableFont(value => !value)}/><button className="secondary registry-fullscreen-button" onClick={() => setTableFullscreen(true)} title="Открыть таблицу на весь экран" aria-label="Открыть таблицу на весь экран"><Maximize2 size={17}/></button></>}/>
     <section className="filter-panel">
       <div className="search-box"><Search size={18}/><input placeholder="Контрагент, счёт, комментарий…" value={filters.q} onChange={e => setFilter('q', e.target.value)}/>{filters.q && <button onClick={() => setFilter('q', '')}><X size={15}/></button>}</div>
       <label className="filter-date"><span>Дата документа: от</span><DateInput value={filters.document_from} onChange={value => setFilter('document_from', value)} aria-label="Дата документа: от"/></label>
@@ -323,6 +357,7 @@ export default function Registry({ user, notify, maintenance, onToggleMaintenanc
     )}
     {splitItem && <SplitPaymentModal item={splitItem} refs={refs} onClose={() => setSplitItem(null)} onSave={values => splitPayment(splitItem, values)}/>}
     {historyItem && <ObligationHistoryModal item={historyItem} notify={notify} onClose={() => setHistoryItem(null)}/>}
+    {aiScan && <AIScanModal state={aiScan} references={refs} onChange={setAIScan} onRetry={() => aiScanRef.current.click()} onClose={() => !aiScan.loading && !aiScan.saving && setAIScan(null)} onSave={saveAIScan}/>}
   </div>
 }
 
