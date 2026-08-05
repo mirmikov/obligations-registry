@@ -50,3 +50,14 @@ func TestParseAIScanDateRejectsImpossibleDate(t *testing.T) {
 		t.Fatalf("expected empty date, got %q", value)
 	}
 }
+
+func TestParseAIScanTextHandlesBrokenPaymentWordAndIntegerAmount(t *testing.T) {
+	text := "Счет на опл\nату №273 от 26 июня 2026г.\nИсполнитель: ИП Сечкин Евгений Павлович\nЗаказчик: ООО МЦ МИРТ\nИтого: 3000"
+	result := parseAIScanText(text, []string{"ИП Сечкин Евгений Павлович"}, []string{"ООО МЦ МИРТ"})
+	if result.DocumentNumber != "Счет на оплату № 273" || result.DocumentDate != "2026-06-26" {
+		t.Fatalf("unexpected document: %q, %q", result.DocumentNumber, result.DocumentDate)
+	}
+	if result.Amount == nil || *result.Amount != 3000 {
+		t.Fatalf("unexpected amount: %v", result.Amount)
+	}
+}

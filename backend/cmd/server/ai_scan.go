@@ -304,8 +304,8 @@ func aiScanTextScore(text string) int {
 }
 
 var (
-	aiDocumentPattern = regexp.MustCompile(`(?i)(сч[её]т(?:\s+на\s+оплату)?)\s*(?:№|N|No)?\s*([0-9A-Za-zА-Яа-яЁё./_-]+)\s+от\s+([0-9]{1,2}(?:[.\-/][0-9]{1,2}[.\-/][0-9]{2,4}|\s+[А-Яа-яЁё]+\s+[0-9]{4}))`)
-	aiAmountPattern   = regexp.MustCompile(`[0-9]{1,3}(?:[ \x{00A0}][0-9]{3})*(?:[,.][0-9]{2})|[0-9]+(?:[,.][0-9]{2})`)
+	aiDocumentPattern = regexp.MustCompile(`(?i)(сч[её]т(?:\s+на\s+опл\s*ату)?)\s*(?:№|N|No)?\s*([0-9A-Za-zА-Яа-яЁё./_-]+)\s+от\s+([0-9]{1,2}(?:[.\-/][0-9]{1,2}[.\-/][0-9]{2,4}|\s+[А-Яа-яЁё]+\s+[0-9]{4}))`)
+	aiAmountPattern   = regexp.MustCompile(`[0-9]{1,3}(?:[ \x{00A0}][0-9]{3})*(?:[,.][0-9]{2})|[0-9]+(?:[,.][0-9]{2})|[0-9]+`)
 	aiSupplierPattern = regexp.MustCompile(`(?is)поставщик(?:\s*\([^)]*\))?\s*[:;]?\s*(.{3,260}?)(?:покупатель|заказчик|основание|товары|услуги)`)
 	aiBuyerPattern    = regexp.MustCompile(`(?is)(?:покупатель|заказчик)(?:\s*\([^)]*\))?\s*[:;]?\s*(.{3,260}?)(?:основание|товары|услуги|поставщик)`)
 )
@@ -316,7 +316,9 @@ func parseAIScanText(text string, counterparties, legalEntities []string) aiScan
 	result := aiScanSuggestion{Confidence: map[string]string{}, Warnings: []string{}}
 	match := aiDocumentPattern.FindStringSubmatch(text)
 	if len(match) == 4 {
-		result.DocumentNumber = strings.TrimSpace(match[1]) + " № " + strings.TrimSpace(match[2])
+		documentKind := strings.Join(strings.Fields(match[1]), " ")
+		documentKind = regexp.MustCompile(`(?i)опл\s+ату`).ReplaceAllString(documentKind, "оплату")
+		result.DocumentNumber = documentKind + " № " + strings.TrimSpace(match[2])
 		result.DocumentDate = parseAIScanDate(match[3])
 		result.Confidence["document_number"] = "high"
 		if result.DocumentDate != "" {
@@ -394,7 +396,7 @@ func validAIScanDate(year, month, day int) bool {
 }
 
 func parseAIScanAmount(text string) *float64 {
-	priorities := []string{"всего к оплате", "итого к оплате", "к оплате", "всего"}
+	priorities := []string{"всего к оплате", "итого к оплате", "к оплате", "всего", "итого"}
 	lines := strings.Split(strings.ReplaceAll(text, "\r", ""), "\n")
 	for _, marker := range priorities {
 		for _, line := range lines {
@@ -452,7 +454,7 @@ func bestAIScanReference(text string, values []string) (string, string) {
 	if bestScore >= 0.95 {
 		return best, "high"
 	}
-	if bestScore >= 0.55 {
+	if bestScore >= 0.5 {
 		return best, "medium"
 	}
 	return "", ""
