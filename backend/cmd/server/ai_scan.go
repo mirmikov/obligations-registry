@@ -29,6 +29,7 @@ import (
 const (
 	maxAIScanPages = 30
 	aiScanLifetime = 24 * time.Hour
+	aiScanDPI      = 140
 )
 
 type aiScanBatchMeta struct {
@@ -217,7 +218,7 @@ func prepareAIScanPages(ctx context.Context, inputPath, contentType, directory s
 		return []string{pagePath}, nil
 	}
 	prefix := filepath.Join(directory, "rendered")
-	cmd := exec.CommandContext(ctx, "pdftoppm", "-png", "-r", "180", "-f", "1", "-l", strconv.Itoa(maxAIScanPages+1), inputPath, prefix)
+	cmd := exec.CommandContext(ctx, "pdftoppm", "-png", "-r", strconv.Itoa(aiScanDPI), "-f", "1", "-l", strconv.Itoa(maxAIScanPages+1), inputPath, prefix)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
@@ -276,7 +277,7 @@ func recognizeAIScanPage(ctx context.Context, pagePath, directory string, page i
 func runTesseract(ctx context.Context, imagePath string) (string, error) {
 	pageCtx, cancel := context.WithTimeout(ctx, 50*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(pageCtx, "tesseract", imagePath, "stdout", "-l", "rus+eng", "--psm", "1", "--dpi", "180")
+	cmd := exec.CommandContext(pageCtx, "tesseract", imagePath, "stdout", "-l", "rus+eng", "--psm", "1", "--dpi", strconv.Itoa(aiScanDPI))
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
