@@ -206,6 +206,15 @@ func (a *app) processAIScanBatch(token, directory string, pages []string) {
 			log.Printf("AI scan OCR page %d: %v", index+1, ocrErr)
 		}
 		suggestion := parseAIScanText(text, counterparties, legalEntities)
+		// Dense tables and low-contrast invoice headers occasionally confuse the
+		// automatic layout detector. Retry only pages whose document header is
+		// missing, using a single-block layout, so normal multi-page batches stay
+		// fast while weak scans get one focused recovery attempt.
+		if suggestion.DocumentNumber == "" || suggestion.DocumentDate == "" {
+			if fallback, fallbackErr := runTesseractWithPSM(ctx, pages[index], "6"); fallbackErr == nil && strings.TrimSpace(fallback) != "" {
+				suggestion = parseAIScanText(text+"\n"+fallback, counterparties, legalEntities)
+			}
+		}
 		suggestion.Page = index + 1
 		suggestion.Duplicate = a.aiScanDuplicate(ctx, suggestion)
 		if ocrErr != nil {
@@ -326,9 +335,13 @@ func recognizeAIScanPage(ctx context.Context, pagePath, directory string, page i
 }
 
 func runTesseract(ctx context.Context, imagePath string) (string, error) {
+	return runTesseractWithPSM(ctx, imagePath, "1")
+}
+
+func runTesseractWithPSM(ctx context.Context, imagePath, pageSegmentationMode string) (string, error) {
 	pageCtx, cancel := context.WithTimeout(ctx, 50*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(pageCtx, "tesseract", imagePath, "stdout", "-l", "rus+eng", "--psm", "1", "--dpi", strconv.Itoa(aiScanDPI))
+	cmd := exec.CommandContext(pageCtx, "tesseract", imagePath, "stdout", "-l", "rus+eng", "--psm", pageSegmentationMode, "--dpi", strconv.Itoa(aiScanDPI))
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
