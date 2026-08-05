@@ -21,6 +21,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 )
@@ -154,9 +155,10 @@ func (a *app) analyzeObligationScan(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusInternalServerError, "Не удалось загрузить справочники")
 		return
 	}
+	ocrTexts, ocrErrors := recognizeAIScanPages(ctx, pages, directory)
 	suggestions := make([]aiScanSuggestion, 0, len(pages))
-	for index, pagePath := range pages {
-		text, ocrErr := recognizeAIScanPage(ctx, pagePath, directory, index+1)
+	for index, text := range ocrTexts {
+		ocrErr := ocrErrors[index]
 		if ocrErr != nil {
 			log.Printf("AI scan OCR page %d: %v", index+1, ocrErr)
 		}
@@ -178,6 +180,32 @@ func (a *app) analyzeObligationScan(w http.ResponseWriter, r *http.Request) {
 	user := currentUser(r)
 	a.audit(r.Context(), user.ID, "analyze", "obligation_ai_scan", nil, map[string]any{"name": meta.OriginalName, "pages": len(pages)})
 	writeJSON(w, http.StatusOK, map[string]any{"batch": token, "pages": len(pages), "engine": "Локальное OCR", "items": suggestions})
+}
+
+func recognizeAIScanPages(ctx context.Context, pages []string, directory string) ([]string, []error) {
+	texts := make([]string, len(pages))
+	errorsByPage := make([]error, len(pages))
+	jobs := make(chan int)
+	workerCount := 2
+	if len(pages) < workerCount {
+		workerCount = len(pages)
+	}
+	var workers sync.WaitGroup
+	workers.Add(workerCount)
+	for worker := 0; worker < workerCount; worker++ {
+		go func() {
+			defer workers.Done()
+			for index := range jobs {
+				texts[index], errorsByPage[index] = recognizeAIScanPage(ctx, pages[index], directory, index+1)
+			}
+		}()
+	}
+	for index := range pages {
+		jobs <- index
+	}
+	close(jobs)
+	workers.Wait()
+	return texts, errorsByPage
 }
 
 func prepareAIScanPages(ctx context.Context, inputPath, contentType, directory string) ([]string, error) {
