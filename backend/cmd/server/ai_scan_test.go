@@ -106,6 +106,22 @@ func TestParseAIScanTextSupportsUniversalTransferDocument(t *testing.T) {
 	}
 }
 
+func TestParseAIScanTextSupportsColumnOrderedUPDBuyer(t *testing.T) {
+	text := `
+Универсальный         Счет-фактура № 35538 от 31 июля 2026 г.
+передаточный документ
+Общество с ограниченной ответственностью "МЕДИЦИНСКИЙ
+Продавец: ООО "ЦНФС" (2) Покупатель: ЦЕНТР "МИРТ"" (6)
+Адрес: 109544, Москва Адрес: 156001, Кострома
+ИНН/КПП продавца: 9709078370/770901001 ИНН/КПП покупателя: 4401050775/440101001
+Всего к оплате (9) 81,15 Х 17,85 99,00
+`
+	result := parseAIScanText(text, []string{`ООО "ЦНФС"`}, []string{`ООО "МЦ "Мирт"`})
+	if result.LegalEntity != `ООО "МЦ "Мирт"` {
+		t.Fatalf("unexpected column-ordered UPD buyer: %q", result.LegalEntity)
+	}
+}
+
 func TestAIScanTextLayerRejectsSparseGarbage(t *testing.T) {
 	if usableAIScanTextLayer("12345 ---") {
 		t.Fatal("sparse text layer must fall back to OCR")

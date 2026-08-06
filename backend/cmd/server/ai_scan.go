@@ -508,6 +508,13 @@ func parseAIScanText(text string, counterparties, legalEntities []string) aiScan
 	}
 	result.LegalEntity, result.Confidence["legal_entity"] = bestAIScanReference(buyerName, legalEntities)
 	if result.LegalEntity == "" {
+		// In table-based UPDs, pdftotext may place the beginning of the buyer name
+		// before the "Покупатель" label and its ending after the label. Match the
+		// known legal entity against the whole document when the buyer block alone
+		// is insufficient; counterparties are kept in a separate reference kind.
+		result.LegalEntity, result.Confidence["legal_entity"] = bestAIScanReference(text, legalEntities)
+	}
+	if result.LegalEntity == "" {
 		result.LegalEntity = buyerName
 		if result.LegalEntity != "" {
 			result.Confidence["legal_entity"] = "low"
