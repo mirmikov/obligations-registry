@@ -200,7 +200,11 @@ func (a *app) processAIScanBatch(token, directory string, pages []string) {
 		failBatch("Не удалось загрузить справочники для распознавания", err)
 		return
 	}
-	ocrTexts, ocrErrors := recognizeAIScanPages(ctx, pages, directory)
+	textLayer, textLayerErr := extractAIScanPDFTextLayer(ctx, directory, len(pages))
+	if textLayerErr != nil {
+		log.Printf("AI scan text layer %s: %v", token, textLayerErr)
+	}
+	ocrTexts, ocrErrors := recognizeAIScanPages(ctx, pages, directory, textLayer)
 	suggestions := make([]aiScanSuggestion, 0, len(pages))
 	for index, text := range ocrTexts {
 		ocrErr := ocrErrors[index]
@@ -268,7 +272,7 @@ func (a *app) aiScanStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"batch": r.PathValue("batch"), "pages": meta.PageCount, "engine": "Локальное OCR", "status": meta.Status, "error": meta.Error, "items": meta.Items})
 }
 
-func recognizeAIScanPages(ctx context.Context, pages []string, directory string) ([]string, []error) {
+func recognizeAIScanPages(ctx context.Context, pages []string, directory string, textLayer []string) ([]string, []error) {
 	texts := make([]string, len(pages))
 	errorsByPage := make([]error, len(pages))
 	jobs := make(chan int)
@@ -282,6 +286,10 @@ func recognizeAIScanPages(ctx context.Context, pages []string, directory string)
 		go func() {
 			defer workers.Done()
 			for index := range jobs {
+				if index < len(textLayer) && usableAIScanTextLayer(textLayer[index]) {
+					texts[index] = textLayer[index]
+					continue
+				}
 				texts[index], errorsByPage[index] = recognizeAIScanPage(ctx, pages[index], directory, index+1)
 			}
 		}()
@@ -292,6 +300,35 @@ func recognizeAIScanPages(ctx context.Context, pages []string, directory string)
 	close(jobs)
 	workers.Wait()
 	return texts, errorsByPage
+}
+
+func extractAIScanPDFTextLayer(ctx context.Context, directory string, pageCount int) ([]string, error) {
+	result := make([]string, pageCount)
+	source := filepath.Join(directory, "source.pdf")
+	if _, err := os.Stat(source); err != nil {
+		if os.IsNotExist(err) {
+			return result, nil
+		}
+		return result, err
+	}
+	textCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(textCtx, "pdftotext", "-layout", "-enc", "UTF-8", source, "-")
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return result, fmt.Errorf("pdftotext: %w: %s", err, strings.TrimSpace(stderr.String()))
+	}
+	pages := strings.Split(strings.ReplaceAll(stdout.String(), "\r", ""), "\f")
+	for index := 0; index < pageCount && index < len(pages); index++ {
+		result[index] = strings.TrimSpace(pages[index])
+	}
+	return result, nil
+}
+
+func usableAIScanTextLayer(text string) bool {
+	return len([]rune(strings.TrimSpace(text))) >= 80 && aiScanTextScore(text) >= 70
 }
 
 func prepareAIScanPages(ctx context.Context, inputPath, contentType, directory string) ([]string, error) {
@@ -425,7 +462,7 @@ func aiScanTextScore(text string) int {
 }
 
 var (
-	aiDocumentPattern = regexp.MustCompile(`(?i)(сч[её]т(?:\s+на\s+опл\s*ату)?)\s*(?:№|N|No)?\s*([0-9A-Za-zА-Яа-яЁё./_-]+)\s+от\s+([0-9]{1,2}(?:[.\-/][0-9]{1,2}[.\-/][0-9]{2,4}|\s+[А-Яа-яЁё]+\s+[0-9]{4}))`)
+	aiDocumentPattern = regexp.MustCompile(`(?i)(сч[её]т\s*[-–—]\s*фактура|универсальный\s+передаточный\s+документ|упд|сч[её]т(?:\s+на\s+опл\s*ату)?)\s*(?:№|N(?:o|е)?|No)?\s*([0-9A-Za-zА-Яа-яЁё./_-]+)\s+от\s+([0-9]{1,2}(?:[.\-/][0-9]{1,2}[.\-/][0-9]{2,4}|\s+[А-Яа-яЁё]+\s+[0-9]{4}))`)
 	aiAmountPattern   = regexp.MustCompile(`[0-9]{1,3}(?:[ \x{00A0}][0-9]{3})*(?:[,.][0-9]{2})|[0-9]+(?:[,.][0-9]{2})|[0-9]+`)
 	aiSupplierPattern = regexp.MustCompile(`(?is)(?:поставщик|исполнитель|продавец)(?:\s*\([^)]*\))?\s*[:;]?\s*(.{3,1000}?)(?:покупатель|заказчик|плательщик|основание|товары|услуги)`)
 	aiBuyerPattern    = regexp.MustCompile(`(?is)(?:покупатель|заказчик|плательщик)(?:\s*\([^)]*\))?\s*[:;]?\s*(.{3,1000}?)(?:основание|товары|услуги|поставщик|итого|всего|наименование)`)
@@ -439,6 +476,11 @@ func parseAIScanText(text string, counterparties, legalEntities []string) aiScan
 	if len(match) == 4 {
 		documentKind := strings.Join(strings.Fields(match[1]), " ")
 		documentKind = regexp.MustCompile(`(?i)опл\s+ату`).ReplaceAllString(documentKind, "оплату")
+		if strings.Contains(foldAIScanText(text), "универсальный передаточный документ") {
+			documentKind = "УПД"
+		} else if strings.Contains(foldAIScanText(documentKind), "фактура") {
+			documentKind = "Счет-фактура"
+		}
 		result.DocumentNumber = documentKind + " № " + strings.TrimSpace(match[2])
 		result.DocumentDate = parseAIScanDate(match[3])
 		result.Confidence["document_number"] = "high"
@@ -465,6 +507,13 @@ func parseAIScanText(text string, counterparties, legalEntities []string) aiScan
 		}
 	}
 	result.LegalEntity, result.Confidence["legal_entity"] = bestAIScanReference(buyerName, legalEntities)
+	if result.LegalEntity == "" {
+		// In table-based UPDs, pdftotext may place the beginning of the buyer name
+		// before the "Покупатель" label and its ending after the label. Match the
+		// known legal entity against the whole document when the buyer block alone
+		// is insufficient; counterparties are kept in a separate reference kind.
+		result.LegalEntity, result.Confidence["legal_entity"] = bestAIScanReference(text, legalEntities)
+	}
 	if result.LegalEntity == "" {
 		result.LegalEntity = buyerName
 		if result.LegalEntity != "" {

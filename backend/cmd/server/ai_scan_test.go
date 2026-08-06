@@ -77,6 +77,57 @@ func TestParseAIScanTextExtractsUnknownSupplierInsteadOfKnownBank(t *testing.T) 
 	}
 }
 
+func TestParseAIScanTextSupportsUniversalTransferDocument(t *testing.T) {
+	text := `
+Универсальный передаточный документ
+Счет-фактура № 35538 от 31 июля 2026 г.
+Продавец: ООО "ЦНФС" (2) Покупатель: Общество с ограниченной ответственностью "МЕДИЦИНСКИЙ ЦЕНТР "МИРТ""
+Адрес: 109544, Москва
+ИНН/КПП продавца: 9709078370/770901001
+ИНН/КПП покупателя: 4401050775/440101001
+Наименование товара (описание выполненных работ, оказанных услуг)
+Всего к оплате (9) 81,15 X 17,85 99,00
+`
+	result := parseAIScanText(text, []string{`ООО "ЦНФС"`}, []string{`ООО "МЦ "Мирт"`})
+	if result.Counterparty != `ООО "ЦНФС"` {
+		t.Fatalf("unexpected UPD seller: %q", result.Counterparty)
+	}
+	if result.LegalEntity != `ООО "МЦ "Мирт"` {
+		t.Fatalf("unexpected UPD buyer: %q", result.LegalEntity)
+	}
+	if result.DocumentNumber != "УПД № 35538" || result.DocumentDate != "2026-07-31" {
+		t.Fatalf("unexpected UPD document: %q, %q", result.DocumentNumber, result.DocumentDate)
+	}
+	if result.Amount == nil || *result.Amount != 99 {
+		t.Fatalf("unexpected UPD amount: %v", result.Amount)
+	}
+	if !usableAIScanTextLayer(text) {
+		t.Fatal("expected UPD text layer to be preferred over OCR")
+	}
+}
+
+func TestParseAIScanTextSupportsColumnOrderedUPDBuyer(t *testing.T) {
+	text := `
+Универсальный         Счет-фактура № 35538 от 31 июля 2026 г.
+передаточный документ
+Общество с ограниченной ответственностью "МЕДИЦИНСКИЙ
+Продавец: ООО "ЦНФС" (2) Покупатель: ЦЕНТР "МИРТ"" (6)
+Адрес: 109544, Москва Адрес: 156001, Кострома
+ИНН/КПП продавца: 9709078370/770901001 ИНН/КПП покупателя: 4401050775/440101001
+Всего к оплате (9) 81,15 Х 17,85 99,00
+`
+	result := parseAIScanText(text, []string{`ООО "ЦНФС"`}, []string{`ООО "МЦ "Мирт"`})
+	if result.LegalEntity != `ООО "МЦ "Мирт"` {
+		t.Fatalf("unexpected column-ordered UPD buyer: %q", result.LegalEntity)
+	}
+}
+
+func TestAIScanTextLayerRejectsSparseGarbage(t *testing.T) {
+	if usableAIScanTextLayer("12345 ---") {
+		t.Fatal("sparse text layer must fall back to OCR")
+	}
+}
+
 func TestParseAIScanDateRejectsImpossibleDate(t *testing.T) {
 	if value := parseAIScanDate("31.02.2026"); value != "" {
 		t.Fatalf("expected empty date, got %q", value)
