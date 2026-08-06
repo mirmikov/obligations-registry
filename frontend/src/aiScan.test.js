@@ -26,3 +26,8 @@ test('multi-page scan supports preview, duplicate protection and confirmed batch
   assert.match(styles, /\.ai-scan-layout\{[^}]*grid-template-columns:300px minmax\(0,1fr\)/)
   assert.match(styles, /html\[data-theme="dark"\] \.ai-scan-layout/)
 })
+
+test('confirmed AI scan refreshes counterparties created in the reference directory', () => {
+  assert.match(registry, /created_references/)
+  assert.match(registry, /request\('\/api\/references'\)\.then\(setRefs\)/)
+})
