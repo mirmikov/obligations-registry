@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"image"
 	_ "image/jpeg"
@@ -425,8 +427,8 @@ func aiScanTextScore(text string) int {
 var (
 	aiDocumentPattern = regexp.MustCompile(`(?i)(сч[её]т(?:\s+на\s+опл\s*ату)?)\s*(?:№|N|No)?\s*([0-9A-Za-zА-Яа-яЁё./_-]+)\s+от\s+([0-9]{1,2}(?:[.\-/][0-9]{1,2}[.\-/][0-9]{2,4}|\s+[А-Яа-яЁё]+\s+[0-9]{4}))`)
 	aiAmountPattern   = regexp.MustCompile(`[0-9]{1,3}(?:[ \x{00A0}][0-9]{3})*(?:[,.][0-9]{2})|[0-9]+(?:[,.][0-9]{2})|[0-9]+`)
-	aiSupplierPattern = regexp.MustCompile(`(?is)поставщик(?:\s*\([^)]*\))?\s*[:;]?\s*(.{3,260}?)(?:покупатель|заказчик|основание|товары|услуги)`)
-	aiBuyerPattern    = regexp.MustCompile(`(?is)(?:покупатель|заказчик)(?:\s*\([^)]*\))?\s*[:;]?\s*(.{3,260}?)(?:основание|товары|услуги|поставщик)`)
+	aiSupplierPattern = regexp.MustCompile(`(?is)(?:поставщик|исполнитель|продавец)(?:\s*\([^)]*\))?\s*[:;]?\s*(.{3,1000}?)(?:покупатель|заказчик|плательщик|основание|товары|услуги)`)
+	aiBuyerPattern    = regexp.MustCompile(`(?is)(?:покупатель|заказчик|плательщик)(?:\s*\([^)]*\))?\s*[:;]?\s*(.{3,1000}?)(?:основание|товары|услуги|поставщик|итого|всего|наименование)`)
 )
 
 var aiMonths = map[string]int{"января": 1, "февраля": 2, "марта": 3, "апреля": 4, "мая": 5, "июня": 6, "июля": 7, "августа": 8, "сентября": 9, "октября": 10, "ноября": 11, "декабря": 12}
@@ -450,16 +452,21 @@ func parseAIScanText(text string, counterparties, legalEntities []string) aiScan
 	}
 	supplierText := regexpCapture(aiSupplierPattern, text)
 	buyerText := regexpCapture(aiBuyerPattern, text)
-	result.Counterparty, result.Confidence["counterparty"] = bestAIScanReference(supplierText+" "+text, counterparties)
+	supplierName := extractAIScanParty(supplierText)
+	buyerName := extractAIScanParty(buyerText)
+	// A bank name and its settlement account often appear before the invoice
+	// parties. Match the counterparty strictly inside the supplier section so a
+	// bank from the payment details can never replace the actual supplier.
+	result.Counterparty, result.Confidence["counterparty"] = bestAIScanReference(supplierName, counterparties)
 	if result.Counterparty == "" {
-		result.Counterparty = extractAIScanParty(supplierText)
+		result.Counterparty = supplierName
 		if result.Counterparty != "" {
 			result.Confidence["counterparty"] = "low"
 		}
 	}
-	result.LegalEntity, result.Confidence["legal_entity"] = bestAIScanReference(buyerText+" "+text, legalEntities)
+	result.LegalEntity, result.Confidence["legal_entity"] = bestAIScanReference(buyerName, legalEntities)
 	if result.LegalEntity == "" {
-		result.LegalEntity = extractAIScanParty(buyerText)
+		result.LegalEntity = buyerName
 		if result.LegalEntity != "" {
 			result.Confidence["legal_entity"] = "low"
 		}
@@ -608,7 +615,7 @@ func extractAIScanParty(value string) string {
 	if value == "" {
 		return ""
 	}
-	if index := regexp.MustCompile(`(?i)[,;]\s*(?:ИНН|КПП|адрес)`).FindStringIndex(value); index != nil {
+	if index := regexp.MustCompile(`(?i)(?:[,;]|\s)\s*(?:ИНН(?:\s*/\s*КПП)?|КПП|адрес|р\s*/?\s*с|расч[её]тн(?:ый|ого)\s+сч[её]т)`).FindStringIndex(value); index != nil {
 		value = value[:index[0]]
 	}
 	value = strings.Trim(value, " ,;:-")
@@ -646,6 +653,97 @@ func (a *app) aiScanDuplicate(ctx context.Context, item aiScanSuggestion) bool {
 	var exists bool
 	err := a.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM obligations WHERE lower(COALESCE(counterparty,''))=lower($1) AND COALESCE(document_number,'')=$2 AND document_date=$3::date AND amount=$4)`, item.Counterparty, item.DocumentNumber, item.DocumentDate, *item.Amount).Scan(&exists)
 	return err == nil && exists
+}
+
+type aiScanReferenceAudit struct {
+	ID          int64
+	Value       string
+	Reactivated bool
+}
+
+type aiScanReferenceCandidate struct {
+	value         string
+	existingID    int64
+	existingValue string
+	active        bool
+}
+
+func syncAIScanCounterparties(ctx context.Context, tx *sql.Tx, items []aiScanCommitItem) (*undoChange, []aiScanReferenceAudit, error) {
+	candidates := map[string]*aiScanReferenceCandidate{}
+	order := make([]string, 0, len(items))
+	for _, item := range items {
+		value := strings.TrimSpace(item.Values.Counterparty)
+		key := strings.ToLower(value)
+		if value == "" || candidates[key] != nil {
+			continue
+		}
+		candidate := &aiScanReferenceCandidate{value: value}
+		err := tx.QueryRowContext(ctx, `
+			SELECT id,value,active FROM reference_values
+			WHERE kind='counterparties' AND lower(value)=lower($1)
+			ORDER BY active DESC,id LIMIT 1 FOR UPDATE`, value).Scan(&candidate.existingID, &candidate.existingValue, &candidate.active)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return nil, nil, err
+		}
+		candidates[key] = candidate
+		order = append(order, key)
+	}
+
+	inactiveIDs := make([]int64, 0)
+	for _, key := range order {
+		candidate := candidates[key]
+		if candidate.existingID > 0 && !candidate.active {
+			inactiveIDs = append(inactiveIDs, candidate.existingID)
+		}
+	}
+	before, err := snapshotRows(ctx, tx, "reference_values", inactiveIDs)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	changedIDs := make([]int64, 0)
+	audits := make([]aiScanReferenceAudit, 0)
+	canonical := map[string]string{}
+	for _, key := range order {
+		candidate := candidates[key]
+		if candidate.existingID > 0 {
+			canonical[key] = candidate.existingValue
+			if !candidate.active {
+				if _, err = tx.ExecContext(ctx, `UPDATE reference_values SET active=true WHERE id=$1`, candidate.existingID); err != nil {
+					return nil, nil, err
+				}
+				changedIDs = append(changedIDs, candidate.existingID)
+				audits = append(audits, aiScanReferenceAudit{ID: candidate.existingID, Value: candidate.existingValue, Reactivated: true})
+			}
+			continue
+		}
+		var id int64
+		var value string
+		err = tx.QueryRowContext(ctx, `
+			INSERT INTO reference_values(kind,value,sort_order)
+			VALUES('counterparties',$1,(SELECT COALESCE(max(sort_order),-1)+1 FROM reference_values WHERE kind='counterparties'))
+			RETURNING id,value`, candidate.value).Scan(&id, &value)
+		if err != nil {
+			return nil, nil, err
+		}
+		canonical[key] = value
+		changedIDs = append(changedIDs, id)
+		audits = append(audits, aiScanReferenceAudit{ID: id, Value: value})
+	}
+	for index := range items {
+		key := strings.ToLower(strings.TrimSpace(items[index].Values.Counterparty))
+		if value := canonical[key]; value != "" {
+			items[index].Values.Counterparty = value
+		}
+	}
+	if len(changedIDs) == 0 {
+		return nil, nil, nil
+	}
+	after, err := snapshotRows(ctx, tx, "reference_values", changedIDs)
+	if err != nil {
+		return nil, nil, err
+	}
+	return &undoChange{Before: before, After: after}, audits, nil
 }
 
 func readAIScanBatch(token string) (string, aiScanBatchMeta, bool) {
@@ -726,6 +824,11 @@ func (a *app) commitAIScan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback()
+	referenceChange, referenceAudits, err := syncAIScanCounterparties(r.Context(), tx, input.Items)
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Не удалось синхронизировать контрагентов со справочником")
+		return
+	}
 	ids := make([]int64, 0, len(input.Items))
 	scansSaved := false
 	defer func() {
@@ -756,7 +859,7 @@ func (a *app) commitAIScan(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	after, err := snapshotRows(r.Context(), tx, "obligations", ids)
-	if err != nil || a.recordUndo(r.Context(), tx, user.ID, "create", fmt.Sprintf("AI-сканирование: создание %d обязательств", len(ids)), undoPayload{Obligations: &undoChange{Before: emptySnapshot(), After: after}}) != nil {
+	if err != nil || a.recordUndo(r.Context(), tx, user.ID, "create", fmt.Sprintf("AI-сканирование: создание %d обязательств", len(ids)), undoPayload{Obligations: &undoChange{Before: emptySnapshot(), After: after}, References: referenceChange}) != nil {
 		fail(w, http.StatusInternalServerError, "Не удалось записать историю операции")
 		return
 	}
@@ -768,6 +871,13 @@ func (a *app) commitAIScan(w http.ResponseWriter, r *http.Request) {
 	for index, id := range ids {
 		a.audit(r.Context(), user.ID, "create", "obligation", &id, map[string]any{"source": "ai_scan", "page": input.Items[index].Page, "batch": token})
 	}
+	createdReferences := 0
+	for _, reference := range referenceAudits {
+		if !reference.Reactivated {
+			createdReferences++
+		}
+		a.audit(r.Context(), user.ID, "create", "reference", &reference.ID, map[string]any{"kind": "counterparties", "value": reference.Value, "source": "ai_scan", "reactivated": reference.Reactivated})
+	}
 	_ = os.RemoveAll(directory)
-	writeJSON(w, http.StatusCreated, map[string]any{"created": len(ids), "ids": ids})
+	writeJSON(w, http.StatusCreated, map[string]any{"created": len(ids), "created_references": createdReferences, "ids": ids})
 }

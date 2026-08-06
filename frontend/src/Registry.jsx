@@ -319,8 +319,10 @@ export default function Registry({ user, notify, maintenance, onToggleMaintenanc
     setAIScan(current => ({ ...current, saving: true }))
     try {
       const result = await request(`/api/obligations/ai-scan/${aiScan.batch}/commit`, { method: 'POST', body: JSON.stringify({ items: items.map(item => ({ page: item.page, values: strip(item.values) })) }) })
-      notify(`Из скана добавлено ${result.created} обязательств`)
+      const referenceNote = result.created_references ? `; новых контрагентов в справочнике: ${result.created_references}` : ''
+      notify(`Из скана добавлено ${result.created} обязательств${referenceNote}`)
       setAIScan(null); setPage(1); load()
+      request('/api/references').then(setRefs).catch(error => notify(error.message, 'error'))
     } catch (error) {
       setAIScan(current => ({ ...current, saving: false }))
       notify(error.message, 'error')

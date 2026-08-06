@@ -45,6 +45,38 @@ func TestParseAIScanTextSupportsNumericDateAndDoesNotUseVAT(t *testing.T) {
 	}
 }
 
+func TestParseAIScanTextUsesSupplierInsteadOfBankAccount(t *testing.T) {
+	text := `
+Поставщик: Общество с ограниченной ответственностью "НОВАТЭК-Кострома", ИНН 4401017834
+Адрес: 156005, Костромская обл., г. Кострома
+ИНН/КПП: 4401017834/7635150001
+Расчетный счет: 40702810229000002761 в ЦЕНТРАЛЬНО-ЧЕРНОЗЕМНЫЙ БАНК ПАО СБЕРБАНК
+Корреспондентский счет: 30101810600000000681, БИК 042007681
+Куратор: Зубков Владимир Николаевич, телефон (4942) 39-52-19
+Покупатель: Общество с ограниченной ответственностью "Медицинский Центр Мирт", ИНН 4401050775
+Счет №НЧ/07/000558 от 01.07.2026
+Всего к оплате 74 771,78
+`
+	result := parseAIScanText(text, []string{"Сбербанк", `ООО "НОВАТЭК-Кострома"`}, []string{`ООО "Медицинский Центр Мирт"`})
+	if result.Counterparty != `ООО "НОВАТЭК-Кострома"` {
+		t.Fatalf("expected supplier, got %q", result.Counterparty)
+	}
+}
+
+func TestParseAIScanTextExtractsUnknownSupplierInsteadOfKnownBank(t *testing.T) {
+	text := `
+Поставщик: Общество с ограниченной ответственностью "НОВАТЭК-Кострома", ИНН 4401017834
+Расчетный счет: 40702810229000002761 в ПАО СБЕРБАНК
+Покупатель: ООО "МЦ МИРТ", ИНН 4401050775
+Счет №НЧ/07/000558 от 01.07.2026
+Всего к оплате 74 771,78
+`
+	result := parseAIScanText(text, []string{"Сбербанк"}, []string{`ООО "МЦ МИРТ"`})
+	if result.Counterparty != `Общество с ограниченной ответственностью "НОВАТЭК-Кострома"` {
+		t.Fatalf("expected extracted supplier, got %q", result.Counterparty)
+	}
+}
+
 func TestParseAIScanDateRejectsImpossibleDate(t *testing.T) {
 	if value := parseAIScanDate("31.02.2026"); value != "" {
 		t.Fatalf("expected empty date, got %q", value)
