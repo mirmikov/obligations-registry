@@ -94,6 +94,7 @@ func main() {
 	mux.Handle("GET /api/references", a.authorize(http.HandlerFunc(a.listReferences)))
 	mux.Handle("PUT /api/references/cost-categories/{id}/responsible", a.authorize(a.requirePermission("references.edit")(http.HandlerFunc(a.setCostCategoryResponsible))))
 	mux.Handle("PUT /api/references/counterparties/{id}/tax-id", a.authorize(a.requirePermission("references.edit")(http.HandlerFunc(a.setCounterpartyTaxID))))
+	mux.Handle("POST /api/references/counterparties/merge", a.authorize(a.requirePermission("references.edit")(http.HandlerFunc(a.mergeCounterparties))))
 	mux.Handle("POST /api/references/{kind}", a.authorize(a.requirePermission("references.edit")(http.HandlerFunc(a.addReference))))
 	mux.Handle("DELETE /api/references/{kind}/{id}", a.authorize(a.requirePermission("references.edit")(http.HandlerFunc(a.deleteReference))))
 	mux.Handle("GET /api/dashboard", a.authorize(a.requirePermission("dashboard.view")(http.HandlerFunc(a.dashboard))))

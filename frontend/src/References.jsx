@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Check, ChevronDown, Plus, Save, Search, Trash2, X } from 'lucide-react'
+import { Check, ChevronDown, Combine, Plus, Save, Search, Trash2, X } from 'lucide-react'
 import { request } from './api'
 import { PageHeader } from './App'
 import { can } from './permissions'
@@ -23,6 +23,8 @@ export default function References({ user, notify }) {
   const [value, setValue] = useState('')
   const [search, setSearch] = useState('')
   const [counterpartyModal, setCounterpartyModal] = useState(null)
+  const [mergeModal, setMergeModal] = useState(null)
+  const [selectedCounterparties, setSelectedCounterparties] = useState([])
   const [savingAssignment, setSavingAssignment] = useState(null)
   const load = () => request('/api/references').then(setData).catch(error => notify(error.message, 'error'))
 
@@ -63,6 +65,19 @@ export default function References({ user, notify }) {
     notify(result.tax_id ? 'ИНН сохранён' : 'ИНН удалён')
   }
 
+  const toggleCounterparty = id => setSelectedCounterparties(current => current.includes(id) ? current.filter(item => item !== id) : [...current, id])
+
+  const mergeCounterparties = async value => {
+    const result = await request('/api/references/counterparties/merge', {
+      method: 'POST',
+      body: JSON.stringify({ ids: selectedCounterparties, value }),
+    })
+    setMergeModal(null)
+    setSelectedCounterparties([])
+    await load()
+    notify(`Контрагенты объединены. Обновлено записей реестра: ${result.updated_obligations}`)
+  }
+
   const remove = async id => {
     if (!confirm('Убрать значение из справочника? Существующие записи реестра сохранятся.')) return
     try {
@@ -98,18 +113,19 @@ export default function References({ user, notify }) {
 
   const current = kinds.find(kind => kind[0] === active)
   const currentItems = active === 'counterparties' ? filterCounterparties(data[active] || [], search) : (data[active] || [])
+  const selectedCounterpartyItems = (data.counterparties || []).filter(item => selectedCounterparties.includes(Number(item.id)))
   return <div className="page">
     <PageHeader eyebrow="Настройки" title="Справочники" subtitle="Единые значения для выпадающих списков реестра" />
     <div className="settings-layout">
       <aside className="settings-nav">
-        {kinds.map(([key, label, description]) => <button key={key} className={active === key ? 'active' : ''} onClick={() => { setActive(key); setSearch(''); setValue('') }}>
+        {kinds.map(([key, label, description]) => <button key={key} className={active === key ? 'active' : ''} onClick={() => { setActive(key); setSearch(''); setValue(''); setSelectedCounterparties([]) }}>
           <strong>{label}</strong><span>{description}</span><i>{(data[key] || []).length}</i>
         </button>)}
       </aside>
       <section className="panel reference-panel">
         <div className="reference-head">
           <div><h2>{current[1]}</h2><span>{current[2]}</span></div>
-          {editable && (active === 'counterparties' ? <button type="button" className="primary reference-add-counterparty" onClick={() => setCounterpartyModal({ value: '', taxID: '' })}><Plus size={17} />Добавить контрагента</button> : <form onSubmit={addInline}>
+          {editable && (active === 'counterparties' ? <div className="reference-head-actions"><button type="button" className="secondary reference-merge-button" disabled={selectedCounterparties.length < 2} onClick={() => setMergeModal({ value: selectedCounterpartyItems[0]?.value || '' })}><Combine size={17} />Объединить{selectedCounterparties.length > 0 ? ` (${selectedCounterparties.length})` : ''}</button><button type="button" className="primary reference-add-counterparty" onClick={() => setCounterpartyModal({ value: '', taxID: '' })}><Plus size={17} />Добавить контрагента</button></div> : <form onSubmit={addInline}>
             <input placeholder="Новое значение" value={value} onChange={event => setValue(event.target.value)} />
             <button className="primary"><Plus size={17} />Добавить</button>
           </form>)}
@@ -125,6 +141,7 @@ export default function References({ user, notify }) {
         <div className="reference-list">
           {currentItems.map((item, index) => <div key={item.id} className={`${active === 'cost_categories' ? 'has-assignment' : ''} ${active === 'counterparties' ? 'counterparty-reference-row' : ''}`}>
             <span>{String(index + 1).padStart(2, '0')}</span>
+            {active === 'counterparties' && editable && <button type="button" className={`reference-merge-checkbox ${selectedCounterparties.includes(Number(item.id)) ? 'selected' : ''}`} onClick={() => toggleCounterparty(Number(item.id))} aria-label={`Выбрать контрагента ${item.value} для объединения`} aria-pressed={selectedCounterparties.includes(Number(item.id))}>{selectedCounterparties.includes(Number(item.id)) && <Check size={15}/>}</button>}
             <strong>{item.value}</strong>
             {active === 'counterparties' && <CounterpartyTaxIDEditor item={item} editable={editable} onSave={saveCounterpartyTaxID} notify={notify}/>}
             {active === 'cost_categories' && <ResponsiblePicker
@@ -141,6 +158,29 @@ export default function References({ user, notify }) {
       </section>
     </div>
     {counterpartyModal && <CounterpartyModal value={counterpartyModal.value} taxID={counterpartyModal.taxID} onClose={() => setCounterpartyModal(null)} onSave={(nextValue, taxID) => add(nextValue, taxID)}/>}
+    {mergeModal && <CounterpartyMergeModal items={selectedCounterpartyItems} value={mergeModal.value} onClose={() => setMergeModal(null)} onSave={mergeCounterparties}/>}
+  </div>
+}
+
+function CounterpartyMergeModal({ items, value: initialValue, onClose, onSave }) {
+  const [value, setValue] = useState(initialValue)
+  const [saving, setSaving] = useState(false)
+  const submit = async event => {
+    event.preventDefault()
+    if (!value.trim() || items.length < 2 || saving) return
+    setSaving(true)
+    try { await onSave(value.trim()) } catch { setSaving(false) }
+  }
+  return <div className="modal-backdrop" onMouseDown={event => { if (event.target === event.currentTarget && !saving) onClose() }}>
+    <form className="modal counterparty-merge-modal" onSubmit={submit}>
+      <div className="modal-head"><div><h2>Объединение контрагентов</h2><p>Все связанные счета останутся в реестре. Изменится только название контрагента, а дубли справочника будут перенесены в архив.</p></div><button type="button" onClick={onClose} disabled={saving} aria-label="Закрыть"><X size={17}/></button></div>
+      <div className="modal-body counterparty-merge-body">
+        <section><span>Выбрано для объединения</span><div>{items.map(item => <button type="button" key={item.id} className={item.value === value ? 'selected' : ''} onClick={() => setValue(item.value)}><strong>{item.value}</strong><small>{item.tax_id ? `ИНН ${item.tax_id}` : 'ИНН не указан'}</small>{item.value === value && <Check size={15}/>}</button>)}</div></section>
+        <label className="field"><span>Итоговое название контрагента *</span><input autoFocus value={value} onChange={event => setValue(event.target.value)} placeholder="Введите единое название" required/><small>Можно выбрать одно из существующих названий выше или ввести корректное название вручную.</small></label>
+        <div className="counterparty-merge-warning"><Combine size={19}/><div><strong>Что произойдёт</strong><span>Во всех строках реестра с выбранными контрагентами будет установлено название «{value.trim() || '…'}». Суммы, даты, статусы, документы и остальные поля не изменятся.</span></div></div>
+      </div>
+      <div className="modal-footer"><button type="button" className="secondary" onClick={onClose} disabled={saving}>Отмена</button><button type="submit" className="primary" disabled={!value.trim() || items.length < 2 || saving}>{saving ? 'Объединение…' : `Объединить ${items.length} контрагентов`}</button></div>
+    </form>
   </div>
 }
 
