@@ -630,6 +630,24 @@ func TestReferenceKindWhitelist(t *testing.T) {
 	}
 }
 
+func TestCounterpartyMergeInputRequiresDistinctValidSourcesAndTarget(t *testing.T) {
+	input := counterpartyMergeInput{IDs: []int64{7, 7, -1, 9}, Value: "  ООО Единый поставщик  "}
+	if err := input.normalize(); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(input.IDs, []int64{7, 9}) || input.Value != "ООО Единый поставщик" {
+		t.Fatalf("normalized merge input = %#v", input)
+	}
+	for _, invalid := range []counterpartyMergeInput{
+		{IDs: []int64{1}, Value: "Итог"},
+		{IDs: []int64{1, 2}, Value: "   "},
+	} {
+		if err := invalid.normalize(); err == nil {
+			t.Fatalf("invalid merge input accepted: %#v", invalid)
+		}
+	}
+}
+
 func TestObligationUpdateAcceptsReadOnlySplitMetadata(t *testing.T) {
 	req := httptest.NewRequest("PATCH", "/api/obligations/42", strings.NewReader(`{"status":"К оплате","split_group_id":"split-test","split_parent_id":12,"installment_number":2,"installment_count":3}`))
 	recorder := httptest.NewRecorder()

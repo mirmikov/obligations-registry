@@ -31,7 +31,7 @@ var permissionCatalog = []permissionGroup{
 	{Key: "credits", Label: "Кредиты и лизинги", Permissions: []permissionItem{{Key: "credits.view", Label: "Просмотр"}}},
 	{Key: "payments", Label: "К оплате", Permissions: []permissionItem{{Key: "payments.view", Label: "Просмотр"}, {Key: "payments.edit", Label: "Редактирование статуса и фактической даты"}, {Key: "payments.print", Label: "Печать"}}},
 	{Key: "chat", Label: "Чаты", Permissions: []permissionItem{{Key: "chat.view", Label: "Просмотр"}, {Key: "chat.send", Label: "Отправка сообщений"}, {Key: "chat.create", Label: "Создание личных чатов и групп"}}},
-	{Key: "references", Label: "Справочники", Permissions: []permissionItem{{Key: "references.view", Label: "Просмотр"}, {Key: "references.edit", Label: "Добавление и удаление значений"}}},
+	{Key: "references", Label: "Справочники", Permissions: []permissionItem{{Key: "references.view", Label: "Просмотр"}, {Key: "references.edit", Label: "Добавление, объединение и удаление значений"}}},
 	{Key: "users", Label: "Пользователи", Permissions: []permissionItem{{Key: "users.view", Label: "Просмотр"}, {Key: "users.manage", Label: "Создание и редактирование пользователей"}}},
 	{Key: "audit", Label: "Журнал действий", Permissions: []permissionItem{{Key: "audit.view", Label: "Просмотр"}}},
 }
