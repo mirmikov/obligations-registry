@@ -453,7 +453,7 @@ func convertImageToPNG(source, target string, angle int) error {
 func aiScanTextScore(text string) int {
 	folded := foldAIScanText(text)
 	score := len([]rune(folded)) / 20
-	for _, marker := range []string{"счет", "оплату", "поставщик", "покупатель", "инн", "итого"} {
+	for _, marker := range []string{"счет", "оплату", "поставщик", "получатель", "покупатель", "плательщик", "инн", "итого"} {
 		if strings.Contains(folded, marker) {
 			score += 25
 		}
@@ -462,10 +462,12 @@ func aiScanTextScore(text string) int {
 }
 
 var (
-	aiDocumentPattern = regexp.MustCompile(`(?i)(сч[её]т\s*[-–—]\s*фактура|универсальный\s+передаточный\s+документ|упд|сч[её]т(?:\s+на\s+опл\s*ату)?)\s*(?:№|N(?:o|е)?|No)?\s*([0-9A-Za-zА-Яа-яЁё./_-]+)\s+от\s+([0-9]{1,2}(?:[.\-/][0-9]{1,2}[.\-/][0-9]{2,4}|\s+[А-Яа-яЁё]+\s+[0-9]{4}))`)
-	aiAmountPattern   = regexp.MustCompile(`[0-9]{1,3}(?:[ \x{00A0}][0-9]{3})*(?:[,.][0-9]{2})|[0-9]+(?:[,.][0-9]{2})|[0-9]+`)
-	aiSupplierPattern = regexp.MustCompile(`(?is)(?:поставщик|исполнитель|продавец)(?:\s*\([^)]*\))?\s*[:;]?\s*(.{3,1000}?)(?:покупатель|заказчик|плательщик|основание|товары|услуги)`)
-	aiBuyerPattern    = regexp.MustCompile(`(?is)(?:покупатель|заказчик|плательщик)(?:\s*\([^)]*\))?\s*[:;]?\s*(.{3,1000}?)(?:основание|товары|услуги|поставщик|итого|всего|наименование)`)
+	aiDocumentPattern      = regexp.MustCompile(`(?i)(сч[её]т\s*[-–—]?\s*оферта|сч[её]т\s*[-–—]\s*фактура|универсальный\s+передаточный\s+документ|упд|сч[её]т(?:\s+на\s+опл\s*ату)?|товарная\s+накладная|накладная|акт(?:\s+(?:выполненных\s+работ|оказанных\s+услуг|при[её]ма\s*[-–—]?\s*передачи))?)\s*(?:№|N(?:o|е)?|No)?\s*([0-9A-Za-zА-Яа-яЁё./_-]+)\s+от\s+([0-9]{1,2}(?:[.\-/][0-9]{1,2}[.\-/][0-9]{2,4}|\s+[А-Яа-яЁё]+\s+[0-9]{4}))`)
+	aiAmountPattern        = regexp.MustCompile(`[0-9]{1,3}(?:[ \x{00A0}][0-9]{3})*(?:[,.][0-9]{2})|[0-9]+(?:[,.][0-9]{2})|[0-9]+`)
+	aiSupplierPattern      = regexp.MustCompile(`(?is)(?:поставщик|исполнитель|продавец)(?:\s*\([^)]*\))?\s*[:;]?\s*(.{3,1000}?)(?:покупатель|заказчик|плательщик|основание|товары|услуги)`)
+	aiRecipientLinePattern = regexp.MustCompile(`(?i)^\s*получатель(?:\s+средств)?\s*[:;]?\s*(.*)$`)
+	aiRecipientStopPattern = regexp.MustCompile(`(?i)^\s*(?:бик|банк\s+получателя|сч\.?\s*№|сч[её]т|назначение\s+платежа|плательщик|покупатель|заказчик)(?:\s|:|$)`)
+	aiBuyerPattern         = regexp.MustCompile(`(?is)(?:покупатель|заказчик|плательщик)(?:\s*\([^)]*\))?\s*[:;]?\s*(.{3,1000}?)(?:основание|товары|услуги|поставщик|итого|всего|наименование)`)
 )
 
 var aiMonths = map[string]int{"января": 1, "февраля": 2, "марта": 3, "апреля": 4, "мая": 5, "июня": 6, "июля": 7, "августа": 8, "сентября": 9, "октября": 10, "ноября": 11, "декабря": 12}
@@ -478,8 +480,12 @@ func parseAIScanText(text string, counterparties, legalEntities []string) aiScan
 		documentKind = regexp.MustCompile(`(?i)опл\s+ату`).ReplaceAllString(documentKind, "оплату")
 		if strings.Contains(foldAIScanText(text), "универсальный передаточный документ") {
 			documentKind = "УПД"
+		} else if strings.Contains(foldAIScanText(documentKind), "оферта") {
+			documentKind = "Счет-оферта"
 		} else if strings.Contains(foldAIScanText(documentKind), "фактура") {
 			documentKind = "Счет-фактура"
+		} else if foldAIScanText(documentKind) == "счет" {
+			documentKind = "Счет"
 		}
 		result.DocumentNumber = documentKind + " № " + strings.TrimSpace(match[2])
 		result.DocumentDate = parseAIScanDate(match[3])
@@ -493,6 +499,9 @@ func parseAIScanText(text string, counterparties, legalEntities []string) aiScan
 		result.Confidence["amount"] = "high"
 	}
 	supplierText := regexpCapture(aiSupplierPattern, text)
+	if supplierText == "" {
+		supplierText = extractAIScanRecipient(text)
+	}
 	buyerText := regexpCapture(aiBuyerPattern, text)
 	supplierName := extractAIScanParty(supplierText)
 	buyerName := extractAIScanParty(buyerText)
@@ -535,6 +544,34 @@ func regexpCapture(pattern *regexp.Regexp, text string) string {
 		return ""
 	}
 	return strings.TrimSpace(match[1])
+}
+
+func extractAIScanRecipient(text string) string {
+	lines := strings.Split(strings.ReplaceAll(text, "\r", ""), "\n")
+	for index, line := range lines {
+		match := aiRecipientLinePattern.FindStringSubmatch(line)
+		if len(match) != 2 {
+			continue
+		}
+		if candidate := strings.TrimSpace(match[1]); candidate != "" && !aiRecipientStopPattern.MatchString(candidate) {
+			if value := extractAIScanParty(candidate); value != "" {
+				return value
+			}
+		}
+		for next := index + 1; next < len(lines) && next <= index+3; next++ {
+			candidate := strings.TrimSpace(lines[next])
+			if candidate == "" {
+				continue
+			}
+			if aiRecipientStopPattern.MatchString(candidate) {
+				break
+			}
+			if value := extractAIScanParty(candidate); value != "" {
+				return value
+			}
+		}
+	}
+	return ""
 }
 
 func parseAIScanDate(value string) string {

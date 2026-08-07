@@ -122,6 +122,40 @@ func TestParseAIScanTextSupportsColumnOrderedUPDBuyer(t *testing.T) {
 	}
 }
 
+func TestParseAIScanTextSupportsRecipientPayerAndOfferInvoice(t *testing.T) {
+	text := `
+ИНН 7704217370
+КПП 997750001
+Сч.№ 40702810200000598886
+Получатель                                   БИК        044525068
+Интернет Решения, ООО
+Банк получателя                              Сч.№       30101810645374525068
+ООО "ОЗОН Банк"
+Назначение платежа Оплата по заказу 0259379144-0002 от 22.07.2026
+Счет-Оферта № 0259379144-0002 от 22.07.2026
+Плательщик: ООО "МЦ "МИРТ"", ИНН 4401050775
+Итого: 12 028,00
+Всего к оплате с учетом НДС: 12 028,00
+Сумма к оплате: 12 028,00
+`
+	result := parseAIScanText(text, []string{"Интернет Решения, ООО", `ООО "ОЗОН Банк"`}, []string{`ООО "МЦ "Мирт"`})
+	if result.Counterparty != "Интернет Решения, ООО" {
+		t.Fatalf("unexpected recipient: %q", result.Counterparty)
+	}
+	if result.LegalEntity != `ООО "МЦ "Мирт"` {
+		t.Fatalf("unexpected payer: %q", result.LegalEntity)
+	}
+	if result.DocumentNumber != "Счет-оферта № 0259379144-0002" || result.DocumentDate != "2026-07-22" {
+		t.Fatalf("unexpected offer invoice: %q, %q", result.DocumentNumber, result.DocumentDate)
+	}
+	if result.Amount == nil || *result.Amount != 12028 {
+		t.Fatalf("unexpected amount: %v", result.Amount)
+	}
+	if len(result.Warnings) != 0 {
+		t.Fatalf("unexpected warnings: %v", result.Warnings)
+	}
+}
+
 func TestAIScanTextLayerRejectsSparseGarbage(t *testing.T) {
 	if usableAIScanTextLayer("12345 ---") {
 		t.Fatal("sparse text layer must fall back to OCR")
