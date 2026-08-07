@@ -9,6 +9,7 @@ import { mergeCurrentObligationRecord } from './obligationHistoryView'
 import { getRegistryStickyOffsets } from './registryColumns'
 import { canContinueRegistryDrag, canStartRegistryDrag, getRegistryDragScroll, hasRegistryDragStarted } from './registryDragScroll'
 import { can } from './permissions'
+import { referenceOptionSearchText } from './counterpartyTaxId'
 import { buildCostCategoryResponsibleMap, withDefaultResponsible } from './referenceDefaults'
 import usePresence from './usePresence'
 import AIScanModal from './AIScanModal'
@@ -412,8 +413,15 @@ function HeaderFilter({ label, value, options = [], onChange, multiple = false, 
   const [search, setSearch] = useState('')
   const rootRef = useRef(null)
   const inputRef = useRef(null)
-  const values = useMemo(() => [...new Set(options.map(option => typeof option === 'string' ? option : option.value).filter(Boolean))], [options])
-  const visible = useMemo(() => { const term = search.trim().toLocaleLowerCase('ru-RU'); return term ? values.filter(option => option.toLocaleLowerCase('ru-RU').includes(term)) : values }, [search, values])
+  const normalizedOptions = useMemo(() => {
+    const unique = new Map()
+    options.forEach(option => {
+      const optionValue = typeof option === 'string' ? option : option.value
+      if (optionValue && !unique.has(optionValue)) unique.set(optionValue, { value: optionValue, taxID: typeof option === 'string' ? '' : (option.tax_id || ''), searchText: referenceOptionSearchText(option) })
+    })
+    return [...unique.values()]
+  }, [options])
+  const visible = useMemo(() => { const term = search.trim().toLocaleLowerCase('ru-RU'); return term ? normalizedOptions.filter(option => option.searchText.toLocaleLowerCase('ru-RU').includes(term)) : normalizedOptions }, [search, normalizedOptions])
   const selectedValues = multiple ? (Array.isArray(value) ? value : value ? [value] : []) : value ? [value] : []
   useEffect(() => {
     if (!open) return
@@ -432,11 +440,11 @@ function HeaderFilter({ label, value, options = [], onChange, multiple = false, 
   return <div ref={rootRef} className={`header-filter ${open ? 'is-open' : ''} ${selectedValues.length ? 'has-value' : ''}`}>
     <button type="button" className="header-filter-trigger" aria-label={`Фильтр: ${label}${multiple && selectedValues.length ? `, выбрано ${selectedValues.length}` : ''}`} aria-expanded={open} onClick={() => { setSearch(''); setOpen(current => !current) }}><ChevronDown size={13}/>{selectedValues.length > 0 && <i/>}</button>
     {open && <div className="header-filter-menu">
-      <div className="header-filter-search"><Search size={15}/><input ref={inputRef} value={search} onChange={event => setSearch(event.target.value)} placeholder="Поиск по наименованию" aria-label={`Поиск: ${label}`}/>{search && <button type="button" onClick={() => setSearch('')} aria-label="Очистить поиск"><X size={13}/></button>}</div>
+      <div className="header-filter-search"><Search size={15}/><input ref={inputRef} value={search} onChange={event => setSearch(event.target.value)} placeholder={label === 'Контрагент' ? 'Название или ИНН' : 'Поиск по наименованию'} aria-label={`Поиск: ${label}`}/>{search && <button type="button" onClick={() => setSearch('')} aria-label="Очистить поиск"><X size={13}/></button>}</div>
       <div className="header-filter-options" role="listbox" aria-multiselectable={multiple || undefined} aria-label={`Значения: ${label}`}>
         <button type="button" className={!selectedValues.length ? 'selected' : ''} onClick={() => select('')}><span>Все значения</span>{!selectedValues.length && <Check size={14}/>}</button>
         {allowBlank && <button type="button" className={selectedValues.includes(BLANK_ACCOUNT_TYPE_FILTER) ? 'selected' : ''} onClick={() => select(BLANK_ACCOUNT_TYPE_FILTER)} role="option" aria-selected={selectedValues.includes(BLANK_ACCOUNT_TYPE_FILTER)}><span>Не выбран (—)</span>{selectedValues.includes(BLANK_ACCOUNT_TYPE_FILTER) && <Check size={14}/>}</button>}
-        {visible.map(option => { const selected = selectedValues.includes(option); return <button type="button" key={option} className={selected ? 'selected' : ''} onClick={() => select(option)} title={option} role="option" aria-selected={selected}><span>{option}</span>{selected && <Check size={14}/>}</button> })}
+        {visible.map(option => { const selected = selectedValues.includes(option.value); return <button type="button" key={option.value} className={selected ? 'selected' : ''} onClick={() => select(option.value)} title={option.taxID ? `${option.value} · ИНН ${option.taxID}` : option.value} role="option" aria-selected={selected}><span>{option.value}{option.taxID && <small>ИНН {option.taxID}</small>}</span>{selected && <Check size={14}/>}</button> })}
         {!visible.length && <p>Ничего не найдено</p>}
       </div>
     </div>}

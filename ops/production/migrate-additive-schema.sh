@@ -28,6 +28,16 @@ db_mount_before="$(docker inspect --format '{{range .Mounts}}{{if eq .Destinatio
 
 core_fingerprint_before="$(docker compose exec -T db psql -U registry -d registry -At -F '|' -c "SELECT (SELECT count(*) FROM obligations),(SELECT COALESCE(sum(amount),0) FROM obligations),(SELECT count(*) FROM users),(SELECT count(*) FROM reference_values)")"
 
+tax_id_count() {
+  if [[ "$(docker compose exec -T db psql -U registry -d registry -At -c "SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='reference_values' AND column_name='tax_id')")" == "t" ]]; then
+    docker compose exec -T db psql -U registry -d registry -At -c "SELECT count(*) FROM reference_values WHERE tax_id IS NOT NULL"
+  else
+    echo missing
+  fi
+}
+
+tax_id_count_before="$(tax_id_count)"
+
 relation_count() {
   local relation="$1"
   case "$relation" in
@@ -53,10 +63,10 @@ echo "Резервная копия: $backup_path"
 echo "Создаю только отсутствующие таблицы чата, истории отмены и индексы..."
 docker compose exec -T db psql -v ON_ERROR_STOP=1 -U registry -d registry < ./ops/production/additive-schema.sql
 
-missing_relations="$(docker compose exec -T db psql -U registry -d registry -At -c "SELECT name FROM unnest(ARRAY['undo_operations','chat_conversations','chat_members','chat_messages','undo_operations_user_idx','chat_members_user_idx','chat_messages_conversation_idx']) AS name WHERE to_regclass('public.'||name) IS NULL ORDER BY name")"
+missing_relations="$(docker compose exec -T db psql -U registry -d registry -At -c "SELECT name FROM unnest(ARRAY['undo_operations','chat_conversations','chat_members','chat_messages','undo_operations_user_idx','chat_members_user_idx','chat_messages_conversation_idx','reference_values_counterparty_tax_id_unique']) AS name WHERE to_regclass('public.'||name) IS NULL ORDER BY name")"
 [[ -z "$missing_relations" ]] || fail "после миграции отсутствуют объекты: $missing_relations"
 
-missing_columns="$(docker compose exec -T db psql -U registry -d registry -At -c "WITH expected(table_name,column_name) AS (VALUES ('undo_operations','id'),('undo_operations','user_id'),('undo_operations','action'),('undo_operations','description'),('undo_operations','payload'),('undo_operations','created_at'),('undo_operations','undone_at'),('chat_conversations','id'),('chat_conversations','kind'),('chat_conversations','name'),('chat_conversations','direct_key'),('chat_conversations','created_by'),('chat_conversations','created_at'),('chat_conversations','updated_at'),('chat_members','conversation_id'),('chat_members','user_id'),('chat_members','joined_at'),('chat_members','last_read_at'),('chat_messages','id'),('chat_messages','conversation_id'),('chat_messages','sender_id'),('chat_messages','body'),('chat_messages','created_at')) SELECT expected.table_name||'.'||expected.column_name FROM expected LEFT JOIN information_schema.columns actual USING(table_name,column_name) WHERE actual.column_name IS NULL ORDER BY 1")"
+missing_columns="$(docker compose exec -T db psql -U registry -d registry -At -c "WITH expected(table_name,column_name) AS (VALUES ('reference_values','tax_id'),('undo_operations','id'),('undo_operations','user_id'),('undo_operations','action'),('undo_operations','description'),('undo_operations','payload'),('undo_operations','created_at'),('undo_operations','undone_at'),('chat_conversations','id'),('chat_conversations','kind'),('chat_conversations','name'),('chat_conversations','direct_key'),('chat_conversations','created_by'),('chat_conversations','created_at'),('chat_conversations','updated_at'),('chat_members','conversation_id'),('chat_members','user_id'),('chat_members','joined_at'),('chat_members','last_read_at'),('chat_messages','id'),('chat_messages','conversation_id'),('chat_messages','sender_id'),('chat_messages','body'),('chat_messages','created_at')) SELECT expected.table_name||'.'||expected.column_name FROM expected LEFT JOIN information_schema.columns actual ON actual.table_schema='public' AND actual.table_name=expected.table_name AND actual.column_name=expected.column_name WHERE actual.column_name IS NULL ORDER BY 1")"
 [[ -z "$missing_columns" ]] || fail "после миграции отсутствуют колонки: $missing_columns"
 
 for relation in undo_operations chat_conversations chat_members chat_messages; do
@@ -68,6 +78,13 @@ for relation in undo_operations chat_conversations chat_members chat_messages; d
     [[ "$count_after" == "$count_before" ]] || fail "число строк в существующей таблице $relation изменилось"
   fi
 done
+
+tax_id_count_after="$(tax_id_count)"
+if [[ "$tax_id_count_before" == "missing" ]]; then
+  [[ "$tax_id_count_after" == "0" ]] || fail "новый столбец ИНН должен быть пустым, найдено значений: $tax_id_count_after"
+else
+  [[ "$tax_id_count_after" == "$tax_id_count_before" ]] || fail "количество заполненных ИНН изменилось во время schema-only миграции"
+fi
 
 core_fingerprint_after="$(docker compose exec -T db psql -U registry -d registry -At -F '|' -c "SELECT (SELECT count(*) FROM obligations),(SELECT COALESCE(sum(amount),0) FROM obligations),(SELECT count(*) FROM users),(SELECT count(*) FROM reference_values)")"
 [[ "$core_fingerprint_after" == "$core_fingerprint_before" ]] || fail "данные обязательств, пользователей или справочников изменились"
