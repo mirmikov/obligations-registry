@@ -272,7 +272,7 @@ func restoreReferences(ctx context.Context, tx *sql.Tx, change *undoChange) erro
 	if len(beforeIDs) == 0 {
 		return nil
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO reference_values(id,kind,value,sort_order,active) SELECT id,kind,value,sort_order,active FROM jsonb_to_recordset($1::jsonb) AS restored(id bigint,kind text,value text,sort_order integer,active boolean) ON CONFLICT(id) DO UPDATE SET kind=excluded.kind,value=excluded.value,sort_order=excluded.sort_order,active=excluded.active`, change.Before)
+	_, err = tx.ExecContext(ctx, `INSERT INTO reference_values(id,kind,value,sort_order,active,tax_id) SELECT id,kind,value,sort_order,active,tax_id FROM jsonb_to_recordset($1::jsonb) AS restored(id bigint,kind text,value text,sort_order integer,active boolean,tax_id text) ON CONFLICT(id) DO UPDATE SET kind=excluded.kind,value=excluded.value,sort_order=excluded.sort_order,active=excluded.active,tax_id=excluded.tax_id`, change.Before)
 	return err
 }
 

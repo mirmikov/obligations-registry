@@ -8,9 +8,33 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 )
 
 const costCategoryResponsibleReferenceKind = "cost_category_responsibles"
+
+const counterpartyReferenceKind = "counterparties"
+
+func normalizeCounterpartyTaxID(value string) (string, error) {
+	value = strings.Map(func(char rune) rune {
+		if unicode.IsSpace(char) || char == '-' {
+			return -1
+		}
+		return char
+	}, strings.TrimSpace(value))
+	if value == "" {
+		return "", nil
+	}
+	if len(value) != 10 && len(value) != 12 {
+		return "", fmt.Errorf("ИНН должен содержать 10 или 12 цифр")
+	}
+	for _, char := range value {
+		if char < '0' || char > '9' {
+			return "", fmt.Errorf("ИНН должен содержать только цифры")
+		}
+	}
+	return value, nil
+}
 
 type costCategoryResponsibleReference struct {
 	CategoryID  int64  `json:"category_id"`
@@ -32,7 +56,7 @@ func decodeCostCategoryResponsibleReference(value string) (costCategoryResponsib
 }
 
 func (a *app) listReferences(w http.ResponseWriter, r *http.Request) {
-	rows, err := a.db.QueryContext(r.Context(), `SELECT id,kind,value,sort_order FROM reference_values WHERE active AND kind <> $1 ORDER BY kind,sort_order,value`, executiveSettingsReferenceKind)
+	rows, err := a.db.QueryContext(r.Context(), `SELECT id,kind,value,sort_order,tax_id FROM reference_values WHERE active AND kind <> $1 ORDER BY kind,sort_order,value`, executiveSettingsReferenceKind)
 	if err != nil {
 		fail(w, 500, "Не удалось загрузить справочники")
 		return
@@ -43,7 +67,8 @@ func (a *app) listReferences(w http.ResponseWriter, r *http.Request) {
 		var id int64
 		var kind, value string
 		var order int
-		if err := rows.Scan(&id, &kind, &value, &order); err != nil {
+		var taxID sql.NullString
+		if err := rows.Scan(&id, &kind, &value, &order, &taxID); err != nil {
 			fail(w, 500, "Ошибка справочников")
 			return
 		}
@@ -54,7 +79,11 @@ func (a *app) listReferences(w http.ResponseWriter, r *http.Request) {
 			}
 			continue
 		}
-		result[kind] = append(result[kind], map[string]any{"id": id, "value": value, "sort_order": order})
+		item := map[string]any{"id": id, "value": value, "sort_order": order}
+		if kind == counterpartyReferenceKind {
+			item["tax_id"] = taxID.String
+		}
+		result[kind] = append(result[kind], item)
 	}
 	writeJSON(w, 200, result)
 }
@@ -171,6 +200,7 @@ func (a *app) addReference(w http.ResponseWriter, r *http.Request) {
 	}
 	var input struct {
 		Value string `json:"value"`
+		TaxID string `json:"tax_id"`
 	}
 	if !decodeJSON(w, r, &input) {
 		return
@@ -179,6 +209,16 @@ func (a *app) addReference(w http.ResponseWriter, r *http.Request) {
 	if input.Value == "" {
 		fail(w, 400, "Пустое значение")
 		return
+	}
+	if kind == counterpartyReferenceKind {
+		normalizedTaxID, normalizeErr := normalizeCounterpartyTaxID(input.TaxID)
+		if normalizeErr != nil {
+			fail(w, http.StatusBadRequest, normalizeErr.Error())
+			return
+		}
+		input.TaxID = normalizedTaxID
+	} else {
+		input.TaxID = ""
 	}
 	user := currentUser(r)
 	tx, err := a.db.BeginTx(r.Context(), nil)
@@ -197,8 +237,21 @@ func (a *app) addReference(w http.ResponseWriter, r *http.Request) {
 		fail(w, 500, "Не удалось подготовить историю отмены")
 		return
 	}
+	if input.TaxID != "" {
+		var duplicateID int64
+		var duplicateValue string
+		err = tx.QueryRowContext(r.Context(), `SELECT id,value FROM reference_values WHERE kind=$1 AND tax_id=$2 AND id<>$3 FOR UPDATE`, counterpartyReferenceKind, input.TaxID, existingID).Scan(&duplicateID, &duplicateValue)
+		if err == nil {
+			fail(w, http.StatusConflict, fmt.Sprintf("Контрагент с ИНН %s уже существует: %s", input.TaxID, duplicateValue))
+			return
+		}
+		if err != sql.ErrNoRows {
+			fail(w, http.StatusInternalServerError, "Не удалось проверить уникальность ИНН")
+			return
+		}
+	}
 	var id int64
-	err = tx.QueryRowContext(r.Context(), `INSERT INTO reference_values(kind,value,sort_order) VALUES($1,$2,(SELECT COALESCE(max(sort_order),-1)+1 FROM reference_values WHERE kind=$1)) ON CONFLICT(kind,value) DO UPDATE SET active=true RETURNING id`, kind, input.Value).Scan(&id)
+	err = tx.QueryRowContext(r.Context(), `INSERT INTO reference_values(kind,value,sort_order,tax_id) VALUES($1,$2,(SELECT COALESCE(max(sort_order),-1)+1 FROM reference_values WHERE kind=$1),NULLIF($3,'')) ON CONFLICT(kind,value) DO UPDATE SET active=true,tax_id=COALESCE(excluded.tax_id,reference_values.tax_id) RETURNING id`, kind, input.Value, input.TaxID).Scan(&id)
 	if err != nil {
 		fail(w, 400, "Не удалось добавить значение")
 		return
@@ -212,8 +265,74 @@ func (a *app) addReference(w http.ResponseWriter, r *http.Request) {
 		fail(w, 500, "Не удалось завершить сохранение")
 		return
 	}
-	a.audit(r.Context(), user.ID, "create", "reference", &id, map[string]any{"kind": kind, "value": input.Value})
-	writeJSON(w, 201, map[string]any{"id": id})
+	a.audit(r.Context(), user.ID, "create", "reference", &id, map[string]any{"kind": kind, "value": input.Value, "tax_id": input.TaxID})
+	writeJSON(w, 201, map[string]any{"id": id, "tax_id": input.TaxID})
+}
+
+func (a *app) setCounterpartyTaxID(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || id <= 0 {
+		fail(w, http.StatusBadRequest, "Некорректный контрагент")
+		return
+	}
+	var input struct {
+		TaxID string `json:"tax_id"`
+	}
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	input.TaxID, err = normalizeCounterpartyTaxID(input.TaxID)
+	if err != nil {
+		fail(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	user := currentUser(r)
+	tx, err := a.db.BeginTx(r.Context(), nil)
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Не удалось начать сохранение ИНН")
+		return
+	}
+	defer tx.Rollback()
+	var value string
+	if err = tx.QueryRowContext(r.Context(), `SELECT value FROM reference_values WHERE id=$1 AND kind=$2 AND active FOR UPDATE`, id, counterpartyReferenceKind).Scan(&value); err == sql.ErrNoRows {
+		fail(w, http.StatusNotFound, "Контрагент не найден")
+		return
+	} else if err != nil {
+		fail(w, http.StatusInternalServerError, "Не удалось проверить контрагента")
+		return
+	}
+	if input.TaxID != "" {
+		var duplicateValue string
+		err = tx.QueryRowContext(r.Context(), `SELECT value FROM reference_values WHERE kind=$1 AND tax_id=$2 AND id<>$3 FOR UPDATE`, counterpartyReferenceKind, input.TaxID, id).Scan(&duplicateValue)
+		if err == nil {
+			fail(w, http.StatusConflict, fmt.Sprintf("Контрагент с ИНН %s уже существует: %s", input.TaxID, duplicateValue))
+			return
+		}
+		if err != sql.ErrNoRows {
+			fail(w, http.StatusInternalServerError, "Не удалось проверить уникальность ИНН")
+			return
+		}
+	}
+	before, err := snapshotRows(r.Context(), tx, "reference_values", []int64{id})
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Не удалось подготовить историю изменения")
+		return
+	}
+	if _, err = tx.ExecContext(r.Context(), `UPDATE reference_values SET tax_id=NULLIF($1,'') WHERE id=$2 AND kind=$3`, input.TaxID, id, counterpartyReferenceKind); err != nil {
+		fail(w, http.StatusConflict, "Не удалось сохранить ИНН: проверьте, что он не используется другим контрагентом")
+		return
+	}
+	after, err := snapshotRows(r.Context(), tx, "reference_values", []int64{id})
+	if err != nil || a.recordUndo(r.Context(), tx, user.ID, "update", "Изменение ИНН контрагента «"+value+"»", undoPayload{References: &undoChange{Before: before, After: after}}) != nil {
+		fail(w, http.StatusInternalServerError, "Не удалось записать историю изменения")
+		return
+	}
+	if err = tx.Commit(); err != nil {
+		fail(w, http.StatusInternalServerError, "Не удалось завершить сохранение ИНН")
+		return
+	}
+	a.audit(r.Context(), user.ID, "update", "reference", &id, map[string]any{"kind": counterpartyReferenceKind, "value": value, "tax_id": input.TaxID})
+	writeJSON(w, http.StatusOK, map[string]any{"id": id, "tax_id": input.TaxID})
 }
 
 func (a *app) deleteReference(w http.ResponseWriter, r *http.Request) {

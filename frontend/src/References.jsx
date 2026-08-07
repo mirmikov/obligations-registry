@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Check, ChevronDown, Plus, Trash2 } from 'lucide-react'
+import { Check, ChevronDown, Plus, Save, Search, Trash2, X } from 'lucide-react'
 import { request } from './api'
 import { PageHeader } from './App'
 import { can } from './permissions'
+import { filterCounterparties, normalizeTaxIdInput } from './counterpartyTaxId'
 
 const kinds = [
   ['statuses', 'Статусы', 'Этапы обработки обязательства'],
@@ -20,6 +21,8 @@ export default function References({ user, notify }) {
   const [data, setData] = useState({})
   const [active, setActive] = useState('statuses')
   const [value, setValue] = useState('')
+  const [search, setSearch] = useState('')
+  const [counterpartyModal, setCounterpartyModal] = useState(null)
   const [savingAssignment, setSavingAssignment] = useState(null)
   const load = () => request('/api/references').then(setData).catch(error => notify(error.message, 'error'))
 
@@ -29,17 +32,35 @@ export default function References({ user, notify }) {
     (data.cost_category_responsibles || []).map(item => [Number(item.cost_category_id), item.responsible]),
   ), [data.cost_category_responsibles])
 
-  const add = async event => {
-    event.preventDefault()
-    if (!value.trim()) return
+  const add = async (nextValue, taxID = '') => {
+    if (!nextValue.trim()) return
     try {
-      await request(`/api/references/${active}`, { method: 'POST', body: JSON.stringify({ value }) })
+      await request(`/api/references/${active}`, { method: 'POST', body: JSON.stringify({ value: nextValue, tax_id: normalizeTaxIdInput(taxID) }) })
       setValue('')
-      notify('Значение добавлено')
-      load()
+      setCounterpartyModal(null)
+      notify(active === 'counterparties' ? 'Контрагент добавлен' : 'Значение добавлено')
+      await load()
     } catch (error) {
       notify(error.message, 'error')
+      throw error
     }
+  }
+
+  const addInline = event => {
+    event.preventDefault()
+    add(value).catch(() => {})
+  }
+
+  const saveCounterpartyTaxID = async (id, taxID) => {
+    const result = await request(`/api/references/counterparties/${id}/tax-id`, {
+      method: 'PUT',
+      body: JSON.stringify({ tax_id: normalizeTaxIdInput(taxID) }),
+    })
+    setData(current => ({
+      ...current,
+      counterparties: (current.counterparties || []).map(item => Number(item.id) === Number(id) ? { ...item, tax_id: result.tax_id || '' } : item),
+    }))
+    notify(result.tax_id ? 'ИНН сохранён' : 'ИНН удалён')
   }
 
   const remove = async id => {
@@ -76,29 +97,36 @@ export default function References({ user, notify }) {
   }
 
   const current = kinds.find(kind => kind[0] === active)
+  const currentItems = active === 'counterparties' ? filterCounterparties(data[active] || [], search) : (data[active] || [])
   return <div className="page">
     <PageHeader eyebrow="Настройки" title="Справочники" subtitle="Единые значения для выпадающих списков реестра" />
     <div className="settings-layout">
       <aside className="settings-nav">
-        {kinds.map(([key, label, description]) => <button key={key} className={active === key ? 'active' : ''} onClick={() => setActive(key)}>
+        {kinds.map(([key, label, description]) => <button key={key} className={active === key ? 'active' : ''} onClick={() => { setActive(key); setSearch(''); setValue('') }}>
           <strong>{label}</strong><span>{description}</span><i>{(data[key] || []).length}</i>
         </button>)}
       </aside>
       <section className="panel reference-panel">
         <div className="reference-head">
           <div><h2>{current[1]}</h2><span>{current[2]}</span></div>
-          {editable && <form onSubmit={add}>
+          {editable && (active === 'counterparties' ? <button type="button" className="primary reference-add-counterparty" onClick={() => setCounterpartyModal({ value: '', taxID: '' })}><Plus size={17} />Добавить контрагента</button> : <form onSubmit={addInline}>
             <input placeholder="Новое значение" value={value} onChange={event => setValue(event.target.value)} />
             <button className="primary"><Plus size={17} />Добавить</button>
-          </form>}
+          </form>)}
         </div>
+        {active === 'counterparties' && <div className="reference-search">
+          <Search size={17}/><input value={search} onChange={event => setSearch(event.target.value)} placeholder="Поиск по названию или ИНН" aria-label="Поиск контрагентов по названию или ИНН"/>
+          {search && <button type="button" onClick={() => setSearch('')} aria-label="Очистить поиск"><X size={15}/></button>}
+          <span>Найдено: {currentItems.length}</span>
+        </div>}
         {active === 'cost_categories' && <div className="reference-assignment-hint">
           Для каждой статьи можно назначить ответственного по умолчанию. В реестре его по-прежнему можно изменить вручную.
         </div>}
         <div className="reference-list">
-          {(data[active] || []).map((item, index) => <div key={item.id} className={active === 'cost_categories' ? 'has-assignment' : ''}>
+          {currentItems.map((item, index) => <div key={item.id} className={`${active === 'cost_categories' ? 'has-assignment' : ''} ${active === 'counterparties' ? 'counterparty-reference-row' : ''}`}>
             <span>{String(index + 1).padStart(2, '0')}</span>
             <strong>{item.value}</strong>
+            {active === 'counterparties' && <CounterpartyTaxIDEditor item={item} editable={editable} onSave={saveCounterpartyTaxID} notify={notify}/>}
             {active === 'cost_categories' && <ResponsiblePicker
               value={assignments[Number(item.id)] || ''}
               options={data.responsibles || []}
@@ -108,9 +136,48 @@ export default function References({ user, notify }) {
             />}
             {editable && <button className="reference-delete" onClick={() => remove(item.id)} title="Удалить значение"><Trash2 size={16} /></button>}
           </div>)}
+          {active === 'counterparties' && currentItems.length === 0 && <div className="reference-empty">Контрагенты не найдены</div>}
         </div>
       </section>
     </div>
+    {counterpartyModal && <CounterpartyModal value={counterpartyModal.value} taxID={counterpartyModal.taxID} onClose={() => setCounterpartyModal(null)} onSave={(nextValue, taxID) => add(nextValue, taxID)}/>}
+  </div>
+}
+
+function CounterpartyTaxIDEditor({ item, editable, onSave, notify }) {
+  const [value, setValue] = useState(item.tax_id || '')
+  const [saving, setSaving] = useState(false)
+  useEffect(() => setValue(item.tax_id || ''), [item.tax_id])
+  const changed = normalizeTaxIdInput(value) !== (item.tax_id || '')
+  const save = async () => {
+    setSaving(true)
+    try { await onSave(item.id, value) } catch (error) { notify(error.message, 'error') } finally { setSaving(false) }
+  }
+  return <div className="reference-tax-id-editor">
+    <label><span>ИНН</span><input value={value} onChange={event => setValue(event.target.value)} inputMode="numeric" maxLength={15} placeholder="Не указан" disabled={!editable || saving} aria-label={`ИНН контрагента ${item.value}`} onKeyDown={event => { if (event.key === 'Enter' && changed) { event.preventDefault(); save() } }}/></label>
+    {editable && <button type="button" className="reference-tax-id-save" disabled={!changed || saving} onClick={save} title="Сохранить ИНН" aria-label={`Сохранить ИНН контрагента ${item.value}`}><Save size={15}/></button>}
+  </div>
+}
+
+function CounterpartyModal({ value: initialValue, taxID: initialTaxID, onClose, onSave }) {
+  const [value, setValue] = useState(initialValue)
+  const [taxID, setTaxID] = useState(initialTaxID)
+  const [saving, setSaving] = useState(false)
+  const submit = async event => {
+    event.preventDefault()
+    if (!value.trim() || saving) return
+    setSaving(true)
+    try { await onSave(value.trim(), taxID) } catch { setSaving(false) }
+  }
+  return <div className="modal-backdrop" onMouseDown={event => { if (event.target === event.currentTarget && !saving) onClose() }}>
+    <form className="modal small-modal counterparty-modal" onSubmit={submit}>
+      <div className="modal-head"><div><h2>Новый контрагент</h2><p>ИНН можно указать сейчас или добавить позднее в справочнике.</p></div><button type="button" onClick={onClose} disabled={saving} aria-label="Закрыть"><X size={17}/></button></div>
+      <div className="modal-body stacked-fields">
+        <label className="field"><span>Наименование контрагента *</span><input autoFocus value={value} onChange={event => setValue(event.target.value)} placeholder="Например, ООО «Поставщик»" required/></label>
+        <label className="field"><span>ИНН (необязательно)</span><input value={taxID} onChange={event => setTaxID(event.target.value)} inputMode="numeric" maxLength={15} placeholder="10 или 12 цифр"/><small>ИНН используется для поиска и защиты от дублирования контрагентов.</small></label>
+      </div>
+      <div className="modal-footer"><button type="button" className="secondary" onClick={onClose} disabled={saving}>Отмена</button><button type="submit" className="primary" disabled={!value.trim() || saving}>{saving ? 'Сохранение…' : taxID.trim() ? 'Добавить с ИНН' : 'Добавить без ИНН'}</button></div>
+    </form>
   </div>
 }
 

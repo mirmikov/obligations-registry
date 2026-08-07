@@ -1,5 +1,11 @@
 BEGIN;
 
+ALTER TABLE reference_values ADD COLUMN IF NOT EXISTS tax_id TEXT;
+
+CREATE UNIQUE INDEX IF NOT EXISTS reference_values_counterparty_tax_id_unique
+  ON reference_values(tax_id)
+  WHERE kind='counterparties' AND tax_id IS NOT NULL;
+
 CREATE TABLE IF NOT EXISTS undo_operations (
   id BIGSERIAL PRIMARY KEY,
   user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
