@@ -23,3 +23,10 @@ test('chat AI action is protected by the dedicated permission and uses confirmat
 test('chat attachment styles cover dark mode', () => {
   assert.match(styles, /html\[data-theme="dark"\] \.chat-file-card/)
 })
+
+test('attachment preview never scrolls the message input out of view', () => {
+  assert.match(chat, /draftAttachment \? 'has-attachment'/)
+  assert.match(styles, /\.chat-composer\.has-attachment\{[^}]*grid-template-rows:auto auto/)
+  assert.match(styles, /\.chat-page-compact \.chat-composer[^}]*max-height:none;overflow:visible/)
+  assert.match(styles, /\.chat-composer-main\{[^}]*min-height:38px;flex:0 0 auto/)
+})
