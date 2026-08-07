@@ -365,7 +365,7 @@ func TestChatImageMessageRoundTrip(t *testing.T) {
 		t.Fatalf("decoded image message = %q, %q", body, decodedName)
 	}
 	body, imageURL := chatMessagePresentation(stored, 42)
-	if body != "Подпись к снимку" || imageURL != "/api/chat/conversations/42/images/"+name {
+	if body != "Подпись к снимку" || imageURL != "/api/chat/conversations/42/files/"+name {
 		t.Fatalf("image presentation = %q, %q", body, imageURL)
 	}
 }
@@ -425,12 +425,42 @@ func TestReadChatMessageInputAcceptsClipboardPNG(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/chat/conversations/9/messages", &payload)
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 	recorder := httptest.NewRecorder()
-	body, name, ok := (&app{}).readChatMessageInput(recorder, req, 9)
-	if !ok || body != "Подпись" || !validChatImageName(name) {
-		t.Fatalf("parsed image input = ok:%v body:%q name:%q response:%s", ok, body, name, recorder.Body.String())
+	body, attachment, ok := (&app{}).readChatMessageInput(recorder, req, 9)
+	if !ok || body != "Подпись" || attachment == nil || !validChatImageName(attachment.StoredName) {
+		t.Fatalf("parsed image input = ok:%v body:%q attachment:%#v response:%s", ok, body, attachment, recorder.Body.String())
 	}
-	if _, err := os.Stat(filepath.Join(directory, "9", name)); err != nil {
+	if _, err := os.Stat(filepath.Join(directory, "9", attachment.StoredName)); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestChatFileMessageRoundTrip(t *testing.T) {
+	attachment := &chatAttachment{StoredName: "0123456789abcdef0123456789abcdef.pdf", OriginalName: "Счёт № 17.pdf", ContentType: "application/pdf", Size: 1200}
+	stored := encodeChatAttachmentBody("На проверку", attachment)
+	body, decoded := decodeChatAttachmentBody(stored)
+	if body != "На проверку" || decoded == nil || *decoded != *attachment {
+		t.Fatalf("decoded attachment = %q, %#v", body, decoded)
+	}
+	item := chatMessage{Body: stored}
+	applyChatMessagePresentation(&item, 12)
+	if item.AttachmentURL != "/api/chat/conversations/12/files/"+attachment.StoredName || !item.AIScannable || item.ImageURL != "" {
+		t.Fatalf("attachment presentation = %#v", item)
+	}
+}
+
+func TestChatFileTypeValidation(t *testing.T) {
+	for name, payload := range map[string][]byte{
+		"invoice.pdf": []byte("%PDF-1.7\ninvoice"),
+		"table.xlsx": append([]byte("PK\x03\x04"), []byte("xlsx")...),
+		"notes.txt": []byte("plain text"),
+	} {
+		extension, contentType, ok := chatFileType(name, payload)
+		if !ok || extension != filepath.Ext(name) || contentType == "" {
+			t.Fatalf("%s rejected: %q %q", name, extension, contentType)
+		}
+	}
+	if _, _, ok := chatFileType("script.svg", []byte("<svg><script>alert(1)</script></svg>")); ok {
+		t.Fatal("unsafe SVG accepted")
 	}
 }
 

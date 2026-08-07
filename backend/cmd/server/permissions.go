@@ -27,7 +27,7 @@ type permissionGroup struct {
 var permissionCatalog = []permissionGroup{
 	{Key: "dashboard", Label: "Общая сводка", Permissions: []permissionItem{{Key: "dashboard.view", Label: "Просмотр"}}},
 	{Key: "executive", Label: "Панель руководителя", Permissions: []permissionItem{{Key: "executive.view", Label: "Просмотр"}, {Key: "executive.approve", Label: "Изменение статуса и даты утверждения"}, {Key: "executive.settings", Label: "Настройка специальных разделов"}}},
-	{Key: "registry", Label: "Реестр", Permissions: []permissionItem{{Key: "registry.view", Label: "Просмотр"}, {Key: "registry.create", Label: "Добавление строк"}, {Key: "registry.edit", Label: "Редактирование"}, {Key: "registry.delete", Label: "Удаление строк"}, {Key: "registry.split", Label: "Разбиение платежа"}, {Key: "registry.import", Label: "Импорт Excel"}, {Key: "registry.export", Label: "Выгрузка Excel"}, {Key: "registry.undo", Label: "Отмена действий"}}},
+	{Key: "registry", Label: "Реестр", Permissions: []permissionItem{{Key: "registry.view", Label: "Просмотр"}, {Key: "registry.create", Label: "Добавление строк"}, {Key: "registry.edit", Label: "Редактирование"}, {Key: "registry.delete", Label: "Удаление строк"}, {Key: "registry.split", Label: "Разбиение платежа"}, {Key: "registry.ai_scan", Label: "AI сканирование"}, {Key: "registry.import", Label: "Импорт Excel"}, {Key: "registry.export", Label: "Выгрузка Excel"}, {Key: "registry.undo", Label: "Отмена действий"}}},
 	{Key: "credits", Label: "Кредиты и лизинги", Permissions: []permissionItem{{Key: "credits.view", Label: "Просмотр"}}},
 	{Key: "payments", Label: "К оплате", Permissions: []permissionItem{{Key: "payments.view", Label: "Просмотр"}, {Key: "payments.edit", Label: "Редактирование статуса и фактической даты"}, {Key: "payments.print", Label: "Печать"}}},
 	{Key: "chat", Label: "Чаты", Permissions: []permissionItem{{Key: "chat.view", Label: "Просмотр"}, {Key: "chat.send", Label: "Отправка сообщений"}, {Key: "chat.create", Label: "Создание личных чатов и групп"}}},
@@ -53,7 +53,7 @@ func defaultPermissions(role string) permissionSet {
 		"chat.view": true, "chat.send": true, "chat.create": true,
 	}
 	if role == "editor" || role == "admin" {
-		for _, key := range []string{"registry.create", "registry.edit", "registry.delete", "registry.split", "registry.undo", "payments.edit", "references.view", "references.edit"} {
+		for _, key := range []string{"registry.create", "registry.edit", "registry.delete", "registry.split", "registry.ai_scan", "registry.undo", "payments.edit", "references.view", "references.edit"} {
 			value[key] = true
 		}
 	}
@@ -78,7 +78,7 @@ func normalizePermissions(input permissionSet, role string) permissionSet {
 	}
 	for child, parent := range map[string]string{
 		"executive.approve": "executive.view", "executive.settings": "executive.view",
-		"registry.create": "registry.view", "registry.edit": "registry.view", "registry.delete": "registry.view",
+		"registry.create": "registry.view", "registry.edit": "registry.view", "registry.delete": "registry.view", "registry.ai_scan": "registry.view",
 		"registry.split": "registry.view", "registry.import": "registry.view", "registry.export": "registry.view", "registry.undo": "registry.view",
 		"credits.view": "registry.view", "payments.edit": "payments.view", "payments.print": "payments.view",
 		"chat.send": "chat.view", "chat.create": "chat.view", "references.edit": "references.view", "users.manage": "users.view",

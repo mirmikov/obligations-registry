@@ -1,26 +1,36 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { BellRing, Check, ChevronLeft, MessageCircle, Plus, Search, Send, UserPlus, Users, X } from 'lucide-react'
+import { BellRing, Check, ChevronLeft, Download, FileText, MessageCircle, Paperclip, Plus, ScanLine, Search, Send, UserPlus, Users, X } from 'lucide-react'
 import { request, requestBlob } from './api'
 import { roleLabel } from './App'
 import { can } from './permissions'
+import AIScanModal from './AIScanModal'
+
+const CHAT_FILE_ACCEPT = '.pdf,.png,.jpg,.jpeg,.gif,.webp,.docx,.xlsx,.csv,.txt,.zip'
+const CHAT_FILE_LIMIT = 25 * 1024 * 1024
 
 export default function Chat({ user, notify, compact = false, initialConversationID = null, notificationPermission, onEnableNotifications }) {
   const canSend = can(user, 'chat.send')
   const canCreate = can(user, 'chat.create')
+  const canAIScan = can(user, 'registry.ai_scan')
   const [contacts, setContacts] = useState([])
   const [conversations, setConversations] = useState([])
   const [selectedID, setSelectedID] = useState(null)
   const [messages, setMessages] = useState([])
   const [search, setSearch] = useState('')
   const [draft, setDraft] = useState('')
-  const [draftImage, setDraftImage] = useState(null)
+  const [draftAttachment, setDraftAttachment] = useState(null)
+  const [dragActive, setDragActive] = useState(false)
   const [viewingImage, setViewingImage] = useState(null)
+  const [aiScan, setAIScan] = useState(null)
+  const [aiSource, setAISource] = useState(null)
+  const [references, setReferences] = useState({})
   const [creating, setCreating] = useState(false)
   const [sending, setSending] = useState(false)
   const messagesViewportRef = useRef(null)
   const stickToBottomRef = useRef(true)
   const lastScrolledConversationRef = useRef(null)
-  const draftImageRef = useRef(null)
+  const draftAttachmentRef = useRef(null)
+  const fileInputRef = useRef(null)
   const lastImagePasteRef = useRef(0)
 
   const loadContacts = () => request('/api/chat/users').then(setContacts).catch(error => notify(error.message, 'error'))
@@ -31,6 +41,8 @@ export default function Chat({ user, notify, compact = false, initialConversatio
     const timer = window.setInterval(() => { loadContacts(); loadConversations() }, 5000)
     return () => window.clearInterval(timer)
   }, [])
+
+  useEffect(() => { if (canAIScan) request('/api/references').then(setReferences).catch(error => notify(error.message, 'error')) }, [canAIScan])
 
   useEffect(() => { if (initialConversationID) setSelectedID(initialConversationID) }, [initialConversationID])
 
@@ -61,11 +73,11 @@ export default function Chat({ user, notify, compact = false, initialConversatio
     })
     return () => window.cancelAnimationFrame(frame)
   }, [messages.length, selectedID])
-  useEffect(() => { draftImageRef.current = draftImage }, [draftImage])
-  useEffect(() => () => { if (draftImageRef.current?.url) URL.revokeObjectURL(draftImageRef.current.url) }, [])
+  useEffect(() => { draftAttachmentRef.current = draftAttachment }, [draftAttachment])
+  useEffect(() => () => { if (draftAttachmentRef.current?.url) URL.revokeObjectURL(draftAttachmentRef.current.url) }, [])
   useEffect(() => {
     setViewingImage(null)
-    setDraftImage(current => { if (current?.url) URL.revokeObjectURL(current.url); return null })
+    setDraftAttachment(current => { if (current?.url) URL.revokeObjectURL(current.url); return null })
   }, [selectedID])
   useEffect(() => {
     if (!viewingImage) return undefined
@@ -84,21 +96,32 @@ export default function Chat({ user, notify, compact = false, initialConversatio
   const send = async event => {
     event.preventDefault()
     const body = draft.trim()
-    if ((!body && !draftImage) || !selectedID || sending) return
+    if ((!body && !draftAttachment) || !selectedID || sending) return
     setSending(true)
     try {
       let payload
-      if (draftImage) {
+      if (draftAttachment) {
         payload = new FormData()
         payload.append('body', body)
-        payload.append('image', draftImage.file, draftImage.file.name || 'clipboard-image.png')
+        payload.append('file', draftAttachment.file, draftAttachment.file.name || 'document')
       }
       const message = await request(`/api/chat/conversations/${selectedID}/messages`, { method: 'POST', body: payload || JSON.stringify({ body }) })
       setMessages(current => current.some(item => item.id === message.id) ? current : [...current, message])
       setDraft('')
-      setDraftImage(current => { if (current?.url) URL.revokeObjectURL(current.url); return null })
+      setDraftAttachment(current => { if (current?.url) URL.revokeObjectURL(current.url); return null })
       loadConversations()
     } catch (error) { notify(error.message, 'error') } finally { setSending(false) }
+  }
+
+  const selectAttachment = file => {
+    if (!file) return
+    if (file.size <= 0 || file.size > CHAT_FILE_LIMIT) { notify('Файл должен быть не больше 25 МБ', 'error'); return }
+    const extension = `.${file.name.split('.').pop()?.toLowerCase()}`
+    if (!CHAT_FILE_ACCEPT.split(',').includes(extension)) { notify('Поддерживаются PDF, изображения, DOCX, XLSX, CSV, TXT и ZIP', 'error'); return }
+    setDraftAttachment(current => {
+      if (current?.url) URL.revokeObjectURL(current.url)
+      return { file, url: file.type.startsWith('image/') ? URL.createObjectURL(file) : '' }
+    })
   }
 
   const pasteImage = event => {
@@ -106,14 +129,51 @@ export default function Chat({ user, notify, compact = false, initialConversatio
     if (!item) return
     const file = item.getAsFile()
     if (!file) return
-    if (!['image/png', 'image/jpeg', 'image/gif', 'image/webp'].includes(file.type)) { notify('Поддерживаются PNG, JPEG, GIF и WebP', 'error'); return }
-    if (file.size > 8 * 1024 * 1024) { notify('Изображение должно быть не больше 8 МБ', 'error'); return }
     event.preventDefault()
     lastImagePasteRef.current = Date.now()
-    setDraftImage(current => {
-      if (current?.url) URL.revokeObjectURL(current.url)
-      return { file, url: URL.createObjectURL(file) }
-    })
+    selectAttachment(file)
+  }
+
+  const dropAttachment = event => {
+    event.preventDefault(); setDragActive(false)
+    selectAttachment(event.dataTransfer.files?.[0])
+  }
+
+  const analyzeChatAttachment = async message => {
+    if (!message?.attachment_url || !message.ai_scannable || !canAIScan) return
+    try {
+      const blob = await requestBlob(message.attachment_url)
+      const file = new File([blob], message.attachment_name || 'document.pdf', { type: message.attachment_type || blob.type })
+      setAISource({ file, message })
+      await runChatAIScan(file)
+    } catch (error) { notify(error.message, 'error') }
+  }
+
+  const runChatAIScan = async file => {
+    setAIScan({ loading: true, filename: file.name, error: '' })
+    const body = new FormData(); body.append('scan', file)
+    try {
+      let result = await request('/api/obligations/ai-scan', { method: 'POST', body })
+      setAIScan({ ...result, loading: true, filename: file.name, error: '' })
+      for (let attempt = 0; result.status === 'processing' && attempt < 360; attempt++) {
+        await new Promise(resolve => window.setTimeout(resolve, 2000))
+        result = await request(`/api/obligations/ai-scan/${result.batch}/status`)
+      }
+      if (result.status === 'processing') throw new Error('Распознавание не завершилось за 12 минут. Разделите PDF на части')
+      if (result.status === 'error') throw new Error(result.error || 'Не удалось распознать документ')
+      const items = result.items.map(item => ({ page: item.page, include: !item.duplicate, duplicate: item.duplicate, warnings: item.warnings || [], confidence: item.confidence || {}, values: { ...blankObligation(), status: '', counterparty: item.counterparty || '', legal_entity: item.legal_entity || '', document_number: item.document_number || '', document_date: item.document_date || '', amount: item.amount ?? null } }))
+      setAIScan({ ...result, filename: file.name, items, loading: false, error: '' })
+    } catch (error) { setAIScan({ loading: false, filename: file.name, error: error.message }) }
+  }
+
+  const saveChatAIScan = async items => {
+    setAIScan(current => ({ ...current, saving: true }))
+    try {
+      const result = await request(`/api/obligations/ai-scan/${aiScan.batch}/commit`, { method: 'POST', body: JSON.stringify({ items: items.map(item => ({ page: item.page, values: stripAIScanValues(item.values) })) }) })
+      notify(`Из файла добавлено ${result.created} обязательств${result.created_references ? `; новых контрагентов: ${result.created_references}` : ''}`)
+      setAIScan(null); setAISource(null)
+      request('/api/references').then(setReferences).catch(error => notify(error.message, 'error'))
+    } catch (error) { setAIScan(current => ({ ...current, saving: false })); notify(error.message, 'error') }
   }
 
   const composerKeyDown = event => {
@@ -159,19 +219,33 @@ export default function Chat({ user, notify, compact = false, initialConversatio
             const newDay = index === 0 || messages[index - 1].created_at.slice(0, 10) !== message.created_at.slice(0, 10)
             return <div key={message.id}>{newDay && <div className="chat-day"><span>{chatDay(message.created_at)}</span></div>}<div className={`chat-message ${mine ? 'mine' : ''} ${newGroup ? 'new-group' : ''}`}>
               {!mine && newGroup && <span className="chat-message-avatar">{initials(message.sender_name)}</span>}
-              <div className={`chat-bubble ${message.image_url ? 'has-image' : ''}`}>{!mine && newGroup && <strong>{message.sender_name}</strong>}{message.image_url && <ChatImage path={message.image_url} alt={`Изображение от ${message.sender_name}`} onOpen={() => setViewingImage({ path: message.image_url, alt: `Изображение от ${message.sender_name}` })}/>} {message.body && <p>{message.body}</p>}<time>{chatClock(message.created_at)}</time></div>
+              <div className={`chat-bubble ${message.attachment_url ? 'has-attachment' : ''} ${message.image_url ? 'has-image' : ''}`}>{!mine && newGroup && <strong>{message.sender_name}</strong>}{message.image_url ? <ChatImage path={message.image_url} alt={`Изображение от ${message.sender_name}`} onOpen={() => setViewingImage({ path: message.image_url, alt: `Изображение от ${message.sender_name}` })}/> : message.attachment_url && <ChatFile message={message} notify={notify}/>} {message.body && <p>{message.body}</p>}{message.ai_scannable && canAIScan && <button type="button" className="chat-file-ai" onClick={() => analyzeChatAttachment(message)}><ScanLine size={15}/>AI сканирование</button>}<time>{chatClock(message.created_at)}</time></div>
             </div></div>
           })}
         </div>
-        {canSend ? <form className={`chat-composer ${draftImage ? 'has-image' : ''}`} onSubmit={send}>
-          {draftImage && <div className="chat-composer-preview"><img src={draftImage.url} alt="Изображение перед отправкой"/><span><strong>Изображение готово</strong><small>{formatFileSize(draftImage.file.size)}</small></span><button type="button" onClick={() => setDraftImage(current => { if (current?.url) URL.revokeObjectURL(current.url); return null })} aria-label="Удалить изображение" title="Удалить изображение"><X size={16}/></button></div>}
-          <div className="chat-composer-main"><textarea value={draft} onChange={event => setDraft(event.target.value)} onPaste={pasteImage} onKeyDown={composerKeyDown} maxLength={4000} rows={1} placeholder="Напишите сообщение или вставьте изображение…"/><button type="submit" disabled={(!draft.trim() && !draftImage) || sending} aria-label="Отправить сообщение"><Send size={19}/></button></div>
+        {canSend ? <form className={`chat-composer ${draftAttachment ? 'has-image' : ''} ${dragActive ? 'is-dragging' : ''}`} onSubmit={send} onDragEnter={event => { event.preventDefault(); setDragActive(true) }} onDragOver={event => event.preventDefault()} onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget)) setDragActive(false) }} onDrop={dropAttachment}>
+          {dragActive && <div className="chat-drop-zone"><Paperclip size={22}/><strong>Перетащите файл сюда</strong><span>До 25 МБ</span></div>}
+          {draftAttachment && <div className="chat-composer-preview">{draftAttachment.url ? <img src={draftAttachment.url} alt="Файл перед отправкой"/> : <span className="chat-file-icon"><FileText size={27}/></span>}<span><strong>{draftAttachment.file.name}</strong><small>{formatFileSize(draftAttachment.file.size)}</small></span><button type="button" onClick={() => setDraftAttachment(current => { if (current?.url) URL.revokeObjectURL(current.url); return null })} aria-label="Удалить файл" title="Удалить файл"><X size={16}/></button></div>}
+          <div className="chat-composer-main"><input ref={fileInputRef} type="file" accept={CHAT_FILE_ACCEPT} hidden onChange={event => { selectAttachment(event.target.files?.[0]); event.target.value = '' }}/><button type="button" className="chat-attach-button" onClick={() => fileInputRef.current?.click()} aria-label="Прикрепить файл" title="Прикрепить файл"><Paperclip size={19}/></button><textarea value={draft} onChange={event => setDraft(event.target.value)} onPaste={pasteImage} onKeyDown={composerKeyDown} maxLength={3900} rows={1} placeholder="Сообщение или перетащите файл…"/><button type="submit" disabled={(!draft.trim() && !draftAttachment) || sending} aria-label="Отправить сообщение"><Send size={19}/></button></div>
         </form> : <div className="chat-readonly-note">Доступен только просмотр сообщений</div>}
       </> : <div className="chat-no-room"><div><MessageCircle size={34}/></div><h2>Корпоративный чат</h2><p>Общайтесь с коллегами лично или создавайте группы для совместной работы.</p>{canCreate && <button type="button" className="primary" onClick={() => setCreating(true)}><UserPlus size={17}/>Начать общение</button>}</div>}
     </main>
     {creating && canCreate && <NewChatModal currentUser={user} contacts={contacts} onClose={() => setCreating(false)} onCreated={conversationCreated} notify={notify}/>}
     {viewingImage && <div className="chat-image-viewer" role="dialog" aria-modal="true" aria-label="Просмотр изображения" onClick={() => setViewingImage(null)}><button type="button" onClick={() => setViewingImage(null)} aria-label="Закрыть изображение" title="Закрыть"><X size={25}/></button><ChatImage path={viewingImage.path} alt={viewingImage.alt} fullscreen onClick={event => event.stopPropagation()}/></div>}
+    {aiScan && <AIScanModal state={aiScan} references={references} onChange={setAIScan} onRetry={() => aiSource?.file && runChatAIScan(aiSource.file)} onClose={() => !aiScan.loading && !aiScan.saving && setAIScan(null)} onSave={saveChatAIScan}/>}
   </div>
+}
+
+function ChatFile({ message, notify }) {
+  const downloadFile = async () => {
+    try {
+      const blob = await requestBlob(message.attachment_url)
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a'); link.href = url; link.download = message.attachment_name || 'document'; link.click()
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+    } catch (error) { notify(error.message, 'error') }
+  }
+  return <div className="chat-file-card"><span><FileText size={24}/></span><div><strong>{message.attachment_name}</strong><small>{formatFileSize(message.attachment_size || 0)}</small></div><button type="button" onClick={downloadFile} aria-label={`Скачать ${message.attachment_name}`} title="Скачать файл"><Download size={17}/></button></div>
 }
 
 function ChatImage({ path, alt, onOpen, fullscreen = false, onClick }) {
@@ -243,3 +317,6 @@ function chatClock(value) { const date = parseChatDate(value); return date && !N
 function chatDay(value) { const date = parseChatDate(value); if (!date || Number.isNaN(date.getTime())) return ''; const today = new Date(); const yesterday = new Date(); yesterday.setDate(today.getDate() - 1); const key = date.toDateString(); if (key === today.toDateString()) return 'Сегодня'; if (key === yesterday.toDateString()) return 'Вчера'; return date.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: date.getFullYear() === today.getFullYear() ? undefined : 'numeric' }) }
 function chatListTime(value) { const date = parseChatDate(value); if (!date || Number.isNaN(date.getTime())) return ''; const today = new Date(); return date.toDateString() === today.toDateString() ? chatClock(value) : date.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' }) }
 function formatFileSize(bytes) { return bytes < 1024 * 1024 ? `${Math.max(1, Math.round(bytes / 1024))} КБ` : `${(bytes / 1024 / 1024).toFixed(1).replace('.', ',')} МБ` }
+function todayISO() { const date = new Date(); const offset = date.getTimezoneOffset() * 60000; return new Date(date.getTime() - offset).toISOString().slice(0, 10) }
+function blankObligation() { return { account_type:'',entry_date:todayISO(),counterparty:'',legal_entity:'',cost_category:'',priority:'',responsible:'',document_number:'',deferment_days:null,document_date:'',amount:null,planned_payment_date:'',approval_date:'',actual_payment_date:'',status:'Зарегистрирован',urgency:'',comment:'',source_note:'' } }
+function stripAIScanValues(values) { const result = { ...values }; for (const field of ['id','created_at','updated_at','overdue','due_soon','split_group_id','split_parent_id','installment_number','installment_count']) delete result[field]; return result }
