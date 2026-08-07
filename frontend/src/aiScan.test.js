@@ -6,8 +6,8 @@ const registry = fs.readFileSync(new URL('./Registry.jsx', import.meta.url), 'ut
 const modal = fs.readFileSync(new URL('./AIScanModal.jsx', import.meta.url), 'utf8')
 const styles = fs.readFileSync(new URL('./styles.css', import.meta.url), 'utf8')
 
-test('registry exposes AI scan only through create permission and accepts documents', () => {
-  assert.match(registry, /can\(user, 'registry\.create'\).*AI сканирование/s)
+test('registry exposes AI scan only through its dedicated permission and accepts documents', () => {
+  assert.match(registry, /can\(user, 'registry\.ai_scan'\).*AI сканирование/s)
   assert.match(registry, /accept="application\/pdf,image\/png,image\/jpeg"/)
   assert.match(registry, /request\('\/api\/obligations\/ai-scan'/)
   assert.match(registry, /result\.status === 'processing'.*\/api\/obligations\/ai-scan\/\$\{result\.batch\}\/status/s)
