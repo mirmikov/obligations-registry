@@ -17,14 +17,13 @@ import (
 const maxInstallments = 60
 
 type paymentSplitInput struct {
-	Mode            string                       `json:"mode"`
-	Count           int                          `json:"count"`
-	PaymentAmount   *json.Number                 `json:"payment_amount"`
-	StartDate       string                       `json:"start_date"`
-	PaymentDates    []string                     `json:"payment_dates"`
-	PeriodUnit      string                       `json:"period_unit"`
-	PeriodValue     int                          `json:"period_value"`
-	PercentageParts []paymentSplitPercentagePart `json:"percentage_parts"`
+	Mode                string                       `json:"mode"`
+	Count               int                          `json:"count"`
+	PaymentAmount       *json.Number                 `json:"payment_amount"`
+	StartDate           string                       `json:"start_date"`
+	PaymentDates        []string                     `json:"payment_dates"`
+	PaymentAccountTypes []string                     `json:"payment_account_types"`
+	PercentageParts     []paymentSplitPercentagePart `json:"percentage_parts"`
 }
 
 type paymentSplitPercentagePart struct {
@@ -158,20 +157,6 @@ func buildPaymentPlan(totalCents int64, startDate time.Time, input paymentSplitI
 	if input.Mode == "percentage" {
 		return buildPercentagePaymentPlan(totalCents, startDate, input.PercentageParts)
 	}
-	if input.Mode == "amount" {
-		if input.PeriodValue == 0 {
-			input.PeriodValue = 1
-		}
-		if input.PeriodValue < 1 || input.PeriodValue > 365 {
-			return nil, errors.New("Период должен быть от 1 до 365")
-		}
-		switch input.PeriodUnit {
-		case "month", "week", "day":
-		default:
-			return nil, errors.New("Выберите периодичность платежей")
-		}
-	}
-
 	amounts := []int64{}
 	switch input.Mode {
 	case "count", "":
@@ -214,22 +199,27 @@ func buildPaymentPlan(totalCents int64, startDate time.Time, input paymentSplitI
 		return nil, errors.New("Выберите способ разбиения")
 	}
 
+	if len(input.PaymentDates) != len(amounts) {
+		return nil, errors.New("Количество дат в графике должно совпадать с количеством платежей")
+	}
+	if input.Mode == "amount" && len(input.PaymentAccountTypes) != len(amounts) {
+		return nil, errors.New("Выберите признак учёта для каждого платежа")
+	}
+
 	plan := make([]paymentInstallment, 0, len(amounts))
 	for index, cents := range amounts {
-		date := startDate
-		if (input.Mode == "count" || input.Mode == "") && len(input.PaymentDates) > 0 {
-			if len(input.PaymentDates) != len(amounts) {
-				return nil, errors.New("Количество дат в графике должно совпадать с количеством платежей")
-			}
-			parsedDate, parseErr := time.Parse("2006-01-02", input.PaymentDates[index])
-			if parseErr != nil {
-				return nil, fmt.Errorf("Некорректная плановая дата платежа %d", index+1)
-			}
-			date = parsedDate
-		} else if input.Mode == "amount" {
-			date = installmentDate(startDate, index, input.PeriodUnit, input.PeriodValue)
+		date, parseErr := time.Parse("2006-01-02", input.PaymentDates[index])
+		if parseErr != nil {
+			return nil, fmt.Errorf("Некорректная плановая дата платежа %d", index+1)
 		}
-		plan = append(plan, paymentInstallment{Number: index + 1, Date: date.Format("2006-01-02"), Amount: float64(cents) / 100, cents: cents})
+		accountType := ""
+		if input.Mode == "amount" {
+			accountType = strings.TrimSpace(input.PaymentAccountTypes[index])
+			if accountType != "ОМС" && accountType != "Коммерция" {
+				return nil, fmt.Errorf("Выберите признак учёта ОМС или Коммерция для платежа %d", index+1)
+			}
+		}
+		plan = append(plan, paymentInstallment{Number: index + 1, Date: date.Format("2006-01-02"), Amount: float64(cents) / 100, AccountType: accountType, cents: cents})
 	}
 	return plan, nil
 }
@@ -301,27 +291,6 @@ func percentageTextToBasisPoints(value string) (int64, error) {
 		return 0, err
 	}
 	return points, nil
-}
-
-func installmentDate(start time.Time, index int, unit string, period int) time.Time {
-	switch unit {
-	case "month":
-		return addMonthsClamped(start, index*period)
-	case "week":
-		return start.AddDate(0, 0, index*period*7)
-	default:
-		return start.AddDate(0, 0, index*period)
-	}
-}
-
-func addMonthsClamped(value time.Time, months int) time.Time {
-	monthStart := time.Date(value.Year(), value.Month()+time.Month(months), 1, 0, 0, 0, 0, value.Location())
-	lastDay := time.Date(monthStart.Year(), monthStart.Month()+1, 0, 0, 0, 0, 0, value.Location()).Day()
-	day := value.Day()
-	if day > lastDay {
-		day = lastDay
-	}
-	return time.Date(monthStart.Year(), monthStart.Month(), day, 0, 0, 0, 0, value.Location())
 }
 
 func moneyTextToCents(value string) (int64, error) {

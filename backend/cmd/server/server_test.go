@@ -451,8 +451,8 @@ func TestChatFileMessageRoundTrip(t *testing.T) {
 func TestChatFileTypeValidation(t *testing.T) {
 	for name, payload := range map[string][]byte{
 		"invoice.pdf": []byte("%PDF-1.7\ninvoice"),
-		"table.xlsx": append([]byte("PK\x03\x04"), []byte("xlsx")...),
-		"notes.txt": []byte("plain text"),
+		"table.xlsx":  append([]byte("PK\x03\x04"), []byte("xlsx")...),
+		"notes.txt":   []byte("plain text"),
 	} {
 		extension, contentType, ok := chatFileType(name, payload)
 		if !ok || extension != filepath.Ext(name) || contentType == "" {
@@ -770,19 +770,34 @@ func TestBuildPaymentPlanEqualPartsValidatesCustomDates(t *testing.T) {
 
 func TestBuildPaymentPlanByFixedAmountUsesRemainder(t *testing.T) {
 	payment := json.Number("30.00")
-	plan, err := buildPaymentPlan(10000, time.Date(2026, time.July, 20, 0, 0, 0, 0, time.UTC), paymentSplitInput{Mode: "amount", PaymentAmount: &payment, PeriodUnit: "week", PeriodValue: 2})
+	wantDates := []string{"2026-07-20", "2026-07-23", "2026-08-05", "2026-09-01"}
+	wantAccountTypes := []string{"ОМС", "Коммерция", "ОМС", "Коммерция"}
+	plan, err := buildPaymentPlan(10000, time.Date(2026, time.July, 20, 0, 0, 0, 0, time.UTC), paymentSplitInput{Mode: "amount", PaymentAmount: &payment, PaymentDates: wantDates, PaymentAccountTypes: wantAccountTypes})
 	if err != nil {
 		t.Fatal(err)
 	}
 	wantCents := []int64{3000, 3000, 3000, 1000}
-	wantDates := []string{"2026-07-20", "2026-08-03", "2026-08-17", "2026-08-31"}
 	if len(plan) != len(wantCents) {
 		t.Fatalf("plan length = %d, want %d", len(plan), len(wantCents))
 	}
 	for index, installment := range plan {
-		if installment.cents != wantCents[index] || installment.Date != wantDates[index] {
-			t.Fatalf("installment %d = %#v, want %d cents on %s", index+1, installment, wantCents[index], wantDates[index])
+		if installment.cents != wantCents[index] || installment.Date != wantDates[index] || installment.AccountType != wantAccountTypes[index] {
+			t.Fatalf("installment %d = %#v, want %d cents on %s with %s", index+1, installment, wantCents[index], wantDates[index], wantAccountTypes[index])
 		}
+	}
+}
+
+func TestBuildPaymentPlanByFixedAmountRequiresDatesAndAccountTypes(t *testing.T) {
+	payment := json.Number("30.00")
+	start := time.Date(2026, time.July, 20, 0, 0, 0, 0, time.UTC)
+	if _, err := buildPaymentPlan(10000, start, paymentSplitInput{Mode: "amount", PaymentAmount: &payment}); err == nil || !strings.Contains(err.Error(), "Количество дат") {
+		t.Fatalf("missing dates error = %v", err)
+	}
+	if _, err := buildPaymentPlan(10000, start, paymentSplitInput{Mode: "amount", PaymentAmount: &payment, PaymentDates: []string{"2026-07-20", "2026-07-21", "2026-07-22", "2026-07-23"}}); err == nil || !strings.Contains(err.Error(), "признак учёта") {
+		t.Fatalf("missing account types error = %v", err)
+	}
+	if _, err := buildPaymentPlan(10000, start, paymentSplitInput{Mode: "amount", PaymentAmount: &payment, PaymentDates: []string{"2026-07-20", "2026-07-21", "2026-07-22", "2026-07-23"}, PaymentAccountTypes: []string{"ОМС", "Коммерция", "Другое", "ОМС"}}); err == nil || !strings.Contains(err.Error(), "платежа 3") {
+		t.Fatalf("invalid account type error = %v", err)
 	}
 }
 
