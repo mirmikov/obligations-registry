@@ -33,6 +33,7 @@ type obligationInput struct {
 	Urgency            string   `json:"urgency"`
 	Comment            string   `json:"comment"`
 	SourceNote         string   `json:"source_note"`
+	AllowDuplicate     bool     `json:"allow_duplicate,omitempty"`
 }
 
 // obligationUpdateInput accepts read-only schedule metadata returned by the API.
@@ -188,6 +189,7 @@ func (a *app) createObligation(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &input) {
 		return
 	}
+	input.normalize()
 	user := currentUser(r)
 	tx, err := a.db.BeginTx(r.Context(), nil)
 	if err != nil {
@@ -195,6 +197,19 @@ func (a *app) createObligation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback()
+	if err = acquireDuplicateWriteLock(r.Context(), tx); err != nil {
+		fail(w, 500, "Не удалось подготовить проверку дублей")
+		return
+	}
+	duplicates, err := findDuplicateObligations(r.Context(), tx, input, 0, "")
+	if err != nil {
+		fail(w, 500, "Не удалось проверить счёт на дублирование")
+		return
+	}
+	if duplicates.Total > 0 && !input.AllowDuplicate {
+		writeDuplicateConflict(w, duplicates, "manual_create")
+		return
+	}
 	id, err := insertObligation(r.Context(), tx, input, &user.ID)
 	if err != nil {
 		fail(w, 400, "Не удалось добавить обязательство: "+err.Error())
@@ -242,6 +257,26 @@ func (a *app) updateObligation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	before, _ := snapshotArray([]json.RawMessage{beforeRow})
+	existing, splitGroupID, err := loadDuplicateIdentity(r.Context(), tx, id)
+	if err != nil {
+		fail(w, 500, "Не удалось подготовить проверку дублей")
+		return
+	}
+	if duplicateIdentityChanged(existing, input) {
+		if err = acquireDuplicateWriteLock(r.Context(), tx); err != nil {
+			fail(w, 500, "Не удалось подготовить проверку дублей")
+			return
+		}
+		duplicates, duplicateErr := findDuplicateObligations(r.Context(), tx, input, id, splitGroupID)
+		if duplicateErr != nil {
+			fail(w, 500, "Не удалось проверить счёт на дублирование")
+			return
+		}
+		if duplicates.Total > 0 && !input.AllowDuplicate {
+			writeDuplicateConflict(w, duplicates, "manual_update")
+			return
+		}
+	}
 	result, err := tx.ExecContext(r.Context(), `UPDATE obligations SET account_type=$1,entry_date=NULLIF($2,'')::date,counterparty=$3,legal_entity=$4,cost_category=$5,priority=$6,responsible=$7,document_number=$8,deferment_days=$9,document_date=NULLIF($10,'')::date,amount=$11,planned_payment_date=NULLIF($12,'')::date,approval_date=NULLIF($13,'')::date,actual_payment_date=NULLIF($14,'')::date,status=$15,urgency=$16,comment=$17,source_note=$18,updated_by=$19,updated_at=now() WHERE id=$20`, nullable(input.AccountType), nullable(input.EntryDate), nullable(input.Counterparty), nullable(input.LegalEntity), nullable(input.CostCategory), nullable(input.Priority), nullable(input.Responsible), nullable(input.DocumentNumber), input.DefermentDays, nullable(input.DocumentDate), input.Amount, nullable(input.PlannedPaymentDate), nullable(input.ApprovalDate), nullable(input.ActualPaymentDate), nullable(input.Status), nullable(input.Urgency), nullable(input.Comment), nullable(input.SourceNote), user.ID, id)
 	if err != nil {
 		fail(w, 400, "Не удалось сохранить: "+err.Error())

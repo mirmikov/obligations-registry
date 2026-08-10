@@ -1,4 +1,4 @@
-const API = import.meta.env.VITE_API_URL || ''
+const API = import.meta.env?.VITE_API_URL || ''
 
 export async function request(path, options = {}) {
   const token = localStorage.getItem('registry_token')
@@ -11,8 +11,13 @@ export async function request(path, options = {}) {
   }
   if (!response.ok) {
     let message = 'Не удалось выполнить запрос'
-    try { message = (await response.json()).error || message } catch { /* ignore */ }
-    throw new Error(message)
+    let details = {}
+    try { details = await response.json(); message = details.error || message } catch { /* ignore */ }
+    const error = new Error(message)
+    error.status = response.status
+    error.code = details.code || ''
+    error.details = details
+    throw error
   }
   if (response.status === 204) return null
   return response.json()

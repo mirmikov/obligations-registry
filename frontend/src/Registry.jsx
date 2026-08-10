@@ -66,6 +66,7 @@ export default function Registry({ user, notify, maintenance, onToggleMaintenanc
   const [splitItem, setSplitItem] = useState(null)
   const [historyItem, setHistoryItem] = useState(null)
   const [aiScan, setAIScan] = useState(null)
+  const [duplicatePrompt, setDuplicatePrompt] = useState(null)
   const [tableFullscreen, setTableFullscreen] = useState(false)
   const [largeTableFont, setLargeTableFont] = useState(readLargeFontPreference)
   const [columnWidths, setColumnWidths] = useState(readColumnWidths)
@@ -235,6 +236,28 @@ export default function Registry({ user, notify, maintenance, onToggleMaintenanc
   const selectedItem = selected.length === 1 ? rowsRef.current.get(selected[0]) : null
   const toggleAll = () => setSelected(allSelected ? selected.filter(id => !data.items.some(i => i.id === id)) : [...new Set([...selected, ...data.items.map(i => i.id)])])
   const markSaving = (key, active) => setSavingCells(current => { const next = new Set(current); active ? next.add(key) : next.delete(key); return next })
+
+  const confirmDuplicate = error => new Promise(resolve => {
+    setDuplicatePrompt({ ...(error.details || {}), resolve })
+  })
+  const finishDuplicatePrompt = confirmed => {
+    const resolve = duplicatePrompt?.resolve
+    setDuplicatePrompt(null)
+    resolve?.(confirmed)
+  }
+  const requestJSONWithDuplicateConfirmation = async (path, method, values) => {
+    try {
+      return await request(path, { method, body: JSON.stringify(values) })
+    } catch (error) {
+      if (error.code !== 'duplicate_obligation') throw error
+      if (!await confirmDuplicate(error)) {
+        const canceled = new Error('Сохранение дубликата отменено')
+        canceled.duplicateCanceled = true
+        throw canceled
+      }
+      return request(path, { method, body: JSON.stringify({ ...values, allow_duplicate: true }) })
+    }
+  }
   const startCellEdit = (item, field) => updateLocation({ mode: 'edit', record_id: item.id || 0, source_row: item.source_row || 0, field, field_label: fieldLabels[field] || field })
   const finishCellEdit = item => updateLocation({ mode: 'view', record_id: item.id || 0, source_row: item.source_row || 0, field: '', field_label: '' })
   const commitCell = async (item, field, rawValue) => {
@@ -249,7 +272,7 @@ export default function Registry({ user, notify, maintenance, onToggleMaintenanc
     const cellKey = `${item.id}:${field}`
     markSaving(cellKey, true); finishCellEdit(next)
     const previousSave = saveQueues.current.get(item.id) || Promise.resolve()
-    const operation = previousSave.catch(() => {}).then(() => request(`/api/obligations/${item.id}`, { method: 'PATCH', body: JSON.stringify(strip(rowsRef.current.get(item.id))) }))
+    const operation = previousSave.catch(() => {}).then(() => requestJSONWithDuplicateConfirmation(`/api/obligations/${item.id}`, 'PATCH', strip(rowsRef.current.get(item.id))))
     saveQueues.current.set(item.id, operation)
     try { await operation; return true } catch (error) {
       const latest = rowsRef.current.get(item.id)
@@ -259,7 +282,7 @@ export default function Registry({ user, notify, maintenance, onToggleMaintenanc
         rowsRef.current.set(item.id, reverted)
         setData(state => ({ ...state, items: state.items.map(row => row.id === item.id ? reverted : row) }))
       }
-      notify(error.message, 'error'); return false
+      if (!error.duplicateCanceled) notify(error.message, 'error'); return false
     } finally { markSaving(cellKey, false) }
   }
   const addInlineRow = () => setNewRow(current => current ? null : blankObligation())
@@ -271,13 +294,13 @@ export default function Registry({ user, notify, maintenance, onToggleMaintenanc
     if (sameCellValue(item[field], value) || creatingRef.current) return true
     creatingRef.current = true; markSaving(`new:${field}`, true)
     try {
-      const result = await request('/api/obligations', { method: 'POST', body: JSON.stringify(strip(next)) })
+      const result = await requestJSONWithDuplicateConfirmation('/api/obligations', 'POST', strip(next))
       const created = { ...next, id: result.id, source_row: 0, overdue: false, due_soon: false }
       rowsRef.current.set(created.id, created)
       setData(state => ({ ...state, items: [created, ...state.items].slice(0, state.page_size), total: state.total + 1 }))
       setNewRow(null); finishCellEdit(created); notify('Новая строка создана')
       return true
-    } catch (error) { notify(error.message, 'error'); return false }
+    } catch (error) { if (!error.duplicateCanceled) notify(error.message, 'error'); return false }
     finally { creatingRef.current = false; markSaving(`new:${field}`, false) }
   }
   const remove = async id => { if (!confirm('Удалить обязательство? Отменить это действие нельзя.')) return; try { await request(`/api/obligations/${id}`, { method: 'DELETE' }); notify('Запись удалена'); load() } catch (e) { notify(e.message, 'error') } }
@@ -288,7 +311,20 @@ export default function Registry({ user, notify, maintenance, onToggleMaintenanc
       setSplitItem(null); setSelected([]); load()
     } catch (error) { notify(error.message, 'error'); throw error }
   }
-  const importFile = async event => { const file = event.target.files?.[0]; if (!file) return; const body = new FormData(); body.append('file', file); try { const result = await request('/api/obligations/import.xlsx', { method: 'POST', body }); notify(`База обновлена: ${result.updated} изменено, ${result.created} добавлено`); load(); request('/api/references').then(setRefs).catch(e => notify(e.message, 'error')) } catch (e) { notify(e.message, 'error') } finally { event.target.value = '' } }
+  const importFile = async event => {
+    const file = event.target.files?.[0]
+    if (!file) return
+    const send = allowDuplicate => { const body = new FormData(); body.append('file', file); if (allowDuplicate) body.append('allow_duplicate', 'true'); return request('/api/obligations/import.xlsx', { method: 'POST', body }) }
+    try {
+      let result
+      try { result = await send(false) } catch (error) {
+        if (error.code !== 'duplicate_obligation') throw error
+        if (!await confirmDuplicate(error)) return
+        result = await send(true)
+      }
+      notify(`База обновлена: ${result.updated} изменено, ${result.created} добавлено`); load(); request('/api/references').then(setRefs).catch(e => notify(e.message, 'error'))
+    } catch (e) { notify(e.message, 'error') } finally { event.target.value = '' }
+  }
   const analyzeScan = async event => {
     const file = event.target.files?.[0]
     if (!file) return
@@ -307,6 +343,7 @@ export default function Registry({ user, notify, maintenance, onToggleMaintenanc
         page: item.page,
         include: !item.duplicate,
         duplicate: item.duplicate,
+        duplicate_matches: item.duplicate_matches || [],
         warnings: item.warnings || [],
         confidence: item.confidence || {},
         values: { ...blankObligation(), status: '', counterparty: item.counterparty || '', legal_entity: item.legal_entity || '', document_number: item.document_number || '', document_date: item.document_date || '', amount: item.amount ?? null },
@@ -319,14 +356,15 @@ export default function Registry({ user, notify, maintenance, onToggleMaintenanc
   const saveAIScan = async items => {
     setAIScan(current => ({ ...current, saving: true }))
     try {
-      const result = await request(`/api/obligations/ai-scan/${aiScan.batch}/commit`, { method: 'POST', body: JSON.stringify({ items: items.map(item => ({ page: item.page, values: strip(item.values) })) }) })
+      const payload = { items: items.map(item => ({ page: item.page, values: strip(item.values) })) }
+      const result = await requestJSONWithDuplicateConfirmation(`/api/obligations/ai-scan/${aiScan.batch}/commit`, 'POST', payload)
       const referenceNote = result.created_references ? `; новых контрагентов в справочнике: ${result.created_references}` : ''
       notify(`Из скана добавлено ${result.created} обязательств${referenceNote}`)
       setAIScan(null); setPage(1); load()
       request('/api/references').then(setRefs).catch(error => notify(error.message, 'error'))
     } catch (error) {
       setAIScan(current => ({ ...current, saving: false }))
-      notify(error.message, 'error')
+      if (!error.duplicateCanceled) notify(error.message, 'error')
     }
   }
   const doSort = key => setSort(current => ({ key, order: current.key === key && current.order === 'asc' ? 'desc' : 'asc' }))
@@ -368,6 +406,30 @@ export default function Registry({ user, notify, maintenance, onToggleMaintenanc
     {splitItem && <SplitPaymentModal item={splitItem} refs={refs} onClose={() => setSplitItem(null)} onSave={values => splitPayment(splitItem, values)}/>}
     {historyItem && <ObligationHistoryModal item={historyItem} notify={notify} onClose={() => setHistoryItem(null)}/>}
     {aiScan && <AIScanModal state={aiScan} references={refs} onChange={setAIScan} onRetry={() => aiScanRef.current.click()} onClose={() => !aiScan.loading && !aiScan.saving && setAIScan(null)} onSave={saveAIScan}/>}
+    {duplicatePrompt && <DuplicateObligationModal conflict={duplicatePrompt} onCancel={() => finishDuplicatePrompt(false)} onConfirm={() => finishDuplicatePrompt(true)}/>}
+  </div>
+}
+
+function DuplicateObligationModal({ conflict, onCancel, onConfirm }) {
+  const matches = conflict.duplicates || []
+  const total = conflict.duplicate_total || matches.length
+  return <div className="modal-backdrop duplicate-obligation-backdrop" onMouseDown={event => event.target === event.currentTarget && onCancel()}>
+    <section className="modal duplicate-obligation-modal" role="alertdialog" aria-modal="true" aria-labelledby="duplicate-obligation-title">
+      <header className="modal-head">
+        <div><p className="eyebrow">Защита от повторного ввода</p><h2 id="duplicate-obligation-title"><AlertTriangle size={22}/>Возможный дубликат счёта</h2><span>Сохранение остановлено. Сначала сравните найденные записи.</span></div>
+        <button type="button" onClick={onCancel} aria-label="Закрыть"><X/></button>
+      </header>
+      <div className="modal-body duplicate-obligation-body">
+        <div className="duplicate-obligation-warning"><AlertTriangle size={19}/><div><strong>Найдено совпадений: {total}</strong><span>Проверяются варианты написания контрагента и номера документа, ИНН, юридическое лицо, дата и сумма. Если это действительно отдельный счёт, сохранение можно подтвердить вручную.</span></div></div>
+        <div className="duplicate-obligation-list">{matches.map((item, index) => <article key={`${item.id || 'incoming'}-${index}`}>
+          <header><div><b>{item.id ? `Запись №${item.id}` : 'Запись из текущей операции'}</b>{item.source_row ? <span>строка источника {item.source_row}</span> : null}</div><em className={`duplicate-confidence ${item.confidence}`}>{item.confidence === 'exact' ? 'Точное совпадение' : item.confidence === 'high' ? 'Высокая вероятность' : 'Требует проверки'}</em></header>
+          <div className="duplicate-obligation-fields"><span><small>Контрагент</small><strong>{item.counterparty || '—'}</strong></span><span><small>Юрлицо</small><strong>{item.legal_entity || '—'}</strong></span><span><small>Документ</small><strong>{item.document_number || '—'}</strong></span><span><small>Дата документа</small><strong>{shortDate(item.document_date) || '—'}</strong></span><span><small>Сумма</small><strong>{item.amount == null ? '—' : money(item.amount)}</strong></span><span><small>Статус</small><strong>{item.status || '—'}</strong></span></div>
+          <ul>{(item.reasons || []).map(reason => <li key={reason}>{reason}</li>)}</ul>
+        </article>)}</div>
+        {total > matches.length && <p className="duplicate-obligation-more">Показаны первые {matches.length} из {total} совпадений.</p>}
+      </div>
+      <footer className="modal-footer duplicate-obligation-actions"><button type="button" className="secondary" onClick={onCancel}>Вернуться и исправить</button><button type="button" className="danger" onClick={onConfirm}>Сохранить всё равно</button></footer>
+    </section>
   </div>
 }
 
