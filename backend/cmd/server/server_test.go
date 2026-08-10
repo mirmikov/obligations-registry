@@ -768,15 +768,18 @@ func TestBuildPaymentPlanEqualPartsValidatesCustomDates(t *testing.T) {
 	}
 }
 
-func TestBuildPaymentPlanByFixedAmountUsesRemainder(t *testing.T) {
-	payment := json.Number("30.00")
+func TestBuildPaymentPlanByFixedAmountUsesManualRows(t *testing.T) {
 	wantDates := []string{"2026-07-20", "2026-07-23", "2026-08-05", "2026-09-01"}
 	wantAccountTypes := []string{"ОМС", "Коммерция", "ОМС", "Коммерция"}
-	plan, err := buildPaymentPlan(10000, time.Date(2026, time.July, 20, 0, 0, 0, 0, time.UTC), paymentSplitInput{Mode: "amount", PaymentAmount: &payment, PaymentDates: wantDates, PaymentAccountTypes: wantAccountTypes})
+	wantCents := []int64{1000, 2500, 3500, 3000}
+	parts := make([]paymentSplitAmountPart, len(wantCents))
+	for index := range parts {
+		parts[index] = paymentSplitAmountPart{Amount: json.Number(formatCents(wantCents[index])), AccountType: wantAccountTypes[index], PlannedDate: wantDates[index]}
+	}
+	plan, err := buildPaymentPlan(10000, time.Date(2026, time.July, 20, 0, 0, 0, 0, time.UTC), paymentSplitInput{Mode: "amount", AmountParts: parts})
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantCents := []int64{3000, 3000, 3000, 1000}
 	if len(plan) != len(wantCents) {
 		t.Fatalf("plan length = %d, want %d", len(plan), len(wantCents))
 	}
@@ -787,17 +790,31 @@ func TestBuildPaymentPlanByFixedAmountUsesRemainder(t *testing.T) {
 	}
 }
 
-func TestBuildPaymentPlanByFixedAmountRequiresDatesAndAccountTypes(t *testing.T) {
-	payment := json.Number("30.00")
+func TestBuildPaymentPlanByFixedAmountValidatesManualRows(t *testing.T) {
 	start := time.Date(2026, time.July, 20, 0, 0, 0, 0, time.UTC)
-	if _, err := buildPaymentPlan(10000, start, paymentSplitInput{Mode: "amount", PaymentAmount: &payment}); err == nil || !strings.Contains(err.Error(), "Количество дат") {
-		t.Fatalf("missing dates error = %v", err)
+	if _, err := buildPaymentPlan(10000, start, paymentSplitInput{Mode: "amount", AmountParts: []paymentSplitAmountPart{{Amount: json.Number("100.00"), AccountType: "ОМС", PlannedDate: "2026-07-20"}}}); err == nil || !strings.Contains(err.Error(), "Количество платежей") {
+		t.Fatalf("payment count error = %v", err)
 	}
-	if _, err := buildPaymentPlan(10000, start, paymentSplitInput{Mode: "amount", PaymentAmount: &payment, PaymentDates: []string{"2026-07-20", "2026-07-21", "2026-07-22", "2026-07-23"}}); err == nil || !strings.Contains(err.Error(), "признак учёта") {
-		t.Fatalf("missing account types error = %v", err)
+	parts := []paymentSplitAmountPart{
+		{Amount: json.Number("30.00"), AccountType: "ОМС", PlannedDate: "2026-07-20"},
+		{Amount: json.Number("60.00"), AccountType: "Коммерция", PlannedDate: "2026-07-21"},
 	}
-	if _, err := buildPaymentPlan(10000, start, paymentSplitInput{Mode: "amount", PaymentAmount: &payment, PaymentDates: []string{"2026-07-20", "2026-07-21", "2026-07-22", "2026-07-23"}, PaymentAccountTypes: []string{"ОМС", "Коммерция", "Другое", "ОМС"}}); err == nil || !strings.Contains(err.Error(), "платежа 3") {
+	if _, err := buildPaymentPlan(10000, start, paymentSplitInput{Mode: "amount", AmountParts: parts}); err == nil || !strings.Contains(err.Error(), "указано 90.00 из 100.00") {
+		t.Fatalf("total mismatch error = %v", err)
+	}
+	parts[1].Amount = json.Number("80.00")
+	if _, err := buildPaymentPlan(10000, start, paymentSplitInput{Mode: "amount", AmountParts: parts}); err == nil || !strings.Contains(err.Error(), "превышает общую сумму") {
+		t.Fatalf("total overflow error = %v", err)
+	}
+	parts[1].Amount = json.Number("70.00")
+	parts[1].AccountType = "Другое"
+	if _, err := buildPaymentPlan(10000, start, paymentSplitInput{Mode: "amount", AmountParts: parts}); err == nil || !strings.Contains(err.Error(), "платежа 2") {
 		t.Fatalf("invalid account type error = %v", err)
+	}
+	parts[1].AccountType = "Коммерция"
+	parts[1].PlannedDate = "not-a-date"
+	if _, err := buildPaymentPlan(10000, start, paymentSplitInput{Mode: "amount", AmountParts: parts}); err == nil || !strings.Contains(err.Error(), "дата платежа 2") {
+		t.Fatalf("invalid date error = %v", err)
 	}
 }
 
