@@ -178,3 +178,55 @@ func TestParseAIScanTextHandlesBrokenPaymentWordAndIntegerAmount(t *testing.T) {
 		t.Fatalf("unexpected amount: %v", result.Amount)
 	}
 }
+
+func TestParseAIScanTextRecoversShortSupplierFromReorderedPaymentTable(t *testing.T) {
+	text := `
+ЦЕНТРАЛЬНО-ЧЕРНОЗЕМНЫЙ БАНК ПАО СБЕРБАНК . |БИК 042007681
+ИНН 4401187917 КПП 440101001 Сч. № 40702810229000005865
+ООО "МП" Вид оп. 01 |Срок плат.
+Наз. пл. Очер. плат. 5
+[Получатель! Код Рез. поле
+Счет на оплату № ЦБ-881 от 10 августа 2026 г.
+Поставщик — помещение 12
+Покупатель: ООО МЦ Мирт, ИНН 4401050775, КПП 440101001
+000 "МП", ИНН 4401187917, КПП 440101001, 156026, Костромская обл.
+Итого с НДС: 17 986,25
+`
+	result := parseAIScanText(text, []string{`ООО "МП"`, "ПАО СБЕРБАНК"}, []string{"ООО МЦ Мирт"})
+	if result.Counterparty != `ООО "МП"` {
+		t.Fatalf("expected short supplier, got %q", result.Counterparty)
+	}
+	if result.DocumentNumber != "Счет на оплату № ЦБ-881" || result.DocumentDate != "2026-08-10" {
+		t.Fatalf("unexpected document: %q, %q", result.DocumentNumber, result.DocumentDate)
+	}
+}
+
+func TestParseAIScanTextSupportsSpacedAlphanumericNumberAndRussianMonth(t *testing.T) {
+	text := `
+Счет на оплату № ВХ02 - 097502
+от 31 июля 2026 г.
+Поставщик: ООО "Поставщик", ИНН 7700000000
+Покупатель: ООО МЦ МИРТ, ИНН 4401050775
+Всего к оплате: 1 000,00
+`
+	result := parseAIScanText(text, []string{`ООО "Поставщик"`}, []string{"ООО МЦ МИРТ"})
+	if result.DocumentNumber != "Счет на оплату № ВХ02-097502" {
+		t.Fatalf("unexpected document number: %q", result.DocumentNumber)
+	}
+	if result.DocumentDate != "2026-07-31" {
+		t.Fatalf("unexpected document date: %q", result.DocumentDate)
+	}
+}
+
+func TestParseAIScanDateSupportsNumericFieldsSeparatedBySpaces(t *testing.T) {
+	if value := parseAIScanDate("31 07 2026"); value != "2026-07-31" {
+		t.Fatalf("unexpected spaced numeric date: %q", value)
+	}
+}
+
+func TestExtractAIScanRecipientKeepsBareLabelLayout(t *testing.T) {
+	text := "Получатель\nИнтернет Решения, ООО\nБанк получателя\nООО ОЗОН Банк"
+	if value := extractAIScanRecipient(text); value != "Интернет Решения, ООО" {
+		t.Fatalf("unexpected recipient after bare label: %q", value)
+	}
+}
