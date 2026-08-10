@@ -465,11 +465,13 @@ func aiScanTextScore(text string) int {
 
 var (
 	aiDocumentPattern      = regexp.MustCompile(`(?i)(сч[её]т\s*[-–—]?\s*оферта|сч[её]т\s*[-–—]\s*фактура|универсальный\s+передаточный\s+документ|упд|сч[её]т(?:\s+на\s+опл\s*ату)?|товарная\s+накладная|накладная|акт(?:\s+(?:выполненных\s+работ|оказанных\s+услуг|при[её]ма\s*[-–—]?\s*передачи))?)\s*(?:№|N(?:o|е)?|No)?\s*([0-9A-Za-zА-Яа-яЁё./_-]+)\s+от\s+([0-9]{1,2}(?:[.\-/][0-9]{1,2}[.\-/][0-9]{2,4}|\s+[А-Яа-яЁё]+\s+[0-9]{4}))`)
+	aiLooseDocumentPattern = regexp.MustCompile(`(?is)(сч[её]т\s*[-–—]?\s*оферта|сч[её]т\s*[-–—]\s*фактура|универсальный\s+передаточный\s+документ|упд|сч[её]т(?:\s+на\s+опл\s*ату)?|товарная\s+накладная|накладная|акт(?:\s+(?:выполненных\s+работ|оказанных\s+услуг|при[её]ма\s*[-–—]?\s*передачи))?)\s*(?:№|N(?:o|е)?|No)?\s*([0-9A-Za-zА-Яа-яЁё]+(?:\s*[./_-]\s*[0-9A-Za-zА-Яа-яЁё]+)*)\s+от\s+([0-9]{1,2}(?:\s*[.\-/]\s*[0-9]{1,2}\s*[.\-/]\s*[0-9]{2,4}|\s+[А-Яа-яЁё]+\s+[0-9]{4}))`)
 	aiAmountPattern        = regexp.MustCompile(`[0-9]{1,3}(?:[ \x{00A0}][0-9]{3})*(?:[,.][0-9]{2})|[0-9]+(?:[,.][0-9]{2})|[0-9]+`)
 	aiSupplierPattern      = regexp.MustCompile(`(?is)(?:поставщик|исполнитель|продавец)(?:\s*\([^)]*\))?\s*[:;]?\s*(.{3,1000}?)(?:покупатель|заказчик|плательщик|основание|товары|услуги)`)
-	aiRecipientLinePattern = regexp.MustCompile(`(?i)^\s*получатель(?:\s+средств)?\s*[:;]?\s*(.*)$`)
-	aiRecipientStopPattern = regexp.MustCompile(`(?i)^\s*(?:бик|банк\s+получателя|сч\.?\s*№|сч[её]т|назначение\s+платежа|плательщик|покупатель|заказчик)(?:\s|:|$)`)
+	aiRecipientLinePattern = regexp.MustCompile(`(?i)^\s*[\[|]?\s*получатель(?:\s+средств)?(?:\s*[:;!|]\s*|\s+|$)(.*)$`)
+	aiRecipientStopPattern = regexp.MustCompile(`(?i)^\s*(?:бик|банк\s+получателя|сч\.?\s*№|сч[её]т|код|рез\.?\s+поле|назначение\s+платежа|плательщик|покупатель|заказчик)(?:\s|:|$)`)
 	aiBuyerPattern         = regexp.MustCompile(`(?is)(?:покупатель|заказчик|плательщик)(?:\s*\([^)]*\))?\s*[:;]?\s*(.{3,1000}?)(?:основание|товары|услуги|поставщик|итого|всего|наименование)`)
+	aiExplicitPartyPattern = regexp.MustCompile(`(?i)(?:[ОO0]{3}|ПАО|ОАО|ЗАО|АО|ИП)\s*(?:["«][^"»\n]{1,100}["»]|[A-Za-zА-Яа-яЁё][^,;|\n]{1,100})`)
 )
 
 var aiMonths = map[string]int{"января": 1, "февраля": 2, "марта": 3, "апреля": 4, "мая": 5, "июня": 6, "июля": 7, "августа": 8, "сентября": 9, "октября": 10, "ноября": 11, "декабря": 12}
@@ -477,6 +479,12 @@ var aiMonths = map[string]int{"января": 1, "февраля": 2, "март�
 func parseAIScanText(text string, counterparties, legalEntities []string) aiScanSuggestion {
 	result := aiScanSuggestion{Confidence: map[string]string{}, Warnings: []string{}}
 	match := aiDocumentPattern.FindStringSubmatch(text)
+	if len(match) != 4 {
+		// OCR may insert spaces around a hyphen in an alphanumeric invoice
+		// number. Keep the strict, long-standing expression first and use this
+		// relaxed form only when the original match failed.
+		match = aiLooseDocumentPattern.FindStringSubmatch(text)
+	}
 	if len(match) == 4 {
 		documentKind := strings.Join(strings.Fields(match[1]), " ")
 		documentKind = regexp.MustCompile(`(?i)опл\s+ату`).ReplaceAllString(documentKind, "оплату")
@@ -489,7 +497,7 @@ func parseAIScanText(text string, counterparties, legalEntities []string) aiScan
 		} else if foldAIScanText(documentKind) == "счет" {
 			documentKind = "Счет"
 		}
-		result.DocumentNumber = documentKind + " № " + strings.TrimSpace(match[2])
+		result.DocumentNumber = documentKind + " № " + normalizeAIScanDocumentNumber(match[2])
 		result.DocumentDate = parseAIScanDate(match[3])
 		result.Confidence["document_number"] = "high"
 		if result.DocumentDate != "" {
@@ -501,11 +509,16 @@ func parseAIScanText(text string, counterparties, legalEntities []string) aiScan
 		result.Confidence["amount"] = "high"
 	}
 	supplierText := regexpCapture(aiSupplierPattern, text)
-	if supplierText == "" {
-		supplierText = extractAIScanRecipient(text)
-	}
 	buyerText := regexpCapture(aiBuyerPattern, text)
 	supplierName := extractAIScanParty(supplierText)
+	// Table OCR can put an address after the supplier label and move the actual
+	// company name into the payment-details block. Replace that obvious false
+	// positive only when a labelled recipient yields a real legal party.
+	if supplierName == "" || !looksLikeAIScanParty(supplierName) {
+		if recipient := extractAIScanRecipient(text); recipient != "" {
+			supplierName = recipient
+		}
+	}
 	buyerName := extractAIScanParty(buyerText)
 	// A bank name and its settlement account often appear before the invoice
 	// parties. Match the counterparty strictly inside the supplier section so a
@@ -548,6 +561,11 @@ func regexpCapture(pattern *regexp.Regexp, text string) string {
 	return strings.TrimSpace(match[1])
 }
 
+func normalizeAIScanDocumentNumber(value string) string {
+	value = strings.Join(strings.Fields(value), " ")
+	return regexp.MustCompile(`\s*([./_-])\s*`).ReplaceAllString(value, "$1")
+}
+
 func extractAIScanRecipient(text string) string {
 	lines := strings.Split(strings.ReplaceAll(text, "\r", ""), "\n")
 	for index, line := range lines {
@@ -556,6 +574,9 @@ func extractAIScanRecipient(text string) string {
 			continue
 		}
 		if candidate := strings.TrimSpace(match[1]); candidate != "" && !aiRecipientStopPattern.MatchString(candidate) {
+			if value := extractAIScanExplicitParty(candidate); value != "" {
+				return value
+			}
 			if value := extractAIScanParty(candidate); value != "" {
 				return value
 			}
@@ -568,17 +589,58 @@ func extractAIScanRecipient(text string) string {
 			if aiRecipientStopPattern.MatchString(candidate) {
 				break
 			}
+			if value := extractAIScanExplicitParty(candidate); value != "" {
+				return value
+			}
 			if value := extractAIScanParty(candidate); value != "" {
 				return value
+			}
+		}
+	}
+	// In payment-order tables Tesseract frequently emits the recipient value
+	// before the cell label. Search a small window backwards and accept only an
+	// explicit legal form, preventing a nearby bank/account caption from being
+	// treated as the supplier.
+	for index, line := range lines {
+		if !strings.HasPrefix(foldAIScanText(strings.TrimLeft(line, " [|")), "получатель") {
+			continue
+		}
+		for previous := index - 1; previous >= 0 && previous >= index-6; previous-- {
+			if candidate := extractAIScanExplicitParty(lines[previous]); candidate != "" {
+				return candidate
 			}
 		}
 	}
 	return ""
 }
 
+func extractAIScanExplicitParty(value string) string {
+	match := aiExplicitPartyPattern.FindString(value)
+	if match == "" {
+		return ""
+	}
+	match = strings.TrimSpace(match)
+	if prefix := []rune(match); len(prefix) >= 3 {
+		first := strings.ToUpper(string(prefix[:3]))
+		if regexp.MustCompile(`^[ОO0]{3}$`).MatchString(first) {
+			match = "ООО" + string(prefix[3:])
+		}
+	}
+	return extractAIScanParty(match)
+}
+
+func looksLikeAIScanParty(value string) bool {
+	folded := foldAIScanText(value)
+	if strings.HasPrefix(folded, "общество с ограниченной ответственностью") || strings.HasPrefix(folded, "индивидуальный предприниматель") {
+		return true
+	}
+	return regexp.MustCompile(`(?i)(?:^|[^A-Za-zА-Яа-яЁё])(?:[ОO0]{3}|ПАО|ОАО|ЗАО|АО|ИП)(?:$|[^A-Za-zА-Яа-яЁё])`).MatchString(value)
+}
+
 func parseAIScanDate(value string) string {
-	value = strings.TrimSpace(strings.ToLower(strings.ReplaceAll(value, "ё", "е")))
-	if match := regexp.MustCompile(`^(\d{1,2})[.\-/](\d{1,2})[.\-/](\d{2,4})$`).FindStringSubmatch(value); len(match) == 4 {
+	value = strings.ToLower(strings.ReplaceAll(strings.ReplaceAll(value, "\u00a0", " "), "ё", "е"))
+	value = strings.TrimSpace(regexp.MustCompile(`(?i)\s*г\.?\s*$`).ReplaceAllString(value, ""))
+	if match := regexp.MustCompile(`^(\d{1,2})\s*[.\-/]\s*(\d{1,2})\s*[.\-/]\s*(\d{2,4})$`).FindStringSubmatch(value); len(match) == 4 {
 		day, _ := strconv.Atoi(match[1])
 		month, _ := strconv.Atoi(match[2])
 		year, _ := strconv.Atoi(match[3])
@@ -594,6 +656,9 @@ func parseAIScanDate(value string) string {
 		day, _ := strconv.Atoi(parts[0])
 		year, _ := strconv.Atoi(parts[2])
 		month := aiMonths[parts[1]]
+		if month == 0 {
+			month, _ = strconv.Atoi(parts[1])
+		}
 		if validAIScanDate(year, month, day) {
 			return fmt.Sprintf("%04d-%02d-%02d", year, month, day)
 		}
