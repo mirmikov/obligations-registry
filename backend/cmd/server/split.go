@@ -17,13 +17,18 @@ import (
 const maxInstallments = 60
 
 type paymentSplitInput struct {
-	Mode                string                       `json:"mode"`
-	Count               int                          `json:"count"`
-	PaymentAmount       *json.Number                 `json:"payment_amount"`
-	StartDate           string                       `json:"start_date"`
-	PaymentDates        []string                     `json:"payment_dates"`
-	PaymentAccountTypes []string                     `json:"payment_account_types"`
-	PercentageParts     []paymentSplitPercentagePart `json:"percentage_parts"`
+	Mode            string                       `json:"mode"`
+	Count           int                          `json:"count"`
+	StartDate       string                       `json:"start_date"`
+	PaymentDates    []string                     `json:"payment_dates"`
+	AmountParts     []paymentSplitAmountPart     `json:"amount_parts"`
+	PercentageParts []paymentSplitPercentagePart `json:"percentage_parts"`
+}
+
+type paymentSplitAmountPart struct {
+	Amount      json.Number `json:"amount"`
+	AccountType string      `json:"account_type"`
+	PlannedDate string      `json:"planned_date"`
 }
 
 type paymentSplitPercentagePart struct {
@@ -157,6 +162,9 @@ func buildPaymentPlan(totalCents int64, startDate time.Time, input paymentSplitI
 	if input.Mode == "percentage" {
 		return buildPercentagePaymentPlan(totalCents, startDate, input.PercentageParts)
 	}
+	if input.Mode == "amount" {
+		return buildFixedAmountPaymentPlan(totalCents, input.AmountParts)
+	}
 	amounts := []int64{}
 	switch input.Mode {
 	case "count", "":
@@ -171,30 +179,6 @@ func buildPaymentPlan(totalCents int64, startDate time.Time, input paymentSplitI
 			amounts = append(amounts, base)
 		}
 		amounts = append(amounts, totalCents-base*int64(input.Count-1))
-	case "amount":
-		if input.PaymentAmount == nil {
-			return nil, errors.New("Укажите сумму одного платежа")
-		}
-		paymentCents, err := moneyTextToCents(input.PaymentAmount.String())
-		if err != nil {
-			return nil, errors.New("Укажите сумму одного платежа с точностью до копеек")
-		}
-		if paymentCents < 1 || paymentCents >= totalCents {
-			return nil, errors.New("Сумма части должна быть больше нуля и меньше общей суммы")
-		}
-		count := int((totalCents + paymentCents - 1) / paymentCents)
-		if count > maxInstallments {
-			return nil, fmt.Errorf("Получается больше %d платежей — увеличьте сумму части", maxInstallments)
-		}
-		remaining := totalCents
-		for remaining > 0 {
-			part := paymentCents
-			if remaining < part {
-				part = remaining
-			}
-			amounts = append(amounts, part)
-			remaining -= part
-		}
 	default:
 		return nil, errors.New("Выберите способ разбиения")
 	}
@@ -202,24 +186,44 @@ func buildPaymentPlan(totalCents int64, startDate time.Time, input paymentSplitI
 	if len(input.PaymentDates) != len(amounts) {
 		return nil, errors.New("Количество дат в графике должно совпадать с количеством платежей")
 	}
-	if input.Mode == "amount" && len(input.PaymentAccountTypes) != len(amounts) {
-		return nil, errors.New("Выберите признак учёта для каждого платежа")
-	}
-
 	plan := make([]paymentInstallment, 0, len(amounts))
 	for index, cents := range amounts {
 		date, parseErr := time.Parse("2006-01-02", input.PaymentDates[index])
 		if parseErr != nil {
 			return nil, fmt.Errorf("Некорректная плановая дата платежа %d", index+1)
 		}
-		accountType := ""
-		if input.Mode == "amount" {
-			accountType = strings.TrimSpace(input.PaymentAccountTypes[index])
-			if accountType != "ОМС" && accountType != "Коммерция" {
-				return nil, fmt.Errorf("Выберите признак учёта ОМС или Коммерция для платежа %d", index+1)
-			}
+		plan = append(plan, paymentInstallment{Number: index + 1, Date: date.Format("2006-01-02"), Amount: float64(cents) / 100, cents: cents})
+	}
+	return plan, nil
+}
+
+func buildFixedAmountPaymentPlan(totalCents int64, parts []paymentSplitAmountPart) ([]paymentInstallment, error) {
+	if len(parts) < 2 || len(parts) > maxInstallments {
+		return nil, fmt.Errorf("Количество платежей должно быть от 2 до %d", maxInstallments)
+	}
+	plan := make([]paymentInstallment, 0, len(parts))
+	allocated := int64(0)
+	for index, part := range parts {
+		cents, err := moneyTextToCents(part.Amount.String())
+		if err != nil || cents < 1 {
+			return nil, fmt.Errorf("Укажите положительную сумму платежа %d с точностью до копеек", index+1)
 		}
-		plan = append(plan, paymentInstallment{Number: index + 1, Date: date.Format("2006-01-02"), Amount: float64(cents) / 100, AccountType: accountType, cents: cents})
+		accountType := strings.TrimSpace(part.AccountType)
+		if accountType != "ОМС" && accountType != "Коммерция" {
+			return nil, fmt.Errorf("Выберите признак учёта ОМС или Коммерция для платежа %d", index+1)
+		}
+		date := strings.TrimSpace(part.PlannedDate)
+		if _, err := time.Parse("2006-01-02", date); err != nil {
+			return nil, fmt.Errorf("Некорректная плановая дата платежа %d", index+1)
+		}
+		if cents > totalCents-allocated {
+			return nil, fmt.Errorf("Сумма платежей превышает общую сумму после платежа %d", index+1)
+		}
+		allocated += cents
+		plan = append(plan, paymentInstallment{Number: index + 1, Date: date, Amount: float64(cents) / 100, AccountType: accountType, cents: cents})
+	}
+	if allocated != totalCents {
+		return nil, fmt.Errorf("Сумма платежей должна совпадать с общей суммой: указано %s из %s", formatCents(allocated), formatCents(totalCents))
 	}
 	return plan, nil
 }

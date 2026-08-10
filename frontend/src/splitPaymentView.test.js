@@ -2,38 +2,42 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 
-test('fixed amount split has no period controls and uses manual schedule fields', () => {
+test('fixed amount split is a fully manual list without period or automatic amount fields', () => {
   const source = fs.readFileSync(new URL('./Registry.jsx', import.meta.url), 'utf8')
-  const settings = source.slice(source.indexOf("form.mode === 'count' ? <>"), source.indexOf('</>}', source.indexOf("form.mode === 'count' ? <>")) + 4)
-  const equalParts = settings.slice(0, settings.indexOf('</> : <>'))
-  const fixedAmount = settings.slice(settings.indexOf('</> : <>'))
 
-  assert.match(equalParts, /Количество платежей/)
-  assert.doesNotMatch(equalParts, /Плановая дата платежей/)
-  assert.doesNotMatch(equalParts, /Повторять каждые|<span>Период<\/span>/)
-  assert.match(fixedAmount, /Сумма одного платежа/)
-  assert.doesNotMatch(fixedAmount, /Дата первого платежа|Повторять каждые|<span>Период<\/span>/)
-  assert.doesNotMatch(source, /period_unit|period_value|splitDate/)
+  assert.match(source, /Ручной график платежей/)
+  assert.match(source, /Добавить платёж/)
+  assert.match(source, /aria-label={`Сумма платежа \$\{index \+ 1\}`}/)
+  assert.match(source, /amount_parts: \[\{ amount: '', account_type: '', planned_date: '' \}\]/)
+  assert.doesNotMatch(source, /payment_amount|payment_account_types|fixedAmountPaymentCount/)
+  assert.doesNotMatch(source, /period_unit|period_value|Дата первого платежа|Повторять каждые|<span>Период<\/span>/)
 })
 
-test('equal and fixed amount previews use individually editable dates', () => {
+test('manual payment rows can be added, removed and filled independently', () => {
+  const source = fs.readFileSync(new URL('./Registry.jsx', import.meta.url), 'utf8')
+
+  assert.match(source, /amount_parts: \[\.\.\.current\.amount_parts, \{ amount: '', account_type: '', planned_date: '' \}\]/)
+  assert.match(source, /current\.amount_parts\.filter\(\(_, partIndex\) => partIndex !== index\)/)
+  assert.match(source, /aria-label={`Признак учёта платежа \$\{index \+ 1\}`}/)
+  assert.match(source, /aria-label={`Плановая дата платежа \$\{index \+ 1\}`}/)
+  assert.match(source, /amount_parts: form\.mode === 'amount' \? form\.amount_parts\.map/)
+})
+
+test('manual fixed amounts require two rows, exact total, dates and OMS or Commercial', () => {
   const source = fs.readFileSync(new URL('./Registry.jsx', import.meta.url), 'utf8')
   const preview = source.slice(source.indexOf('function buildSplitPreview'), source.indexOf('function formatPercent'))
 
-  assert.match(preview, /form\.payment_dates\.length !== count/)
-  assert.match(preview, /date: form\.payment_dates\[index\]/)
-  assert.match(source, /aria-label={`Плановая дата платежа \$\{part\.number\}`}/)
-  assert.match(source, /form\.mode !== 'percentage' \? <DateInput/)
-  assert.match(source, /payment_dates: form\.mode === 'percentage' \? null : form\.payment_dates/)
+  assert.match(preview, /parts\.length < 2 \|\| parts\.length > 60/)
+  assert.match(preview, /\['ОМС', 'Коммерция'\]\.includes\(parts\[index\]\.account_type\)/)
+  assert.match(preview, /parts\[index\]\.planned_date/)
+  assert.match(preview, /amountTotalCents !== totalCents/)
+  assert.match(preview, /До общей суммы не хватает/)
+  assert.match(preview, /Сумма графика превышает исходную/)
 })
 
-test('fixed amount preview requires OMS or Commercial for every payment', () => {
-  const source = fs.readFileSync(new URL('./Registry.jsx', import.meta.url), 'utf8')
-  const preview = source.slice(source.indexOf('function buildSplitPreview'), source.indexOf('function formatPercent'))
+test('manual amount editor has responsive row styling', () => {
+  const styles = fs.readFileSync(new URL('./styles.css', import.meta.url), 'utf8')
 
-  assert.match(source, /fixedAmountAccountTypes = \['ОМС', 'Коммерция'\]/)
-  assert.match(source, /aria-label={`Признак учёта платежа \$\{part\.number\}`}/)
-  assert.match(preview, /form\.payment_account_types\.length !== amounts\.length/)
-  assert.match(preview, /\['ОМС', 'Коммерция'\]\.includes\(value\)/)
-  assert.match(source, /payment_account_types: form\.mode === 'amount' \? form\.payment_account_types : null/)
+  assert.match(styles, /\.split-amount-row\{grid-template-columns:/)
+  assert.match(styles, /@media\(max-width:760px\)\{\.split-amount-row/)
 })
