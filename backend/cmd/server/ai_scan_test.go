@@ -281,3 +281,97 @@ func TestParseAIScanTextSupportsSupplyContractInvoiceWithInterleavedManager(t *t
 		t.Fatalf("unexpected dealmed amount: %v", result.Amount)
 	}
 }
+
+func TestParseAIScanTextUsesRecipientWhenSupplierTableContainsFollowingBuyer(t *testing.T) {
+	text := `
+ИНН 4401187917 КПП 440101001 Сч. № 40702810229000005865
+ООО "МП" Вид оп. 01 Срок плат.
+[Получатель! КоА Pes. none
+Счет на оплату № ЦБ-881 от 10 августа 2026 г.
+000 "МП", ИНН 4401187917, КПП 440101001, 156026, Костромская обл., Кострома
+Поставщик — помещение 12
+ООО МЦ Мирт, ИНН 4401050775, КПП 440101001, Кострома
+Покупатель: 8-4942-334-911
+Итого с НДС: 17 986,25
+`
+	references := []aiScanCounterpartyReference{
+		{Value: `ООО МП`},
+		{Value: `ООО "МП`},
+		{Value: `Мобикомп`},
+	}
+	result := parseAIScanTextWithReferences(text, references, []string{`ООО "МЦ "Мирт"`})
+	if result.Counterparty != `ООО МП` {
+		t.Fatalf("expected canonical MP reference, got %q", result.Counterparty)
+	}
+	if result.CounterpartyTaxID != "4401187917" {
+		t.Fatalf("unexpected MP tax ID: %q", result.CounterpartyTaxID)
+	}
+	if result.Counterparty == result.LegalEntity {
+		t.Fatalf("supplier must not be replaced by buyer: %#v", result)
+	}
+}
+
+func TestParseAIScanTextReusesAllToolsReferenceAndExtractsTaxID(t *testing.T) {
+	text := `
+АО "АЛЬФА-БАНК"
+ИНН 7722753969 КПП 997750001 Сч. № 40702810201300011302
+000 «Всейнструменты.ру»
+Получатель:
+Счет на оплату № 2608-430680-18447 от 10 августа 2026 года
+000 «Всейнструменты.ру», ИНН 7722753969, КПП 997750001, Адрес: Москва
+Поставщик: БРАТИСЛАВСКАЯ, ДОМ 16
+000 "МЦ"МИРТ", ИНН 4401050775, КПП 440101001
+Покупатель: Инженерный,18
+ИТОГО К ОПЛАТЕ: 3 055,00 Р
+`
+	references := []aiScanCounterpartyReference{
+		{Value: `АО "АЛЬФА-БАНК"`},
+		{Value: `ВсеИнструменты.ру`},
+	}
+	result := parseAIScanTextWithReferences(text, references, []string{`ООО "МЦ "Мирт"`})
+	if result.Counterparty != `ВсеИнструменты.ру` {
+		t.Fatalf("expected existing AllTools reference, got %q", result.Counterparty)
+	}
+	if result.CounterpartyTaxID != "7722753969" {
+		t.Fatalf("unexpected AllTools tax ID: %q", result.CounterpartyTaxID)
+	}
+}
+
+func TestBestAIScanCounterpartyReferencePrefersTaxIDAndAvoidsBrokenDuplicate(t *testing.T) {
+	references := []aiScanCounterpartyReference{
+		{Value: `ООО "МП`},
+		{Value: `ООО МП`},
+		{Value: `Канонический поставщик`, TaxID: "7722753969"},
+	}
+	if value, _ := bestAIScanCounterpartyReference(`ООО "МП"`, "4401187917", references); value != `ООО МП` {
+		t.Fatalf("expected clean normalized reference, got %q", value)
+	}
+	if value, confidence := bestAIScanCounterpartyReference(`ошибка OCR`, "7722753969", references); value != `Канонический поставщик` || confidence != "high" {
+		t.Fatalf("expected exact tax-ID reference, got %q (%s)", value, confidence)
+	}
+}
+
+func TestAIScanCounterpartyCandidateKeyDeduplicatesWritingVariants(t *testing.T) {
+	if aiScanCounterpartyCandidateKey(`ООО «ВсеИнструменты.ру»`, "") != aiScanCounterpartyCandidateKey(`ВсеИнструменты.ру`, "") {
+		t.Fatal("equivalent counterparty names must share one candidate key")
+	}
+	if aiScanCounterpartyCandidateKey(`любое OCR-название`, "7722753969") != aiScanCounterpartyCandidateKey(`другое OCR-название`, "7722753969") {
+		t.Fatal("the same tax ID must share one candidate key")
+	}
+}
+
+func TestSelectAIScanStoredCounterpartyReusesExistingAndRejectsConflictingTaxID(t *testing.T) {
+	references := []aiScanStoredCounterparty{
+		{id: 1, value: `ООО "МП`, active: true},
+		{id: 2, value: `ООО МП`, active: true},
+		{id: 3, value: `ВсеИнструменты.ру`, taxID: "7722753969", active: true},
+	}
+	selected, ok := selectAIScanStoredCounterparty(`ООО "МП"`, "4401187917", references)
+	if !ok || selected.id != 2 {
+		t.Fatalf("expected clean MP reference, got %#v, %v", selected, ok)
+	}
+	selected, ok = selectAIScanStoredCounterparty(`искаженное название`, "7722753969", references)
+	if !ok || selected.id != 3 {
+		t.Fatalf("expected tax-ID match, got %#v, %v", selected, ok)
+	}
+}

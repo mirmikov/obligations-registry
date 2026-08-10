@@ -7,7 +7,6 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"image"
 	_ "image/jpeg"
@@ -44,21 +43,28 @@ type aiScanBatchMeta struct {
 }
 
 type aiScanSuggestion struct {
-	Page             int               `json:"page"`
-	Counterparty     string            `json:"counterparty"`
-	LegalEntity      string            `json:"legal_entity"`
-	DocumentNumber   string            `json:"document_number"`
-	DocumentDate     string            `json:"document_date"`
-	Amount           *float64          `json:"amount"`
-	Duplicate        bool              `json:"duplicate"`
-	DuplicateMatches []duplicateMatch  `json:"duplicate_matches,omitempty"`
-	Confidence       map[string]string `json:"confidence"`
-	Warnings         []string          `json:"warnings"`
+	Page              int               `json:"page"`
+	Counterparty      string            `json:"counterparty"`
+	CounterpartyTaxID string            `json:"counterparty_tax_id,omitempty"`
+	LegalEntity       string            `json:"legal_entity"`
+	DocumentNumber    string            `json:"document_number"`
+	DocumentDate      string            `json:"document_date"`
+	Amount            *float64          `json:"amount"`
+	Duplicate         bool              `json:"duplicate"`
+	DuplicateMatches  []duplicateMatch  `json:"duplicate_matches,omitempty"`
+	Confidence        map[string]string `json:"confidence"`
+	Warnings          []string          `json:"warnings"`
 }
 
 type aiScanCommitItem struct {
-	Page   int             `json:"page"`
-	Values obligationInput `json:"values"`
+	Page              int             `json:"page"`
+	Values            obligationInput `json:"values"`
+	CounterpartyTaxID string          `json:"-"`
+}
+
+type aiScanCounterpartyReference struct {
+	Value string
+	TaxID string
 }
 
 func aiScanDirectory() string {
@@ -212,18 +218,19 @@ func (a *app) processAIScanBatch(token, directory string, pages []string) {
 		if ocrErr != nil {
 			log.Printf("AI scan OCR page %d: %v", index+1, ocrErr)
 		}
-		suggestion := parseAIScanText(text, counterparties, legalEntities)
+		suggestion := parseAIScanTextWithReferences(text, counterparties, legalEntities)
 		// Dense tables and low-contrast invoice headers occasionally confuse the
 		// automatic layout detector. Retry only pages whose document header is
 		// missing, using a single-block layout, so normal multi-page batches stay
 		// fast while weak scans get one focused recovery attempt.
 		if suggestion.DocumentNumber == "" || suggestion.DocumentDate == "" {
 			if fallback, fallbackErr := runTesseractWithPSM(ctx, pages[index], "6"); fallbackErr == nil && strings.TrimSpace(fallback) != "" {
-				candidate := parseAIScanText(text+"\n"+fallback, counterparties, legalEntities)
+				candidate := parseAIScanTextWithReferences(text+"\n"+fallback, counterparties, legalEntities)
 				// The fallback exists only to recover missing values. Never let its
 				// denser layout replace a field the primary pass already recognized.
 				if suggestion.Counterparty != "" {
 					candidate.Counterparty = suggestion.Counterparty
+					candidate.CounterpartyTaxID = suggestion.CounterpartyTaxID
 					candidate.Confidence["counterparty"] = suggestion.Confidence["counterparty"]
 				}
 				if suggestion.LegalEntity != "" {
@@ -468,16 +475,26 @@ var (
 	aiLooseDocumentPattern    = regexp.MustCompile(`(?is)(сч[её]т\s*[-–—]?\s*оферта|сч[её]т\s*[-–—]\s*фактура|сч[её]т\s*[-–—]?\s*договор(?:\s+поставки\s+[A-Za-zА-Яа-яЁё]+)?|универсальный\s+передаточный\s+документ|упд|сч[её]т(?:\s+на\s+опл\s*ату)?|товарная\s+накладная|накладная|акт(?:\s+(?:выполненных\s+работ|оказанных\s+услуг|при[её]ма\s*[-–—]?\s*передачи))?)\s*(?:№|N(?:o|е|2)?|No)?\s*([0-9A-Za-zА-Яа-яЁё]+(?:\s*[./_-]\s*[0-9A-Za-zА-Яа-яЁё]+)*)\s+от\s+([0-9]{1,2}(?:\s*[.\-/]\s*[0-9]{1,2}\s*[.\-/]\s*[0-9]{2,4}|\s+[А-Яа-яЁё]+\s+[0-9]{4}))`)
 	aiAmountPattern           = regexp.MustCompile(`[0-9]{1,3}(?:[ \x{00A0}][0-9]{3})*(?:[,.][0-9]{2})|[0-9]+(?:[,.][0-9]{2})|[0-9]+`)
 	aiSupplierPattern         = regexp.MustCompile(`(?is)(?:поставщик|исполнитель|продавец)(?:\s*\([^)]*\))?\s*[:;]?\s*(.{3,1000}?)(?:покупатель|заказчик|плательщик|основание|товары|услуги)`)
+	aiSupplierLinePattern     = regexp.MustCompile(`(?i)(?:поставщик|исполнитель|продавец)(?:\s*\([^)]*\))?\s*[:;—–-]?\s*(.*)$`)
 	aiRecipientLinePattern    = regexp.MustCompile(`(?i)^\s*[\[|]?\s*получатель(?:\s+средств)?(?:\s*[:;!|]\s*|\s+|$)(.*)$`)
 	aiRecipientStopPattern    = regexp.MustCompile(`(?i)^\s*(?:бик|банк\s+получателя|сч\.?\s*№|сч[её]т|код|рез\.?\s+поле|назначение\s+платежа|плательщик|покупатель|заказчик)(?:\s|:|$)`)
 	aiBuyerPattern            = regexp.MustCompile(`(?is)(?:покупатель|заказчик|плательщик)(?:\s*\([^)]*\))?\s*[:;]?\s*(.{3,1000}?)(?:основание|товары|услуги|поставщик|итого|всего|наименование)`)
 	aiExplicitPartyPattern    = regexp.MustCompile(`(?i)(?:[ОO0]{3}|ПАО|ОАО|ЗАО|АО|ИП)\s*(?:["«][^"»\n]{1,100}["»]|[A-Za-zА-Яа-яЁё][^,;|\n]{1,100})`)
 	aiInterleavedPartyPattern = regexp.MustCompile(`(?is)^\s*(акционерное\s+общество|общество\s+с\s+ограниченной\s+ответственностью)\s+(?:менеджер|телефон|почта).{0,160}?["«]([^"»\n]{2,100})["»]`)
+	aiTaxIDPattern            = regexp.MustCompile(`(?i)инн(?:\s*/\s*кпп)?\s*[:;]?\s*([0-9OО][0-9OО\s-]{8,18}[0-9OО])`)
 )
 
 var aiMonths = map[string]int{"января": 1, "февраля": 2, "марта": 3, "апреля": 4, "мая": 5, "июня": 6, "июля": 7, "августа": 8, "сентября": 9, "октября": 10, "ноября": 11, "декабря": 12}
 
 func parseAIScanText(text string, counterparties, legalEntities []string) aiScanSuggestion {
+	references := make([]aiScanCounterpartyReference, 0, len(counterparties))
+	for _, value := range counterparties {
+		references = append(references, aiScanCounterpartyReference{Value: value})
+	}
+	return parseAIScanTextWithReferences(text, references, legalEntities)
+}
+
+func parseAIScanTextWithReferences(text string, counterparties []aiScanCounterpartyReference, legalEntities []string) aiScanSuggestion {
 	result := aiScanSuggestion{Confidence: map[string]string{}, Warnings: []string{}}
 	match := aiDocumentPattern.FindStringSubmatch(text)
 	if len(match) != 4 {
@@ -513,23 +530,30 @@ func parseAIScanText(text string, counterparties, legalEntities []string) aiScan
 	}
 	supplierText := regexpCapture(aiSupplierPattern, text)
 	buyerText := regexpCapture(aiBuyerPattern, text)
-	supplierName := extractAIScanParty(supplierText)
+	supplierName, supplierTaxID := extractAIScanLabelledSupplier(text)
 	if interleaved := extractAIScanInterleavedParty(supplierText); interleaved != "" {
 		supplierName = interleaved
+		supplierTaxID = extractAIScanTaxID(supplierText)
 	}
-	// Table OCR can put an address after the supplier label and move the actual
-	// company name into the payment-details block. Replace that obvious false
-	// positive only when a labelled recipient yields a real legal party.
-	if supplierName == "" || !looksLikeAIScanParty(supplierName) {
-		if recipient := extractAIScanRecipient(text); recipient != "" {
-			supplierName = recipient
-		}
+	// Table OCR often emits the supplier name before the "Поставщик" cell and
+	// leaves only its address after the label. In that layout the payment-table
+	// recipient is the reliable supplier; never absorb a following buyer row
+	// into the supplier value.
+	if supplierName == "" {
+		supplierName = extractAIScanRecipient(text)
 	}
+	if supplierName == "" {
+		supplierName = extractAIScanParty(supplierText)
+	}
+	if supplierTaxID == "" {
+		supplierTaxID = extractAIScanSupplierTaxID(text, supplierName)
+	}
+	result.CounterpartyTaxID = supplierTaxID
 	buyerName := extractAIScanParty(buyerText)
 	// A bank name and its settlement account often appear before the invoice
 	// parties. Match the counterparty strictly inside the supplier section so a
 	// bank from the payment details can never replace the actual supplier.
-	result.Counterparty, result.Confidence["counterparty"] = bestAIScanReference(supplierName, counterparties)
+	result.Counterparty, result.Confidence["counterparty"] = bestAIScanCounterpartyReference(supplierName, result.CounterpartyTaxID, counterparties)
 	if result.Counterparty == "" {
 		result.Counterparty = supplierName
 		if result.Counterparty != "" {
@@ -588,6 +612,78 @@ func extractAIScanInterleavedParty(value string) string {
 	return legalForm + ` "` + strings.TrimSpace(match[2]) + `"`
 }
 
+func extractAIScanLabelledSupplier(text string) (string, string) {
+	for _, line := range strings.Split(strings.ReplaceAll(text, "\r", ""), "\n") {
+		match := aiSupplierLinePattern.FindStringSubmatch(line)
+		if len(match) != 2 {
+			continue
+		}
+		value := strings.TrimSpace(match[1])
+		party := extractAIScanExplicitParty(value)
+		if party == "" {
+			candidate := extractAIScanParty(value)
+			if looksLikeAIScanParty(candidate) {
+				party = candidate
+			}
+		}
+		if party != "" {
+			return party, extractAIScanTaxID(value)
+		}
+	}
+	return "", ""
+}
+
+func normalizeAIScanTaxID(value string) string {
+	var result strings.Builder
+	for _, char := range value {
+		switch char {
+		case '0', '1', '2', '3', '4', '5', '6', '7', '8', '9':
+			result.WriteRune(char)
+		case 'O', 'o', 'О', 'о':
+			result.WriteByte('0')
+		}
+	}
+	if result.Len() != 10 && result.Len() != 12 {
+		return ""
+	}
+	return result.String()
+}
+
+func extractAIScanTaxID(value string) string {
+	match := aiTaxIDPattern.FindStringSubmatch(value)
+	if len(match) != 2 {
+		return ""
+	}
+	return normalizeAIScanTaxID(match[1])
+}
+
+func extractAIScanSupplierTaxID(text, supplierName string) string {
+	partyKey := normalizedPartyName(supplierName)
+	if partyKey == "" {
+		return ""
+	}
+	lines := strings.Split(strings.ReplaceAll(text, "\r", ""), "\n")
+	for index, line := range lines {
+		party := extractAIScanExplicitParty(line)
+		if normalizedPartyName(party) != partyKey {
+			continue
+		}
+		if taxID := extractAIScanTaxID(line); taxID != "" {
+			return taxID
+		}
+		for offset := 1; offset <= 2; offset++ {
+			for _, nearby := range []int{index - offset, index + offset} {
+				if nearby >= 0 && nearby < len(lines) {
+					if taxID := extractAIScanTaxID(lines[nearby]); taxID != "" {
+						return taxID
+					}
+				}
+			}
+		}
+	}
+	return ""
+}
+
 func extractAIScanRecipient(text string) string {
 	lines := strings.Split(strings.ReplaceAll(text, "\r", ""), "\n")
 	for index, line := range lines {
@@ -599,7 +695,7 @@ func extractAIScanRecipient(text string) string {
 			if value := extractAIScanExplicitParty(candidate); value != "" {
 				return value
 			}
-			if value := extractAIScanParty(candidate); value != "" {
+			if value := extractAIScanParty(candidate); looksLikeAIScanParty(value) {
 				return value
 			}
 		}
@@ -614,7 +710,7 @@ func extractAIScanRecipient(text string) string {
 			if value := extractAIScanExplicitParty(candidate); value != "" {
 				return value
 			}
-			if value := extractAIScanParty(candidate); value != "" {
+			if value := extractAIScanParty(candidate); looksLikeAIScanParty(value) {
 				return value
 			}
 		}
@@ -732,6 +828,104 @@ func foldAIScanText(value string) string {
 	return strings.TrimSpace(result.String())
 }
 
+func aiScanBalancedReferenceName(value string) bool {
+	return strings.Count(value, `"`)%2 == 0 && strings.Count(value, "«") == strings.Count(value, "»")
+}
+
+func aiScanReferenceNameQuality(value, detected string) int {
+	score := 0
+	if aiScanBalancedReferenceName(value) && strings.EqualFold(strings.TrimSpace(value), strings.TrimSpace(detected)) {
+		score += 100
+	}
+	if aiScanBalancedReferenceName(value) {
+		score += 10
+	}
+	return score
+}
+
+func aiScanNormalizedNameSimilarity(left, right string) float64 {
+	a, b := []rune(normalizedPartyName(left)), []rune(normalizedPartyName(right))
+	if len(a) == 0 || len(b) == 0 {
+		return 0
+	}
+	previous := make([]int, len(b)+1)
+	for index := range previous {
+		previous[index] = index
+	}
+	for leftIndex, leftRune := range a {
+		current := make([]int, len(b)+1)
+		current[0] = leftIndex + 1
+		for rightIndex, rightRune := range b {
+			cost := 0
+			if leftRune != rightRune {
+				cost = 1
+			}
+			deletion := previous[rightIndex+1] + 1
+			insertion := current[rightIndex] + 1
+			substitution := previous[rightIndex] + cost
+			current[rightIndex+1] = min(deletion, insertion, substitution)
+		}
+		previous = current
+	}
+	maximum := max(len(a), len(b))
+	return 1 - float64(previous[len(b)])/float64(maximum)
+}
+
+func bestAIScanCounterpartyReference(text, taxID string, references []aiScanCounterpartyReference) (string, string) {
+	taxID = normalizeAIScanTaxID(taxID)
+	if taxID != "" {
+		for _, reference := range references {
+			if normalizeAIScanTaxID(reference.TaxID) == taxID {
+				return reference.Value, "high"
+			}
+		}
+	}
+	key := normalizedPartyName(text)
+	best, bestQuality := "", -1
+	for _, reference := range references {
+		if key == "" || normalizedPartyName(reference.Value) != key {
+			continue
+		}
+		if taxID != "" && reference.TaxID != "" && normalizeAIScanTaxID(reference.TaxID) != taxID {
+			continue
+		}
+		quality := aiScanReferenceNameQuality(reference.Value, text)
+		if quality > bestQuality {
+			best, bestQuality = reference.Value, quality
+		}
+	}
+	if best != "" {
+		return best, "high"
+	}
+	if taxID != "" {
+		bestIndex, bestScore, secondScore := -1, 0.0, 0.0
+		for index, reference := range references {
+			if reference.TaxID != "" && normalizeAIScanTaxID(reference.TaxID) != taxID {
+				continue
+			}
+			score := aiScanNormalizedNameSimilarity(text, reference.Value)
+			if score > bestScore {
+				bestIndex, secondScore, bestScore = index, bestScore, score
+			} else if score > secondScore {
+				secondScore = score
+			}
+		}
+		// A one-character OCR substitution in a long legal name is safe to
+		// reuse only when the match is both very strong and unambiguous.
+		if bestIndex >= 0 && bestScore >= 0.88 && bestScore-secondScore >= 0.03 {
+			return references[bestIndex].Value, "high"
+		}
+		// Otherwise keep the detected supplier so the commit path creates one
+		// new reference with this INN instead of selecting a doubtful company.
+		return "", ""
+	}
+	values := make([]string, 0, len(references))
+	for _, reference := range references {
+		values = append(values, reference.Value)
+	}
+	return bestAIScanReference(text, values)
+}
+
 func bestAIScanReference(text string, values []string) (string, string) {
 	folded := foldAIScanText(text)
 	if folded == "" {
@@ -800,20 +994,21 @@ func extractAIScanParty(value string) string {
 	return value
 }
 
-func (a *app) aiScanReferences(ctx context.Context) ([]string, []string, error) {
-	rows, err := a.db.QueryContext(ctx, `SELECT kind,value FROM reference_values WHERE active AND kind IN ('counterparties','legal_entities') ORDER BY kind,sort_order,value`)
+func (a *app) aiScanReferences(ctx context.Context) ([]aiScanCounterpartyReference, []string, error) {
+	rows, err := a.db.QueryContext(ctx, `SELECT kind,value,COALESCE(tax_id,'') FROM reference_values WHERE active AND kind IN ('counterparties','legal_entities') ORDER BY kind,sort_order,value`)
 	if err != nil {
 		return nil, nil, err
 	}
 	defer rows.Close()
-	var counterparties, legalEntities []string
+	var counterparties []aiScanCounterpartyReference
+	var legalEntities []string
 	for rows.Next() {
-		var kind, value string
-		if err = rows.Scan(&kind, &value); err != nil {
+		var kind, value, taxID string
+		if err = rows.Scan(&kind, &value, &taxID); err != nil {
 			return nil, nil, err
 		}
 		if kind == "counterparties" {
-			counterparties = append(counterparties, value)
+			counterparties = append(counterparties, aiScanCounterpartyReference{Value: value, TaxID: taxID})
 		} else {
 			legalEntities = append(legalEntities, value)
 		}
@@ -831,47 +1026,141 @@ func (a *app) aiScanDuplicates(ctx context.Context, item aiScanSuggestion) []dup
 }
 
 type aiScanReferenceAudit struct {
-	ID          int64
-	Value       string
-	Reactivated bool
+	ID           int64
+	Value        string
+	Created      bool
+	Reactivated  bool
+	TaxIDUpdated bool
+}
+
+type aiScanStoredCounterparty struct {
+	id     int64
+	value  string
+	taxID  string
+	active bool
 }
 
 type aiScanReferenceCandidate struct {
 	value         string
+	taxID         string
 	existingID    int64
 	existingValue string
+	existingTaxID string
 	active        bool
 }
 
+func selectAIScanStoredCounterparty(value, taxID string, references []aiScanStoredCounterparty) (aiScanStoredCounterparty, bool) {
+	taxID = normalizeAIScanTaxID(taxID)
+	if taxID != "" {
+		for _, reference := range references {
+			if normalizeAIScanTaxID(reference.taxID) == taxID {
+				return reference, true
+			}
+		}
+	}
+	key := normalizedPartyName(value)
+	bestIndex, bestScore := -1, -1
+	for index, reference := range references {
+		if key == "" || normalizedPartyName(reference.value) != key {
+			continue
+		}
+		if taxID != "" && reference.taxID != "" && normalizeAIScanTaxID(reference.taxID) != taxID {
+			continue
+		}
+		score := aiScanReferenceNameQuality(reference.value, value)
+		if reference.active {
+			score += 20
+		}
+		if reference.taxID != "" {
+			score += 5
+		}
+		if score > bestScore {
+			bestIndex, bestScore = index, score
+		}
+	}
+	if bestIndex < 0 && taxID != "" {
+		bestSimilarity, secondSimilarity := 0.0, 0.0
+		for index, reference := range references {
+			if reference.taxID != "" && normalizeAIScanTaxID(reference.taxID) != taxID {
+				continue
+			}
+			similarity := aiScanNormalizedNameSimilarity(value, reference.value)
+			if similarity > bestSimilarity {
+				bestIndex, secondSimilarity, bestSimilarity = index, bestSimilarity, similarity
+			} else if similarity > secondSimilarity {
+				secondSimilarity = similarity
+			}
+		}
+		if bestSimilarity < 0.88 || bestSimilarity-secondSimilarity < 0.03 {
+			bestIndex = -1
+		}
+	}
+	if bestIndex < 0 {
+		return aiScanStoredCounterparty{}, false
+	}
+	return references[bestIndex], true
+}
+
+func aiScanCounterpartyCandidateKey(value, taxID string) string {
+	if taxID = normalizeAIScanTaxID(taxID); taxID != "" {
+		return "tax:" + taxID
+	}
+	if key := normalizedPartyName(value); key != "" {
+		return "name:" + key
+	}
+	return "value:" + strings.ToLower(strings.TrimSpace(value))
+}
+
 func syncAIScanCounterparties(ctx context.Context, tx *sql.Tx, items []aiScanCommitItem) (*undoChange, []aiScanReferenceAudit, error) {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT id,value,COALESCE(tax_id,''),active
+		FROM reference_values
+		WHERE kind='counterparties'
+		ORDER BY active DESC,sort_order,value,id
+		FOR UPDATE`)
+	if err != nil {
+		return nil, nil, err
+	}
+	references := make([]aiScanStoredCounterparty, 0)
+	for rows.Next() {
+		var reference aiScanStoredCounterparty
+		if err = rows.Scan(&reference.id, &reference.value, &reference.taxID, &reference.active); err != nil {
+			rows.Close()
+			return nil, nil, err
+		}
+		references = append(references, reference)
+	}
+	if err = rows.Close(); err != nil {
+		return nil, nil, err
+	}
 	candidates := map[string]*aiScanReferenceCandidate{}
 	order := make([]string, 0, len(items))
 	for _, item := range items {
 		value := strings.TrimSpace(item.Values.Counterparty)
-		key := strings.ToLower(value)
+		taxID := normalizeAIScanTaxID(item.CounterpartyTaxID)
+		key := aiScanCounterpartyCandidateKey(value, taxID)
 		if value == "" || candidates[key] != nil {
 			continue
 		}
-		candidate := &aiScanReferenceCandidate{value: value}
-		err := tx.QueryRowContext(ctx, `
-			SELECT id,value,active FROM reference_values
-			WHERE kind='counterparties' AND lower(value)=lower($1)
-			ORDER BY active DESC,id LIMIT 1 FOR UPDATE`, value).Scan(&candidate.existingID, &candidate.existingValue, &candidate.active)
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return nil, nil, err
+		candidate := &aiScanReferenceCandidate{value: value, taxID: taxID}
+		if existing, found := selectAIScanStoredCounterparty(value, taxID, references); found {
+			candidate.existingID = existing.id
+			candidate.existingValue = existing.value
+			candidate.existingTaxID = existing.taxID
+			candidate.active = existing.active
 		}
 		candidates[key] = candidate
 		order = append(order, key)
 	}
 
-	inactiveIDs := make([]int64, 0)
+	changedExistingIDs := make([]int64, 0)
 	for _, key := range order {
 		candidate := candidates[key]
-		if candidate.existingID > 0 && !candidate.active {
-			inactiveIDs = append(inactiveIDs, candidate.existingID)
+		if candidate.existingID > 0 && (!candidate.active || (candidate.taxID != "" && candidate.existingTaxID == "")) {
+			changedExistingIDs = append(changedExistingIDs, candidate.existingID)
 		}
 	}
-	before, err := snapshotRows(ctx, tx, "reference_values", inactiveIDs)
+	before, err := snapshotRows(ctx, tx, "reference_values", changedExistingIDs)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -883,30 +1172,31 @@ func syncAIScanCounterparties(ctx context.Context, tx *sql.Tx, items []aiScanCom
 		candidate := candidates[key]
 		if candidate.existingID > 0 {
 			canonical[key] = candidate.existingValue
-			if !candidate.active {
-				if _, err = tx.ExecContext(ctx, `UPDATE reference_values SET active=true WHERE id=$1`, candidate.existingID); err != nil {
+			shouldBindTaxID := candidate.taxID != "" && candidate.existingTaxID == ""
+			if !candidate.active || shouldBindTaxID {
+				if _, err = tx.ExecContext(ctx, `UPDATE reference_values SET active=true,tax_id=CASE WHEN COALESCE(tax_id,'')='' THEN NULLIF($2,'') ELSE tax_id END WHERE id=$1`, candidate.existingID, candidate.taxID); err != nil {
 					return nil, nil, err
 				}
 				changedIDs = append(changedIDs, candidate.existingID)
-				audits = append(audits, aiScanReferenceAudit{ID: candidate.existingID, Value: candidate.existingValue, Reactivated: true})
+				audits = append(audits, aiScanReferenceAudit{ID: candidate.existingID, Value: candidate.existingValue, Reactivated: !candidate.active, TaxIDUpdated: shouldBindTaxID})
 			}
 			continue
 		}
 		var id int64
 		var value string
 		err = tx.QueryRowContext(ctx, `
-			INSERT INTO reference_values(kind,value,sort_order)
-			VALUES('counterparties',$1,(SELECT COALESCE(max(sort_order),-1)+1 FROM reference_values WHERE kind='counterparties'))
-			RETURNING id,value`, candidate.value).Scan(&id, &value)
+			INSERT INTO reference_values(kind,value,sort_order,tax_id)
+			VALUES('counterparties',$1,(SELECT COALESCE(max(sort_order),-1)+1 FROM reference_values WHERE kind='counterparties'),NULLIF($2,''))
+			RETURNING id,value`, candidate.value, candidate.taxID).Scan(&id, &value)
 		if err != nil {
 			return nil, nil, err
 		}
 		canonical[key] = value
 		changedIDs = append(changedIDs, id)
-		audits = append(audits, aiScanReferenceAudit{ID: id, Value: value})
+		audits = append(audits, aiScanReferenceAudit{ID: id, Value: value, Created: true})
 	}
 	for index := range items {
-		key := strings.ToLower(strings.TrimSpace(items[index].Values.Counterparty))
+		key := aiScanCounterpartyCandidateKey(items[index].Values.Counterparty, items[index].CounterpartyTaxID)
 		if value := canonical[key]; value != "" {
 			items[index].Values.Counterparty = value
 		}
@@ -981,13 +1271,21 @@ func (a *app) commitAIScan(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusBadRequest, "Выберите хотя бы один счёт")
 		return
 	}
+	detectedByPage := make(map[int]aiScanSuggestion, len(meta.Items))
+	for _, suggestion := range meta.Items {
+		detectedByPage[suggestion.Page] = suggestion
+	}
 	seen := map[int]bool{}
-	for _, item := range input.Items {
+	for index := range input.Items {
+		item := &input.Items[index]
 		if item.Page < 1 || item.Page > meta.PageCount || seen[item.Page] {
 			fail(w, http.StatusBadRequest, "Некорректный список страниц")
 			return
 		}
 		seen[item.Page] = true
+		if detected := detectedByPage[item.Page]; detected.CounterpartyTaxID != "" && normalizedPartyName(detected.Counterparty) == normalizedPartyName(item.Values.Counterparty) {
+			item.CounterpartyTaxID = detected.CounterpartyTaxID
+		}
 		if strings.TrimSpace(item.Values.Counterparty) == "" || strings.TrimSpace(item.Values.LegalEntity) == "" || strings.TrimSpace(item.Values.DocumentNumber) == "" || item.Values.DocumentDate == "" || item.Values.Amount == nil || *item.Values.Amount <= 0 {
 			fail(w, http.StatusBadRequest, fmt.Sprintf("Заполните контрагента, юрлицо, документ, дату и сумму на странице %d", item.Page))
 			return
@@ -1063,10 +1361,14 @@ func (a *app) commitAIScan(w http.ResponseWriter, r *http.Request) {
 	}
 	createdReferences := 0
 	for _, reference := range referenceAudits {
-		if !reference.Reactivated {
+		if reference.Created {
 			createdReferences++
 		}
-		a.audit(r.Context(), user.ID, "create", "reference", &reference.ID, map[string]any{"kind": "counterparties", "value": reference.Value, "source": "ai_scan", "reactivated": reference.Reactivated})
+		action := "update"
+		if reference.Created {
+			action = "create"
+		}
+		a.audit(r.Context(), user.ID, action, "reference", &reference.ID, map[string]any{"kind": "counterparties", "value": reference.Value, "source": "ai_scan", "created": reference.Created, "reactivated": reference.Reactivated, "tax_id_updated": reference.TaxIDUpdated})
 	}
 	_ = os.RemoveAll(directory)
 	writeJSON(w, http.StatusCreated, map[string]any{"created": len(ids), "created_references": createdReferences, "ids": ids})
