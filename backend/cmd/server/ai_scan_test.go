@@ -230,3 +230,54 @@ func TestExtractAIScanRecipientKeepsBareLabelLayout(t *testing.T) {
 		t.Fatalf("unexpected recipient after bare label: %q", value)
 	}
 }
+
+func TestParseAIScanTextSupportsOCRN2MarkerAndMixedAlphabetPrefix(t *testing.T) {
+	text := `
+ООО «ВЕБКЛИНИКА»
+Получатель
+Счет на оплату N2 BX02-097502 от 31 июля 2026 r.
+Поставщик (исполнитель): ООО «ВЕБКЛИНИКА» ‚ ИНН 7751176064 ‚ КПП 775101001
+Покупатель (заказчик): ООО «Медицинский центр «МИРТ», ИНН 4401050775, КПП 440101001
+Всего к оплате: 11 000,00
+`
+	result := parseAIScanText(text, []string{`ООО «ВЕБКЛИНИКА»`}, []string{`ООО «Медицинский центр «МИРТ»`})
+	if result.Counterparty != `ООО «ВЕБКЛИНИКА»` {
+		t.Fatalf("unexpected webclinic supplier: %q", result.Counterparty)
+	}
+	if result.LegalEntity != `ООО «Медицинский центр «МИРТ»` {
+		t.Fatalf("unexpected webclinic buyer: %q", result.LegalEntity)
+	}
+	if result.DocumentNumber != "Счет на оплату № ВХ02-097502" || result.DocumentDate != "2026-07-31" {
+		t.Fatalf("unexpected webclinic document: %q, %q", result.DocumentNumber, result.DocumentDate)
+	}
+	if result.Amount == nil || *result.Amount != 11000 {
+		t.Fatalf("unexpected webclinic amount: %v", result.Amount)
+	}
+}
+
+func TestParseAIScanTextSupportsSupplyContractInvoiceWithInterleavedManager(t *testing.T) {
+	text := `
+СЧЕТ-ДОГОВОР ПОСТАВКИ TOBAPA № 800856 от 10.08.2026
+Поставщик: АКЦИОНЕРНОЕ ОБЩЕСТВО Менеджер — Зоц Екатерина
+"ДЕАЛМЕД"
+ИНН/ КПП 7728820940/772801001 Телефон +7 (495) 545 41 40 # 244
+Банк АО "РАЙФФАЙЗЕНБАНК"
+получателя
+Покупатель: ОБЩЕСТВО С ОГРАНИЧЕННОЙ ОТВЕТСТВЕННОСТЬЮ "МЕДИЦИНСКИЙ ЦЕНТР "МИРТ".
+ИНН: 4401050775
+ИТОГО с НДС, руб.: 12000,00
+`
+	result := parseAIScanText(text, []string{`АО "РАЙФФАЙЗЕНБАНК"`}, []string{`ООО "МЦ "Мирт"`})
+	if result.Counterparty != `АО "ДЕАЛМЕД"` {
+		t.Fatalf("unexpected dealmed supplier: %q", result.Counterparty)
+	}
+	if result.LegalEntity != `ООО "МЦ "Мирт"` {
+		t.Fatalf("unexpected dealmed buyer: %q", result.LegalEntity)
+	}
+	if result.DocumentNumber != "Счет-договор № 800856" || result.DocumentDate != "2026-08-10" {
+		t.Fatalf("unexpected dealmed document: %q, %q", result.DocumentNumber, result.DocumentDate)
+	}
+	if result.Amount == nil || *result.Amount != 12000 {
+		t.Fatalf("unexpected dealmed amount: %v", result.Amount)
+	}
+}

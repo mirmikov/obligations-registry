@@ -464,14 +464,15 @@ func aiScanTextScore(text string) int {
 }
 
 var (
-	aiDocumentPattern      = regexp.MustCompile(`(?i)(сч[её]т\s*[-–—]?\s*оферта|сч[её]т\s*[-–—]\s*фактура|универсальный\s+передаточный\s+документ|упд|сч[её]т(?:\s+на\s+опл\s*ату)?|товарная\s+накладная|накладная|акт(?:\s+(?:выполненных\s+работ|оказанных\s+услуг|при[её]ма\s*[-–—]?\s*передачи))?)\s*(?:№|N(?:o|е)?|No)?\s*([0-9A-Za-zА-Яа-яЁё./_-]+)\s+от\s+([0-9]{1,2}(?:[.\-/][0-9]{1,2}[.\-/][0-9]{2,4}|\s+[А-Яа-яЁё]+\s+[0-9]{4}))`)
-	aiLooseDocumentPattern = regexp.MustCompile(`(?is)(сч[её]т\s*[-–—]?\s*оферта|сч[её]т\s*[-–—]\s*фактура|универсальный\s+передаточный\s+документ|упд|сч[её]т(?:\s+на\s+опл\s*ату)?|товарная\s+накладная|накладная|акт(?:\s+(?:выполненных\s+работ|оказанных\s+услуг|при[её]ма\s*[-–—]?\s*передачи))?)\s*(?:№|N(?:o|е)?|No)?\s*([0-9A-Za-zА-Яа-яЁё]+(?:\s*[./_-]\s*[0-9A-Za-zА-Яа-яЁё]+)*)\s+от\s+([0-9]{1,2}(?:\s*[.\-/]\s*[0-9]{1,2}\s*[.\-/]\s*[0-9]{2,4}|\s+[А-Яа-яЁё]+\s+[0-9]{4}))`)
-	aiAmountPattern        = regexp.MustCompile(`[0-9]{1,3}(?:[ \x{00A0}][0-9]{3})*(?:[,.][0-9]{2})|[0-9]+(?:[,.][0-9]{2})|[0-9]+`)
-	aiSupplierPattern      = regexp.MustCompile(`(?is)(?:поставщик|исполнитель|продавец)(?:\s*\([^)]*\))?\s*[:;]?\s*(.{3,1000}?)(?:покупатель|заказчик|плательщик|основание|товары|услуги)`)
-	aiRecipientLinePattern = regexp.MustCompile(`(?i)^\s*[\[|]?\s*получатель(?:\s+средств)?(?:\s*[:;!|]\s*|\s+|$)(.*)$`)
-	aiRecipientStopPattern = regexp.MustCompile(`(?i)^\s*(?:бик|банк\s+получателя|сч\.?\s*№|сч[её]т|код|рез\.?\s+поле|назначение\s+платежа|плательщик|покупатель|заказчик)(?:\s|:|$)`)
-	aiBuyerPattern         = regexp.MustCompile(`(?is)(?:покупатель|заказчик|плательщик)(?:\s*\([^)]*\))?\s*[:;]?\s*(.{3,1000}?)(?:основание|товары|услуги|поставщик|итого|всего|наименование)`)
-	aiExplicitPartyPattern = regexp.MustCompile(`(?i)(?:[ОO0]{3}|ПАО|ОАО|ЗАО|АО|ИП)\s*(?:["«][^"»\n]{1,100}["»]|[A-Za-zА-Яа-яЁё][^,;|\n]{1,100})`)
+	aiDocumentPattern         = regexp.MustCompile(`(?i)(сч[её]т\s*[-–—]?\s*оферта|сч[её]т\s*[-–—]\s*фактура|сч[её]т\s*[-–—]?\s*договор(?:\s+поставки\s+[A-Za-zА-Яа-яЁё]+)?|универсальный\s+передаточный\s+документ|упд|сч[её]т(?:\s+на\s+опл\s*ату)?|товарная\s+накладная|накладная|акт(?:\s+(?:выполненных\s+работ|оказанных\s+услуг|при[её]ма\s*[-–—]?\s*передачи))?)\s*(?:№|N(?:o|е|2)?|No)?\s*([0-9A-Za-zА-Яа-яЁё./_-]+)\s+от\s+([0-9]{1,2}(?:[.\-/][0-9]{1,2}[.\-/][0-9]{2,4}|\s+[А-Яа-яЁё]+\s+[0-9]{4}))`)
+	aiLooseDocumentPattern    = regexp.MustCompile(`(?is)(сч[её]т\s*[-–—]?\s*оферта|сч[её]т\s*[-–—]\s*фактура|сч[её]т\s*[-–—]?\s*договор(?:\s+поставки\s+[A-Za-zА-Яа-яЁё]+)?|универсальный\s+передаточный\s+документ|упд|сч[её]т(?:\s+на\s+опл\s*ату)?|товарная\s+накладная|накладная|акт(?:\s+(?:выполненных\s+работ|оказанных\s+услуг|при[её]ма\s*[-–—]?\s*передачи))?)\s*(?:№|N(?:o|е|2)?|No)?\s*([0-9A-Za-zА-Яа-яЁё]+(?:\s*[./_-]\s*[0-9A-Za-zА-Яа-яЁё]+)*)\s+от\s+([0-9]{1,2}(?:\s*[.\-/]\s*[0-9]{1,2}\s*[.\-/]\s*[0-9]{2,4}|\s+[А-Яа-яЁё]+\s+[0-9]{4}))`)
+	aiAmountPattern           = regexp.MustCompile(`[0-9]{1,3}(?:[ \x{00A0}][0-9]{3})*(?:[,.][0-9]{2})|[0-9]+(?:[,.][0-9]{2})|[0-9]+`)
+	aiSupplierPattern         = regexp.MustCompile(`(?is)(?:поставщик|исполнитель|продавец)(?:\s*\([^)]*\))?\s*[:;]?\s*(.{3,1000}?)(?:покупатель|заказчик|плательщик|основание|товары|услуги)`)
+	aiRecipientLinePattern    = regexp.MustCompile(`(?i)^\s*[\[|]?\s*получатель(?:\s+средств)?(?:\s*[:;!|]\s*|\s+|$)(.*)$`)
+	aiRecipientStopPattern    = regexp.MustCompile(`(?i)^\s*(?:бик|банк\s+получателя|сч\.?\s*№|сч[её]т|код|рез\.?\s+поле|назначение\s+платежа|плательщик|покупатель|заказчик)(?:\s|:|$)`)
+	aiBuyerPattern            = regexp.MustCompile(`(?is)(?:покупатель|заказчик|плательщик)(?:\s*\([^)]*\))?\s*[:;]?\s*(.{3,1000}?)(?:основание|товары|услуги|поставщик|итого|всего|наименование)`)
+	aiExplicitPartyPattern    = regexp.MustCompile(`(?i)(?:[ОO0]{3}|ПАО|ОАО|ЗАО|АО|ИП)\s*(?:["«][^"»\n]{1,100}["»]|[A-Za-zА-Яа-яЁё][^,;|\n]{1,100})`)
+	aiInterleavedPartyPattern = regexp.MustCompile(`(?is)^\s*(акционерное\s+общество|общество\s+с\s+ограниченной\s+ответственностью)\s+(?:менеджер|телефон|почта).{0,160}?["«]([^"»\n]{2,100})["»]`)
 )
 
 var aiMonths = map[string]int{"января": 1, "февраля": 2, "марта": 3, "апреля": 4, "мая": 5, "июня": 6, "июля": 7, "августа": 8, "сентября": 9, "октября": 10, "ноября": 11, "декабря": 12}
@@ -490,6 +491,8 @@ func parseAIScanText(text string, counterparties, legalEntities []string) aiScan
 		documentKind = regexp.MustCompile(`(?i)опл\s+ату`).ReplaceAllString(documentKind, "оплату")
 		if strings.Contains(foldAIScanText(text), "универсальный передаточный документ") {
 			documentKind = "УПД"
+		} else if strings.Contains(foldAIScanText(documentKind), "счет договор") {
+			documentKind = "Счет-договор"
 		} else if strings.Contains(foldAIScanText(documentKind), "оферта") {
 			documentKind = "Счет-оферта"
 		} else if strings.Contains(foldAIScanText(documentKind), "фактура") {
@@ -511,6 +514,9 @@ func parseAIScanText(text string, counterparties, legalEntities []string) aiScan
 	supplierText := regexpCapture(aiSupplierPattern, text)
 	buyerText := regexpCapture(aiBuyerPattern, text)
 	supplierName := extractAIScanParty(supplierText)
+	if interleaved := extractAIScanInterleavedParty(supplierText); interleaved != "" {
+		supplierName = interleaved
+	}
 	// Table OCR can put an address after the supplier label and move the actual
 	// company name into the payment-details block. Replace that obvious false
 	// positive only when a labelled recipient yields a real legal party.
@@ -563,7 +569,23 @@ func regexpCapture(pattern *regexp.Regexp, text string) string {
 
 func normalizeAIScanDocumentNumber(value string) string {
 	value = strings.Join(strings.Fields(value), " ")
-	return regexp.MustCompile(`\s*([./_-])\s*`).ReplaceAllString(value, "$1")
+	value = regexp.MustCompile(`\s*([./_-])\s*`).ReplaceAllString(value, "$1")
+	// In Russian invoice prefixes Tesseract often substitutes the visually
+	// identical Latin B/X for Cyrillic В/Х. Limit normalization to the common
+	// two-letter prefix followed by two digits and a separator.
+	return regexp.MustCompile(`(?i)^[BВ][XХ]([0-9]{2}[-/].*)$`).ReplaceAllString(value, "ВХ$1")
+}
+
+func extractAIScanInterleavedParty(value string) string {
+	match := aiInterleavedPartyPattern.FindStringSubmatch(value)
+	if len(match) != 3 {
+		return ""
+	}
+	legalForm := "ООО"
+	if strings.HasPrefix(foldAIScanText(match[1]), "акционерное общество") {
+		legalForm = "АО"
+	}
+	return legalForm + ` "` + strings.TrimSpace(match[2]) + `"`
 }
 
 func extractAIScanRecipient(text string) string {
