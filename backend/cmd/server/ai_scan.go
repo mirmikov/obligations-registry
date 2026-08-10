@@ -44,15 +44,16 @@ type aiScanBatchMeta struct {
 }
 
 type aiScanSuggestion struct {
-	Page           int               `json:"page"`
-	Counterparty   string            `json:"counterparty"`
-	LegalEntity    string            `json:"legal_entity"`
-	DocumentNumber string            `json:"document_number"`
-	DocumentDate   string            `json:"document_date"`
-	Amount         *float64          `json:"amount"`
-	Duplicate      bool              `json:"duplicate"`
-	Confidence     map[string]string `json:"confidence"`
-	Warnings       []string          `json:"warnings"`
+	Page             int               `json:"page"`
+	Counterparty     string            `json:"counterparty"`
+	LegalEntity      string            `json:"legal_entity"`
+	DocumentNumber   string            `json:"document_number"`
+	DocumentDate     string            `json:"document_date"`
+	Amount           *float64          `json:"amount"`
+	Duplicate        bool              `json:"duplicate"`
+	DuplicateMatches []duplicateMatch  `json:"duplicate_matches,omitempty"`
+	Confidence       map[string]string `json:"confidence"`
+	Warnings         []string          `json:"warnings"`
 }
 
 type aiScanCommitItem struct {
@@ -245,7 +246,8 @@ func (a *app) processAIScanBatch(token, directory string, pages []string) {
 			}
 		}
 		suggestion.Page = index + 1
-		suggestion.Duplicate = a.aiScanDuplicate(ctx, suggestion)
+		suggestion.DuplicateMatches = a.aiScanDuplicates(ctx, suggestion)
+		suggestion.Duplicate = len(suggestion.DuplicateMatches) > 0
 		if ocrErr != nil {
 			suggestion.Warnings = append(suggestion.Warnings, "Страница распознана не полностью — проверьте значения вручную")
 		}
@@ -732,13 +734,13 @@ func (a *app) aiScanReferences(ctx context.Context) ([]string, []string, error) 
 	return counterparties, legalEntities, rows.Err()
 }
 
-func (a *app) aiScanDuplicate(ctx context.Context, item aiScanSuggestion) bool {
-	if item.Counterparty == "" || item.DocumentNumber == "" || item.DocumentDate == "" || item.Amount == nil {
-		return false
+func (a *app) aiScanDuplicates(ctx context.Context, item aiScanSuggestion) []duplicateMatch {
+	result, err := findDuplicateObligations(ctx, a.db, obligationInput{Counterparty: item.Counterparty, LegalEntity: item.LegalEntity, DocumentNumber: item.DocumentNumber, DocumentDate: item.DocumentDate, Amount: item.Amount}, 0, "")
+	if err != nil {
+		log.Printf("AI scan duplicate check: %v", err)
+		return nil
 	}
-	var exists bool
-	err := a.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM obligations WHERE lower(COALESCE(counterparty,''))=lower($1) AND COALESCE(document_number,'')=$2 AND document_date=$3::date AND amount=$4)`, item.Counterparty, item.DocumentNumber, item.DocumentDate, *item.Amount).Scan(&exists)
-	return err == nil && exists
+	return result.Matches
 }
 
 type aiScanReferenceAudit struct {
@@ -882,7 +884,8 @@ func (a *app) commitAIScan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var input struct {
-		Items []aiScanCommitItem `json:"items"`
+		Items          []aiScanCommitItem `json:"items"`
+		AllowDuplicate bool               `json:"allow_duplicate,omitempty"`
 	}
 	if !decodeJSON(w, r, &input) {
 		return
@@ -910,6 +913,10 @@ func (a *app) commitAIScan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback()
+	if err = acquireDuplicateWriteLock(r.Context(), tx); err != nil {
+		fail(w, http.StatusInternalServerError, "Не удалось подготовить проверку дублей")
+		return
+	}
 	referenceChange, referenceAudits, err := syncAIScanCounterparties(r.Context(), tx, input.Items)
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "Не удалось синхронизировать контрагентов со справочником")
@@ -927,6 +934,16 @@ func (a *app) commitAIScan(w http.ResponseWriter, r *http.Request) {
 	entryDate := time.Now().Format("2006-01-02")
 	for _, item := range input.Items {
 		item.Values.EntryDate = entryDate
+		item.Values.normalize()
+		duplicates, duplicateErr := findDuplicateObligations(r.Context(), tx, item.Values, 0, "")
+		if duplicateErr != nil {
+			fail(w, http.StatusInternalServerError, fmt.Sprintf("Не удалось проверить страницу %d на дублирование", item.Page))
+			return
+		}
+		if duplicates.Total > 0 && !input.AllowDuplicate {
+			writeDuplicateConflict(w, duplicates, fmt.Sprintf("ai_scan_page_%d", item.Page))
+			return
+		}
 		id, insertErr := insertObligation(r.Context(), tx, item.Values, &user.ID)
 		if insertErr != nil {
 			fail(w, http.StatusBadRequest, fmt.Sprintf("Не удалось сохранить страницу %d: %v", item.Page, insertErr))

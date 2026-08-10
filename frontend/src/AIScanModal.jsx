@@ -50,6 +50,7 @@ export default function AIScanModal({ state, references, onChange, onRetry, onCl
                   <ScanField label="Документ" value={active.values.document_number} onChange={value => updateValue('document_number', value)} required/>
                   <ScanDateField label="Дата документа" value={active.values.document_date} onChange={value => updateValue('document_date', value)} required/>
                 </div>
+                {active.duplicate_matches?.length > 0 && <div className="ai-scan-duplicate-details"><AlertTriangle size={15}/><div><strong>Похожий счёт уже есть в реестре</strong>{active.duplicate_matches.slice(0, 3).map(match => <span key={match.id}>Запись №{match.id}: {match.document_number || 'без номера'} от {match.document_date || 'без даты'} · {match.amount == null ? 'без суммы' : money(match.amount)}</span>)}</div></div>}
                 {active.warnings.length > 0 && <div className="ai-scan-warnings">{active.warnings.map(warning => <span key={warning}><AlertTriangle size={13}/>{warning}</span>)}</div>}
               </section>
               <section className="ai-scan-manual">
