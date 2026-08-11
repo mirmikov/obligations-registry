@@ -726,6 +726,9 @@ func TestRolePermissionPresetsPreserveExistingAccess(t *testing.T) {
 	if !admin["registry.import"] || !admin["executive.settings"] || !admin["users.manage"] {
 		t.Fatal("administrator preset must preserve full operational access")
 	}
+	if !editor["credits.approve"] || !admin["credits.approve"] {
+		t.Fatal("editors and administrators must be able to approve credits by default")
+	}
 }
 
 func TestExplicitPermissionsAreAllowListed(t *testing.T) {

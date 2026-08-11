@@ -129,7 +129,7 @@ export default function App() {
     dashboard: <Dashboard key={`dashboard-${dataRevision}`} notify={notify} />,
     executive: <ExecutiveDashboard key={`executive-${dataRevision}`} user={user} notify={notify} />,
     registry: <Registry key={`registry-${dataRevision}`} user={user} notify={notify} maintenance={maintenance} onToggleMaintenance={toggleMaintenance} />,
-    'credits-leasing': <CreditsLeasing key={`credits-${dataRevision}`} notify={notify} />,
+    'credits-leasing': <CreditsLeasing key={`credits-${dataRevision}`} user={user} notify={notify} />,
     payments: <Payments key={`payments-${dataRevision}`} user={user} notify={notify} />,
     chat: <Chat user={user} notify={notify} initialConversationID={chatTarget} notificationPermission={chatNotifications.permission} onEnableNotifications={chatNotifications.requestPermission} />,
     references: <References key={`references-${dataRevision}`} user={user} notify={notify} />,

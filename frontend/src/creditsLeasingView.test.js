@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
-import { groupCreditSchedule, summarizeCreditDetails } from './creditsLeasingView.js'
+import { CREDIT_APPROVAL_STATUSES, creditApprovalUpdatePayload, groupCreditSchedule, summarizeCreditDetails } from './creditsLeasingView.js'
 
 const payments = [
   { date: '2026-08-15', counterparty: 'Банк А', count: 2, total_amount: 300, outstanding_amount: 300, overdue: false },
@@ -36,10 +36,41 @@ test('detail totals treat actual payment date as paid and exclude cancelled debt
   ]), { count: 3, total: 600, paid: 200, outstanding: 100 })
 })
 
-test('clicking the whole calendar day loads its read-only payment details', () => {
+test('clicking the whole calendar day loads payment details', () => {
   const source = fs.readFileSync(new URL('./CreditsLeasing.jsx', import.meta.url), 'utf8')
   assert.match(source, /className={`schedule-day/)
   assert.match(source, /onClick=\{\(\) => onOpenDay\(day\)\}/)
   assert.match(source, /\/api\/reports\/credits-leasing\/details\?/)
   assert.match(source, /detailsRequest\.current === requestID/)
+})
+
+test('credits approval exposes only registered and payable statuses', () => {
+  assert.deepEqual(CREDIT_APPROVAL_STATUSES, ['К оплате', 'Зарегистрирован'])
+})
+
+test('credits status update changes only the approval status', () => {
+  assert.deepEqual(creditApprovalUpdatePayload(17, 'status', 'К оплате'), {
+    ids: [17],
+    status: 'К оплате',
+    approval_date: '',
+    actual_payment_date: '',
+  })
+})
+
+test('credits approval date can be set or explicitly cleared', () => {
+  assert.deepEqual(creditApprovalUpdatePayload(17, 'approval_date', ''), {
+    ids: [17],
+    status: '',
+    approval_date: '',
+    actual_payment_date: '',
+    approval_date_set: true,
+  })
+})
+
+test('credit day details wire editable status and approval date to the scoped endpoint', () => {
+  const source = fs.readFileSync(new URL('./CreditsLeasing.jsx', import.meta.url), 'utf8')
+  assert.match(source, /credits\.approve/)
+  assert.match(source, /\/api\/reports\/credits-leasing\/obligations\/bulk/)
+  assert.match(source, /CreditStatusCell/)
+  assert.match(source, /CreditApprovalDateCell/)
 })
