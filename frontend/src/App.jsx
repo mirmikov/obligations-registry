@@ -134,7 +134,7 @@ export default function App() {
     registry: <Registry key={`registry-${dataRevision}`} user={user} notify={notify} maintenance={maintenance} onToggleMaintenance={toggleMaintenance} />,
     'credits-leasing': <CreditsLeasing key={`credits-${dataRevision}`} user={user} notify={notify} />,
     payments: <Payments key={`payments-${dataRevision}`} user={user} notify={notify} />,
-    chat: <Chat user={user} notify={notify} initialConversationID={chatTarget} notificationPermission={chatNotifications.permission} onEnableNotifications={chatNotifications.requestPermission} />,
+    chat: <Chat user={user} notify={notify} initialConversationID={chatTarget} onInitialConversationApplied={() => setChatTarget(null)} notificationPermission={chatNotifications.permission} onEnableNotifications={chatNotifications.requestPermission} />,
     references: <References key={`references-${dataRevision}`} user={user} notify={notify} />,
     users: <UsersPage key={`users-${dataRevision}`} user={user} notify={notify} />,
     audit: <Audit key={`audit-${dataRevision}`} notify={notify} />,
@@ -219,7 +219,7 @@ function Login({ onLogin }) {
 export function PageHeader({ eyebrow, title, subtitle, actions }) { return <header className="page-header"><div><p className="eyebrow">{eyebrow}</p><h1>{title}</h1>{subtitle && <span>{subtitle}</span>}</div>{actions && <div className="header-actions">{actions}</div>}</header> }
 function isAllowedNavItem(item, user) { return can(user, item.permission) || item.children?.some(child => can(user, child.permission)) }
 function isAllowedPage(page, user) { return can(user, pagePermissions[page]) }
-export const roleLabel = role => ({ developer: 'Программист', admin: 'Администратор', editor: 'Редактор', viewer: 'Зритель' }[role] || role)
+export const roleLabel = role => ({ developer: 'Программист', admin: 'Администратор', accountant: 'Бухгалтер', editor: 'Редактор', viewer: 'Зритель' }[role] || role)
 export const money = value => new Intl.NumberFormat('ru-RU', {
   style: 'currency',
   currency: 'RUB',

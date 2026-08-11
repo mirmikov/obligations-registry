@@ -1,16 +1,20 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { CalendarClock, Check, CheckCircle2, ChevronDown, CircleDollarSign, FileCheck2, RefreshCw, RotateCcw, Search, UserRoundCheck } from 'lucide-react'
+import { CalendarClock, CalendarDays, Check, CheckCircle2, ChevronDown, CircleDollarSign, FileCheck2, RefreshCw, RotateCcw, Search, UserRoundCheck, X } from 'lucide-react'
 import { request } from './api'
 import { DateInput, money, PageHeader, shortDate } from './App'
 import { filterMyInvoices, summarizeMyInvoices, uniqueInvoiceValues } from './myInvoicesView'
 import './myInvoices.css'
 
 const emptyData = { responsibles: [], items: [] }
+const emptyFilters = {
+  query: '', status: '', legalEntity: '', dateFrom: '', dateTo: '',
+  plannedDate: '', counterparty: [], costCategory: '', approvalDate: '', actualPaymentDate: '', responsible: '',
+}
 
 export default function MyInvoices({ notify }) {
   const [data, setData] = useState(emptyData)
   const [loading, setLoading] = useState(true)
-  const [filters, setFilters] = useState({ query: '', status: '', legalEntity: '', dateFrom: '', dateTo: '' })
+  const [filters, setFilters] = useState(emptyFilters)
   const load = () => {
     setLoading(true)
     request('/api/my-invoices').then(setData).catch(error => notify(error.message, 'error')).finally(() => setLoading(false))
@@ -19,11 +23,14 @@ export default function MyInvoices({ notify }) {
 
   const statuses = useMemo(() => uniqueInvoiceValues(data.items, 'status'), [data.items])
   const legalEntities = useMemo(() => uniqueInvoiceValues(data.items, 'legal_entity'), [data.items])
+  const counterparties = useMemo(() => uniqueInvoiceValues(data.items, 'counterparty'), [data.items])
+  const costCategories = useMemo(() => uniqueInvoiceValues(data.items, 'cost_category'), [data.items])
+  const responsibles = useMemo(() => uniqueInvoiceValues(data.items, 'responsible'), [data.items])
   const filtered = useMemo(() => filterMyInvoices(data.items, filters), [data.items, filters])
   const summary = useMemo(() => summarizeMyInvoices(filtered), [filtered])
-  const hasFilters = Object.values(filters).some(Boolean)
+  const hasFilters = Object.values(filters).some(value => Array.isArray(value) ? value.length > 0 : Boolean(value))
   const updateFilter = (key, value) => setFilters(current => ({ ...current, [key]: value }))
-  const clearFilters = () => setFilters({ query: '', status: '', legalEntity: '', dateFrom: '', dateTo: '' })
+  const clearFilters = () => setFilters(emptyFilters)
 
   return <div className="page my-invoices-page">
     <PageHeader eyebrow="Личный кабинет" title="Мои счета" subtitle="Статусы и сроки платежей, назначенных вам как ответственному" actions={<button className="secondary" onClick={load} disabled={loading}><RefreshCw size={16} className={loading ? 'spin' : ''}/>Обновить</button>}/>
@@ -45,8 +52,8 @@ export default function MyInvoices({ notify }) {
         <label className="my-invoices-search"><span>Поиск</span><div><Search size={16}/><input value={filters.query} onChange={event => updateFilter('query', event.target.value)} placeholder="Контрагент, документ, комментарий…" aria-label="Поиск по моим счетам"/></div></label>
         <InvoiceSelect label="Статус" value={filters.status} options={statuses} allLabel="Все статусы" onChange={value => updateFilter('status', value)}/>
         <InvoiceSelect label="Юридическое лицо" value={filters.legalEntity} options={legalEntities} allLabel="Все юрлица" onChange={value => updateFilter('legalEntity', value)}/>
-        <label><span>Плановая оплата от</span><DateInput value={filters.dateFrom} onChange={value => updateFilter('dateFrom', value)} aria-label="Плановая оплата от"/></label>
-        <label><span>Плановая оплата до</span><DateInput value={filters.dateTo} onChange={value => updateFilter('dateTo', value)} aria-label="Плановая оплата до"/></label>
+        <label className="my-invoices-date-filter"><span>Плановая оплата от</span><div className={`my-invoices-date-control ${filters.dateFrom ? 'has-value' : ''}`}><CalendarDays size={16}/><DateInput className="my-invoices-date-input" value={filters.dateFrom} onChange={value => updateFilter('dateFrom', value)} aria-label="Плановая оплата от"/></div></label>
+        <label className="my-invoices-date-filter"><span>Плановая оплата до</span><div className={`my-invoices-date-control ${filters.dateTo ? 'has-value' : ''}`}><CalendarDays size={16}/><DateInput className="my-invoices-date-input" value={filters.dateTo} onChange={value => updateFilter('dateTo', value)} aria-label="Плановая оплата до"/></div></label>
         <button type="button" className="secondary my-invoices-reset" onClick={clearFilters} disabled={!hasFilters}><RotateCcw size={15}/>Сбросить</button>
       </section>
 
@@ -54,7 +61,18 @@ export default function MyInvoices({ notify }) {
         <header><div><h2>Назначенные счета</h2><span>Показано {filtered.length} из {data.items.length}</span></div><strong>{money(summary.amount)}</strong></header>
         <div className="my-invoices-table-scroll">
           <table className="my-invoices-table">
-            <thead><tr><th>Плановая оплата</th><th>Контрагент</th><th>Юрлицо</th><th>Документ</th><th>Статья затрат</th><th>Сумма</th><th>Статус</th><th>Дата утверждения</th><th>Фактическая оплата</th><th>Ответственный</th></tr></thead>
+            <thead><tr>
+              <InvoiceColumnHead label="Плановая оплата" dateValue={filters.plannedDate} onDateFilter={value => updateFilter('plannedDate', value)}/>
+              <InvoiceColumnHead label="Контрагент" value={filters.counterparty} options={counterparties} onFilter={value => updateFilter('counterparty', value)} multiple/>
+              <InvoiceColumnHead label="Юрлицо" value={filters.legalEntity} options={legalEntities} onFilter={value => updateFilter('legalEntity', value)}/>
+              <th><span className="column-label">Документ</span></th>
+              <InvoiceColumnHead label="Статья затрат" value={filters.costCategory} options={costCategories} onFilter={value => updateFilter('costCategory', value)}/>
+              <th><span className="column-label">Сумма</span></th>
+              <InvoiceColumnHead label="Статус" value={filters.status} options={statuses} onFilter={value => updateFilter('status', value)}/>
+              <InvoiceColumnHead label="Дата утверждения" dateValue={filters.approvalDate} onDateFilter={value => updateFilter('approvalDate', value)}/>
+              <InvoiceColumnHead label="Фактическая оплата" dateValue={filters.actualPaymentDate} onDateFilter={value => updateFilter('actualPaymentDate', value)}/>
+              <InvoiceColumnHead label="Ответственный" value={filters.responsible} options={responsibles} onFilter={value => updateFilter('responsible', value)}/>
+            </tr></thead>
             <tbody>{filtered.map(item => <tr key={item.id} className={invoiceRowTone(item)}>
               <td><strong>{shortDate(item.planned_payment_date)}</strong>{isOverdue(item) && <small className="invoice-overdue-label">Просрочено</small>}</td>
               <td><strong>{item.counterparty || '—'}</strong>{item.account_type && <small>{item.account_type}</small>}</td>
@@ -72,6 +90,62 @@ export default function MyInvoices({ notify }) {
         </div>
       </section>
     </>}
+  </div>
+}
+
+function InvoiceColumnHead({ label, value = '', options, onFilter, dateValue = '', onDateFilter, multiple = false }) {
+  const filtered = (Array.isArray(value) ? value.length > 0 : Boolean(value)) || Boolean(dateValue)
+  return <th className={filtered ? 'filtered' : ''}><div className="column-head-inner">
+    <span className="column-label">{label}</span>
+    {onFilter && <InvoiceHeaderFilter label={label} value={value} options={options} onChange={onFilter} multiple={multiple}/>}
+    {onDateFilter && <InvoiceDateHeaderFilter label={label} value={dateValue} onChange={onDateFilter}/>}
+  </div></th>
+}
+
+function InvoiceDateHeaderFilter({ label, value, onChange }) {
+  const [open, setOpen] = useState(false)
+  const triggerRef = useRef(null)
+  return <div className={`header-filter date-header-filter ${open ? 'is-open' : ''} ${value ? 'has-value' : ''}`}>
+    <button ref={triggerRef} type="button" className="header-filter-trigger" aria-label={`Фильтр по дате: ${label}`} aria-expanded={open} onClick={() => setOpen(current => !current)}><CalendarDays size={13}/>{value && <i/>}</button>
+    {open && <DateInput value={value} onChange={next => { onChange(next); setOpen(false) }} onClose={() => setOpen(false)} closeOnScroll={false} anchorRef={triggerRef} triggerOnly aria-label={`Дата фильтра: ${label}`} autoFocus/>}
+  </div>
+}
+
+function InvoiceHeaderFilter({ label, value, options = [], onChange, multiple = false }) {
+  const [open, setOpen] = useState(false)
+  const [search, setSearch] = useState('')
+  const rootRef = useRef(null)
+  const inputRef = useRef(null)
+  const normalizedOptions = useMemo(() => [...new Set(options.map(option => String(option || '').trim()).filter(Boolean))], [options])
+  const visible = useMemo(() => {
+    const term = search.trim().toLocaleLowerCase('ru-RU')
+    return term ? normalizedOptions.filter(option => option.toLocaleLowerCase('ru-RU').includes(term)) : normalizedOptions
+  }, [search, normalizedOptions])
+  const selectedValues = multiple ? (Array.isArray(value) ? value : value ? [value] : []) : value ? [value] : []
+  useEffect(() => {
+    if (!open) return undefined
+    const closeOutside = event => { if (!rootRef.current?.contains(event.target)) setOpen(false) }
+    const closeEscape = event => { if (event.key === 'Escape') setOpen(false) }
+    document.addEventListener('mousedown', closeOutside)
+    document.addEventListener('keydown', closeEscape)
+    requestAnimationFrame(() => inputRef.current?.focus())
+    return () => { document.removeEventListener('mousedown', closeOutside); document.removeEventListener('keydown', closeEscape) }
+  }, [open])
+  const select = next => {
+    if (!multiple) { onChange(next); setSearch(''); setOpen(false); return }
+    if (!next) { onChange([]); return }
+    onChange(selectedValues.includes(next) ? selectedValues.filter(item => item !== next) : [...selectedValues, next])
+  }
+  return <div ref={rootRef} className={`header-filter ${open ? 'is-open' : ''} ${selectedValues.length ? 'has-value' : ''}`}>
+    <button type="button" className="header-filter-trigger" aria-label={`Фильтр: ${label}${multiple && selectedValues.length ? `, выбрано ${selectedValues.length}` : ''}`} aria-expanded={open} onClick={() => { setSearch(''); setOpen(current => !current) }}><ChevronDown size={13}/>{selectedValues.length > 0 && <i/>}</button>
+    {open && <div className="header-filter-menu">
+      <div className="header-filter-search"><Search size={15}/><input ref={inputRef} value={search} onChange={event => setSearch(event.target.value)} placeholder="Поиск по наименованию" aria-label={`Поиск: ${label}`}/>{search && <button type="button" onClick={() => setSearch('')} aria-label="Очистить поиск"><X size={13}/></button>}</div>
+      <div className="header-filter-options" role="listbox" aria-multiselectable={multiple || undefined} aria-label={`Значения: ${label}`}>
+        <button type="button" className={!selectedValues.length ? 'selected' : ''} onClick={() => select('')} role="option" aria-selected={!selectedValues.length}><span>Все значения</span>{!selectedValues.length && <Check size={14}/>}</button>
+        {visible.map(option => { const selected = selectedValues.includes(option); return <button type="button" key={option} className={selected ? 'selected' : ''} onClick={() => select(option)} title={option} role="option" aria-selected={selected}><span>{option}</span>{selected && <Check size={14}/>}</button> })}
+        {!visible.length && <p>Ничего не найдено</p>}
+      </div>
+    </div>}
   </div>
 }
 
@@ -106,4 +180,3 @@ function statusTone(item) {
 function isOverdue(item) { return Boolean(item.planned_payment_date && item.planned_payment_date < todayISO() && !item.actual_payment_date && item.status !== 'Оплачено' && item.status !== 'Отменено') }
 function invoiceRowTone(item) { return isOverdue(item) ? 'is-overdue' : '' }
 function todayISO() { const date = new Date(); const offset = date.getTimezoneOffset() * 60000; return new Date(date.getTime() - offset).toISOString().slice(0, 10) }
-

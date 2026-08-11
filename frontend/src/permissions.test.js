@@ -26,6 +26,9 @@ test('navigation, registry actions and access editor are permission driven', () 
   assert.match(registry, /user\.is_developer/)
   assert.match(users, /Индивидуальные права/)
   assert.match(users, /form\.is_developer/)
+  assert.match(users, /RoleCard role="accountant"/)
+  assert.match(users, /option value="accountant"/)
+  assert.match(app, /accountant: 'Бухгалтер'/)
 })
 
 test('maintenance banner is non-blocking and controlled from registry', () => {

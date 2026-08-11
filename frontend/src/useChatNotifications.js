@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { request } from './api'
-import { CHAT_READ_EVENT, normalizeUnreadSnapshot, takeConversationUnread } from './chatUnread'
+import { CHAT_READ_EVENT, conversationMarker, normalizeUnreadSnapshot, takeConversationUnread, unreadIncreases } from './chatUnread'
 
 function currentPermission() {
   return typeof Notification === 'undefined' ? 'unsupported' : Notification.permission
@@ -12,12 +12,11 @@ export default function useChatNotifications({ user, page, onOpenChat, notify })
   const [notices, setNotices] = useState([])
   const previousRef = useRef(new Map())
   const initializedRef = useRef(false)
-  const pageRef = useRef(page)
   const openChatRef = useRef(onOpenChat)
   const noticeTimersRef = useRef(new Map())
-  const suppressedReadRef = useRef(new Set())
+  const suppressedReadRef = useRef(new Map())
+  const conversationMarkersRef = useRef(new Map())
 
-  useEffect(() => { pageRef.current = page }, [page])
   useEffect(() => { openChatRef.current = onOpenChat }, [onOpenChat])
   useEffect(() => () => {
     noticeTimersRef.current.forEach(window.clearTimeout)
@@ -27,7 +26,8 @@ export default function useChatNotifications({ user, page, onOpenChat, notify })
     const conversationRead = event => {
       const conversationID = event.detail?.conversationID
       if (conversationID == null) return
-      suppressedReadRef.current.add(String(conversationID))
+      const key = String(conversationID)
+      suppressedReadRef.current.set(key, conversationMarkersRef.current.get(key) || '')
       const previousUnread = takeConversationUnread(previousRef.current, conversationID)
       setUnread(current => Math.max(0, current - previousUnread))
       setNotices(current => current.filter(item => String(item.conversationID) !== String(conversationID)))
@@ -47,36 +47,46 @@ export default function useChatNotifications({ user, page, onOpenChat, notify })
   useEffect(() => {
     if (!user) {
       setUnread(0); setNotices([]); previousRef.current = new Map(); initializedRef.current = false
-      suppressedReadRef.current = new Set()
+      suppressedReadRef.current = new Map()
+      conversationMarkersRef.current = new Map()
       noticeTimersRef.current.forEach(window.clearTimeout)
       noticeTimersRef.current.clear()
       return undefined
     }
     let active = true
+    let refreshing = false
     const refresh = async () => {
+      if (refreshing) return
+      refreshing = true
       try {
         const conversations = await request('/api/chat/conversations')
         if (!active) return
         const snapshot = normalizeUnreadSnapshot(conversations, suppressedReadRef.current)
         const next = snapshot.unreadByConversation
+        conversationMarkersRef.current = new Map(conversations.map(item => [String(item.id), conversationMarker(item)]))
         setUnread(snapshot.total)
-        if (initializedRef.current && pageRef.current !== 'chat') {
-          for (const item of conversations) {
-            const before = previousRef.current.get(item.id) || 0
-            const after = next.get(item.id) || 0
-            if (after > before) {
-              showSiteNotification(item, after - before, setNotices, noticeTimersRef)
-              if (permission === 'granted') showBrowserNotification(item, openChatRef)
-            }
+        if (initializedRef.current) {
+          for (const { conversation, added } of unreadIncreases(conversations, previousRef.current, next)) {
+            showSiteNotification(conversation, added, setNotices, noticeTimersRef)
+            if (permission === 'granted') showBrowserNotification(conversation, openChatRef)
           }
         }
         previousRef.current = next
         initializedRef.current = true
       } catch { /* общий интерфейс не должен ломаться из-за проверки уведомлений */ }
+      finally { refreshing = false }
     }
+    const refreshWhenVisible = () => { if (document.visibilityState === 'visible') refresh() }
     refresh()
-    const timer = window.setInterval(refresh, 7000)
-    return () => { active = false; window.clearInterval(timer) }
+    const timer = window.setInterval(refresh, 5000)
+    window.addEventListener('focus', refresh)
+    document.addEventListener('visibilitychange', refreshWhenVisible)
+    return () => {
+      active = false
+      window.clearInterval(timer)
+      window.removeEventListener('focus', refresh)
+      document.removeEventListener('visibilitychange', refreshWhenVisible)
+    }
   }, [user?.id, permission])
 
   const dismissNotice = useCallback(conversationID => {

@@ -26,7 +26,7 @@ test('manual create and edit use duplicate confirmation with an explicit overrid
   assert.match(registry, /allow_duplicate:\s*true/)
   assert.match(registry, /Возможный дубликат счёта/)
   assert.match(registry, /Вернуться и исправить/)
-  assert.match(registry, /Сохранить всё равно/)
+  assert.match(registry, /Продолжить всё равно/)
 })
 
 test('Excel import and AI commit also require duplicate confirmation', () => {

@@ -1,8 +1,15 @@
 export function filterMyInvoices(items = [], filters = {}) {
   const query = normalize(filters.query)
+  const counterparties = arrayFilter(filters.counterparty)
   return items.filter(item => {
     if (filters.status && item.status !== filters.status) return false
     if (filters.legalEntity && item.legal_entity !== filters.legalEntity) return false
+    if (counterparties.length && !counterparties.includes(item.counterparty)) return false
+    if (filters.costCategory && item.cost_category !== filters.costCategory) return false
+    if (filters.responsible && item.responsible !== filters.responsible) return false
+    if (filters.plannedDate && item.planned_payment_date !== filters.plannedDate) return false
+    if (filters.approvalDate && item.approval_date !== filters.approvalDate) return false
+    if (filters.actualPaymentDate && item.actual_payment_date !== filters.actualPaymentDate) return false
     if (filters.dateFrom && (!item.planned_payment_date || item.planned_payment_date < filters.dateFrom)) return false
     if (filters.dateTo && (!item.planned_payment_date || item.planned_payment_date > filters.dateTo)) return false
     if (!query) return true
@@ -49,5 +56,5 @@ export function uniqueInvoiceValues(items = [], field) {
 }
 
 function normalize(value) { return String(value || '').trim().toLocaleLowerCase('ru-RU') }
+function arrayFilter(value) { return Array.isArray(value) ? value.filter(Boolean) : value ? [value] : [] }
 function todayISO() { const date = new Date(); const offset = date.getTimezoneOffset() * 60000; return new Date(date.getTime() - offset).toISOString().slice(0, 10) }
-
