@@ -26,6 +26,7 @@ type permissionGroup struct {
 
 var permissionCatalog = []permissionGroup{
 	{Key: "dashboard", Label: "Общая сводка", Permissions: []permissionItem{{Key: "dashboard.view", Label: "Просмотр"}}},
+	{Key: "my_invoices", Label: "Мои счета", Permissions: []permissionItem{{Key: "my_invoices.view", Label: "Просмотр собственных счетов"}}},
 	{Key: "executive", Label: "Панель руководителя", Permissions: []permissionItem{{Key: "executive.view", Label: "Просмотр"}, {Key: "executive.approve", Label: "Изменение статуса и даты утверждения"}, {Key: "executive.settings", Label: "Настройка специальных разделов"}}},
 	{Key: "registry", Label: "Реестр", Permissions: []permissionItem{{Key: "registry.view", Label: "Просмотр"}, {Key: "registry.create", Label: "Добавление строк"}, {Key: "registry.edit", Label: "Редактирование"}, {Key: "registry.delete", Label: "Удаление строк"}, {Key: "registry.split", Label: "Разбиение платежа"}, {Key: "registry.ai_scan", Label: "AI сканирование"}, {Key: "registry.import", Label: "Импорт Excel"}, {Key: "registry.export", Label: "Выгрузка Excel"}, {Key: "registry.undo", Label: "Отмена действий"}}},
 	{Key: "credits", Label: "Кредиты и лизинги", Permissions: []permissionItem{{Key: "credits.view", Label: "Просмотр"}, {Key: "credits.approve", Label: "Изменение статуса и даты утверждения"}}},
@@ -48,7 +49,7 @@ func allPermissionKeys() map[string]bool {
 
 func defaultPermissions(role string) permissionSet {
 	value := permissionSet{
-		"dashboard.view": true, "registry.view": true, "registry.export": true,
+		"dashboard.view": true, "my_invoices.view": true, "registry.view": true, "registry.export": true,
 		"credits.view": true, "payments.view": true, "payments.print": true,
 		"chat.view": true, "chat.send": true, "chat.create": true,
 	}
@@ -108,6 +109,11 @@ func permissionsFromState(raw []byte, role string) permissionSet {
 	}
 	if len(raw) > 0 {
 		_ = json.Unmarshal(raw, &state)
+	}
+	if state.Permissions != nil {
+		if _, exists := state.Permissions["my_invoices.view"]; !exists {
+			state.Permissions["my_invoices.view"] = true
+		}
 	}
 	return normalizePermissions(state.Permissions, role)
 }

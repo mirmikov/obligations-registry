@@ -20,6 +20,7 @@ test('ordinary users receive only explicitly enabled permissions', () => {
 
 test('navigation, registry actions and access editor are permission driven', () => {
   assert.match(app, /permission: 'executive\.view'/)
+  assert.match(app, /permission: 'my_invoices\.view'/)
   assert.match(app, /can\(user, 'registry\.undo'\)/)
   assert.match(registry, /can\(user, 'registry\.delete'\)/)
   assert.match(registry, /user\.is_developer/)

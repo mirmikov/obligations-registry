@@ -119,6 +119,13 @@ func TestNormalizeWorkspaceStateAcceptsCreditsLeasingReport(t *testing.T) {
 	}
 }
 
+func TestNormalizeWorkspaceStateAcceptsMyInvoices(t *testing.T) {
+	value := normalizeWorkspaceState(workspaceState{Page: "my-invoices"})
+	if value.Page != "my-invoices" {
+		t.Fatalf("workspace state = %#v", value)
+	}
+}
+
 func TestNormalizeWorkspaceStateAcceptsChat(t *testing.T) {
 	value := normalizeWorkspaceState(workspaceState{Page: "chat"})
 	if value.Page != "chat" {
