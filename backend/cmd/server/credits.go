@@ -1,7 +1,10 @@
 package main
 
 import (
+	"fmt"
+	"log"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -177,5 +180,75 @@ func (a *app) creditsLeasingReport(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{
 		"category": creditsLeasingCategory, "as_of": asOf, "selected_entity": selectedEntity,
 		"entities": entities, "totals": totals, "creditors": creditors, "months": months, "payments": payments,
+	})
+}
+
+func (a *app) creditsLeasingDetails(w http.ResponseWriter, r *http.Request) {
+	paymentDate := strings.TrimSpace(r.URL.Query().Get("date"))
+	if _, err := time.Parse("2006-01-02", paymentDate); err != nil {
+		fail(w, http.StatusBadRequest, "Некорректная дата платежа")
+		return
+	}
+	legalEntity := strings.TrimSpace(r.URL.Query().Get("legal_entity"))
+	if legalEntity == "" {
+		fail(w, http.StatusBadRequest, "Не указано юридическое лицо")
+		return
+	}
+	counterparties := []string{}
+	seenCounterparties := map[string]bool{}
+	for _, raw := range r.URL.Query()["counterparty"] {
+		counterparty := strings.TrimSpace(raw)
+		if counterparty != "" && !seenCounterparties[counterparty] {
+			counterparties = append(counterparties, counterparty)
+			seenCounterparties[counterparty] = true
+		}
+	}
+	args := []any{creditsLeasingCategory, legalEntity, paymentDate}
+	where := "cost_category=$1 AND COALESCE(legal_entity,'Не указано')=$2 AND planned_payment_date=$3::date"
+	if len(counterparties) > 0 {
+		args = append(args, counterparties)
+		where += fmt.Sprintf(" AND COALESCE(counterparty,'Не указан')=ANY($%d::text[])", len(args))
+	}
+
+	rows, err := a.db.QueryContext(r.Context(), fmt.Sprintf(`
+		SELECT %s FROM obligations
+		WHERE %s
+		ORDER BY counterparty,document_date,document_number,id`, obligationColumns, where), args...)
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Не удалось загрузить платежи выбранного дня")
+		return
+	}
+	defer rows.Close()
+
+	items := []obligation{}
+	var totalAmount, paidAmount, outstandingAmount float64
+	for rows.Next() {
+		item, scanErr := scanObligation(rows)
+		if scanErr != nil {
+			log.Printf("scan credits leasing detail: %v", scanErr)
+			fail(w, http.StatusInternalServerError, "Ошибка данных платежей выбранного дня")
+			return
+		}
+		amount := 0.0
+		if item.Amount != nil {
+			amount = *item.Amount
+		}
+		totalAmount += amount
+		if item.Status == "Оплачено" || item.ActualPaymentDate != "" {
+			paidAmount += amount
+		} else if item.Status != "Отменено" {
+			outstandingAmount += amount
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		fail(w, http.StatusInternalServerError, "Ошибка данных платежей выбранного дня")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"date": paymentDate, "legal_entity": legalEntity, "counterparties": counterparties,
+		"count": len(items), "amount": totalAmount, "paid_amount": paidAmount,
+		"outstanding_amount": outstandingAmount, "items": items,
 	})
 }
