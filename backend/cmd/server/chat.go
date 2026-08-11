@@ -32,6 +32,10 @@ type chatConversation struct {
 	Kind        string     `json:"kind"`
 	Name        string     `json:"name"`
 	Title       string     `json:"title"`
+	Category    string     `json:"category,omitempty"`
+	Subject     string     `json:"subject,omitempty"`
+	CreatedBy   int64      `json:"created_by"`
+	DirectKey   string     `json:"-"`
 	Members     []chatUser `json:"members"`
 	LastMessage string     `json:"last_message"`
 	LastSender  string     `json:"last_sender"`
@@ -69,7 +73,10 @@ const (
 )
 
 func (a *app) listChatUsers(w http.ResponseWriter, r *http.Request) {
-	rows, err := a.db.QueryContext(r.Context(), `SELECT id,name,email,role FROM users WHERE active ORDER BY name,email`)
+	rows, err := a.db.QueryContext(r.Context(), `
+		SELECT u.id,u.name,u.email,u.role,COALESCE(s.state,'{}'::jsonb)
+		FROM users u LEFT JOIN user_workspace_state s ON s.user_id=u.id
+		WHERE u.active ORDER BY u.name,u.email`)
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "Не удалось загрузить пользователей чата")
 		return
@@ -82,9 +89,15 @@ func (a *app) listChatUsers(w http.ResponseWriter, r *http.Request) {
 	items := []chatUser{}
 	for rows.Next() {
 		var item chatUser
-		if err := rows.Scan(&item.ID, &item.Name, &item.Email, &item.Role); err != nil {
+		var raw []byte
+		if err := rows.Scan(&item.ID, &item.Name, &item.Email, &item.Role, &raw); err != nil {
 			fail(w, http.StatusInternalServerError, "Ошибка списка пользователей")
 			return
+		}
+		if isDeveloperEmail(item.Email) {
+			item.Role = "developer"
+		} else {
+			item.Role = profileRoleFromState(raw, item.Role)
 		}
 		item.Online = online[item.ID]
 		items = append(items, item)
@@ -95,7 +108,7 @@ func (a *app) listChatUsers(w http.ResponseWriter, r *http.Request) {
 func (a *app) listChatConversations(w http.ResponseWriter, r *http.Request) {
 	user := currentUser(r)
 	rows, err := a.db.QueryContext(r.Context(), `
-		SELECT c.id,c.kind,COALESCE(c.name,''),
+		SELECT c.id,c.kind,COALESCE(c.name,''),c.created_by,COALESCE(c.direct_key,''),
 			CASE WHEN c.kind='direct' THEN COALESCE((SELECT u.name FROM chat_members other JOIN users u ON u.id=other.user_id WHERE other.conversation_id=c.id AND other.user_id<>$1 LIMIT 1),'Личный чат') ELSE COALESCE(c.name,'Группа') END,
 			COALESCE(last_message.body,''),COALESCE(last_message.sender_name,''),COALESCE(to_char(last_message.created_at,'YYYY-MM-DD HH24:MI:SS'),''),
 			(SELECT count(*) FROM chat_messages unread WHERE unread.conversation_id=c.id AND unread.sender_id<>$1 AND unread.created_at>mine.last_read_at)
@@ -106,7 +119,8 @@ func (a *app) listChatConversations(w http.ResponseWriter, r *http.Request) {
 			WHERE m.conversation_id=c.id ORDER BY m.id DESC LIMIT 1
 		) last_message ON true
 		WHERE mine.user_id=$1
-		ORDER BY COALESCE(last_message.created_at,c.updated_at) DESC,c.id DESC`, user.ID)
+			AND (COALESCE(c.direct_key,'') NOT LIKE $2 OR c.created_by=$1 OR $3)
+		ORDER BY COALESCE(last_message.created_at,c.updated_at) DESC,c.id DESC`, user.ID, accountingConversationKeyPrefix+"%", user.Permissions["invoice_mail.inbox"])
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "Не удалось загрузить диалоги")
 		return
@@ -115,7 +129,7 @@ func (a *app) listChatConversations(w http.ResponseWriter, r *http.Request) {
 	items := []chatConversation{}
 	for rows.Next() {
 		var item chatConversation
-		if err := rows.Scan(&item.ID, &item.Kind, &item.Name, &item.Title, &item.LastMessage, &item.LastSender, &item.LastAt, &item.Unread); err != nil {
+		if err := rows.Scan(&item.ID, &item.Kind, &item.Name, &item.CreatedBy, &item.DirectKey, &item.Title, &item.LastMessage, &item.LastSender, &item.LastAt, &item.Unread); err != nil {
 			fail(w, http.StatusInternalServerError, "Ошибка списка диалогов")
 			return
 		}
@@ -123,6 +137,11 @@ func (a *app) listChatConversations(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			fail(w, http.StatusInternalServerError, "Не удалось загрузить участников")
 			return
+		}
+		if isAccountingConversationKey(item.DirectKey) {
+			item.Category = accountingConversationCategory
+			item.Subject = item.Name
+			item.Title = item.Name
 		}
 		if body, attachment := decodeChatAttachmentBody(item.LastMessage); attachment != nil {
 			item.LastMessage = strings.TrimSpace("Файл: " + attachment.OriginalName + " " + body)
@@ -133,7 +152,12 @@ func (a *app) listChatConversations(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *app) chatMembers(r *http.Request, conversationID int64) ([]chatUser, error) {
-	rows, err := a.db.QueryContext(r.Context(), `SELECT u.id,u.name,u.email,u.role FROM chat_members cm JOIN users u ON u.id=cm.user_id WHERE cm.conversation_id=$1 ORDER BY u.name,u.id`, conversationID)
+	rows, err := a.db.QueryContext(r.Context(), `
+		SELECT u.id,u.name,u.email,u.role,COALESCE(s.state,'{}'::jsonb)
+		FROM chat_members cm
+		JOIN users u ON u.id=cm.user_id
+		LEFT JOIN user_workspace_state s ON s.user_id=u.id
+		WHERE cm.conversation_id=$1 ORDER BY u.name,u.id`, conversationID)
 	if err != nil {
 		return nil, err
 	}
@@ -141,8 +165,14 @@ func (a *app) chatMembers(r *http.Request, conversationID int64) ([]chatUser, er
 	items := []chatUser{}
 	for rows.Next() {
 		var item chatUser
-		if err := rows.Scan(&item.ID, &item.Name, &item.Email, &item.Role); err != nil {
+		var raw []byte
+		if err := rows.Scan(&item.ID, &item.Name, &item.Email, &item.Role, &raw); err != nil {
 			return nil, err
+		}
+		if isDeveloperEmail(item.Email) {
+			item.Role = "developer"
+		} else {
+			item.Role = profileRoleFromState(raw, item.Role)
 		}
 		items = append(items, item)
 	}
@@ -281,7 +311,7 @@ func (a *app) sendChatMessage(w http.ResponseWriter, r *http.Request) {
 		if attachment != nil {
 			_ = os.Remove(filepath.Join(chatImageDirectory(), strconv.FormatInt(conversationID, 10), attachment.StoredName))
 		}
-		fail(w, http.StatusBadRequest, "Сообщение должно содержать не больше 4000 символов")
+		fail(w, http.StatusBadRequest, "Сообщение вместе с данными файла должно содержать не больше 4000 символов")
 		return
 	}
 	user := currentUser(r)
@@ -654,8 +684,16 @@ func (a *app) chatConversationAccess(w http.ResponseWriter, r *http.Request) (in
 		fail(w, http.StatusBadRequest, "Некорректный диалог")
 		return 0, false
 	}
+	user := currentUser(r)
 	var exists bool
-	err = a.db.QueryRowContext(r.Context(), `SELECT EXISTS(SELECT 1 FROM chat_members WHERE conversation_id=$1 AND user_id=$2)`, id, currentUser(r).ID).Scan(&exists)
+	err = a.db.QueryRowContext(r.Context(), `
+		SELECT EXISTS(
+			SELECT 1
+			FROM chat_members cm
+			JOIN chat_conversations c ON c.id=cm.conversation_id
+			WHERE cm.conversation_id=$1 AND cm.user_id=$2
+				AND (COALESCE(c.direct_key,'') NOT LIKE $3 OR c.created_by=$2 OR $4)
+		)`, id, user.ID, accountingConversationKeyPrefix+"%", user.Permissions["invoice_mail.inbox"]).Scan(&exists)
 	if err != nil || !exists {
 		fail(w, http.StatusForbidden, "Диалог недоступен")
 		return 0, false

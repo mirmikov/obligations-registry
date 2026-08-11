@@ -21,6 +21,7 @@ type undoPayload struct {
 	Obligations *undoChange `json:"obligations,omitempty"`
 	References  *undoChange `json:"references,omitempty"`
 	Users       *undoChange `json:"users,omitempty"`
+	UserAccess  *undoChange `json:"user_access,omitempty"`
 }
 
 func emptySnapshot() json.RawMessage { return json.RawMessage(`[]`) }
@@ -33,6 +34,21 @@ func snapshotRows(ctx context.Context, db dbExecer, table string, ids []int64) (
 		"obligations":      `SELECT COALESCE(jsonb_agg(to_jsonb(row_data) ORDER BY row_data.id),'[]'::jsonb) FROM (SELECT * FROM obligations WHERE id=ANY($1)) row_data`,
 		"reference_values": `SELECT COALESCE(jsonb_agg(to_jsonb(row_data) ORDER BY row_data.id),'[]'::jsonb) FROM (SELECT * FROM reference_values WHERE id=ANY($1)) row_data`,
 		"users":            `SELECT COALESCE(jsonb_agg(to_jsonb(row_data) ORDER BY row_data.id),'[]'::jsonb) FROM (SELECT * FROM users WHERE id=ANY($1)) row_data`,
+		"user_access": `SELECT COALESCE(jsonb_agg(to_jsonb(row_data) ORDER BY row_data.id),'[]'::jsonb)
+			FROM (
+				SELECT u.id,
+					s.user_id IS NOT NULL AS has_state,
+					COALESCE(s.state,'{}'::jsonb) AS workspace_state,
+					COALESCE((
+						SELECT jsonb_agg(cm.conversation_id ORDER BY cm.conversation_id)
+						FROM chat_members cm
+						JOIN chat_conversations c ON c.id=cm.conversation_id
+						WHERE cm.user_id=u.id AND c.direct_key LIKE 'accounting-invoice:%'
+					),'[]'::jsonb) AS accounting_conversation_ids
+				FROM users u
+				LEFT JOIN user_workspace_state s ON s.user_id=u.id
+				WHERE u.id=ANY($1)
+			) row_data`,
 	}
 	query := queries[table]
 	if query == "" {
@@ -161,7 +177,13 @@ func (a *app) undoLast(w http.ResponseWriter, r *http.Request) {
 		fail(w, 500, "История отмены повреждена")
 		return
 	}
-	for table, change := range map[string]*undoChange{"obligations": payload.Obligations, "reference_values": payload.References, "users": payload.Users} {
+	if payload.UserAccess != nil {
+		if err = lockAccountingMailboxRouting(r.Context(), tx); err != nil {
+			fail(w, 500, "Не удалось зафиксировать настройки бухгалтерии для отмены")
+			return
+		}
+	}
+	for table, change := range map[string]*undoChange{"obligations": payload.Obligations, "reference_values": payload.References, "users": payload.Users, "user_access": payload.UserAccess} {
 		if change == nil {
 			continue
 		}
@@ -195,6 +217,12 @@ func (a *app) undoLast(w http.ResponseWriter, r *http.Request) {
 	if payload.Users != nil {
 		if err = restoreUsers(r.Context(), tx, payload.Users); err != nil {
 			fail(w, 409, "Пользователя нельзя восстановить: у его записи появились связанные данные")
+			return
+		}
+	}
+	if payload.UserAccess != nil {
+		if err = restoreUserAccess(r.Context(), tx, payload.UserAccess); err != nil {
+			fail(w, 500, "Не удалось восстановить роль и права пользователя")
 			return
 		}
 	}
@@ -305,4 +333,92 @@ func restoreUsers(ctx context.Context, tx *sql.Tx, change *undoChange) error {
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO users(id,name,email,password_hash,role,active,created_at,updated_at) SELECT id,name,email,password_hash,role,active,created_at,updated_at FROM jsonb_to_recordset($1::jsonb) AS restored(id bigint,name text,email text,password_hash text,role text,active boolean,created_at timestamptz,updated_at timestamptz) ON CONFLICT(id) DO UPDATE SET name=excluded.name,email=excluded.email,password_hash=excluded.password_hash,role=excluded.role,active=excluded.active,created_at=excluded.created_at,updated_at=excluded.updated_at`, change.Before)
 	return err
+}
+
+type userAccessSnapshotRow struct {
+	ID                        int64           `json:"id"`
+	HasState                  bool            `json:"has_state"`
+	WorkspaceState            json.RawMessage `json:"workspace_state"`
+	AccountingConversationIDs []int64         `json:"accounting_conversation_ids"`
+}
+
+func restoreUserAccess(ctx context.Context, tx *sql.Tx, change *undoChange) error {
+	var before []userAccessSnapshotRow
+	if err := json.Unmarshal(change.Before, &before); err != nil {
+		return err
+	}
+	affectedIDs, err := combinedSnapshotIDs(change)
+	if err != nil {
+		return err
+	}
+	beforeByID := make(map[int64]userAccessSnapshotRow, len(before))
+	for _, row := range before {
+		beforeByID[row.ID] = row
+	}
+	for _, userID := range affectedIDs {
+		row, exists := beforeByID[userID]
+		if !exists || !row.HasState {
+			if _, err = tx.ExecContext(ctx, `DELETE FROM user_workspace_state WHERE user_id=$1`, userID); err != nil {
+				return err
+			}
+		} else {
+			state := row.WorkspaceState
+			if len(state) == 0 {
+				state = json.RawMessage(`{}`)
+			}
+			if _, err = tx.ExecContext(ctx, `
+				INSERT INTO user_workspace_state(user_id,state,updated_at) VALUES($1,$2,now())
+				ON CONFLICT(user_id) DO UPDATE SET state=excluded.state,updated_at=now()`, userID, state); err != nil {
+				return err
+			}
+		}
+
+		desired := map[int64]bool{}
+		if exists {
+			for _, conversationID := range row.AccountingConversationIDs {
+				desired[conversationID] = true
+			}
+		}
+		rows, queryErr := tx.QueryContext(ctx, `
+			SELECT cm.conversation_id
+			FROM chat_members cm
+			JOIN chat_conversations c ON c.id=cm.conversation_id
+			WHERE cm.user_id=$1 AND c.direct_key LIKE $2`, userID, accountingConversationKeyPrefix+"%")
+		if queryErr != nil {
+			return queryErr
+		}
+		current := map[int64]bool{}
+		for rows.Next() {
+			var conversationID int64
+			if err = rows.Scan(&conversationID); err != nil {
+				rows.Close()
+				return err
+			}
+			current[conversationID] = true
+		}
+		if err = rows.Err(); err != nil {
+			rows.Close()
+			return err
+		}
+		rows.Close()
+		for conversationID := range current {
+			if !desired[conversationID] {
+				if _, err = tx.ExecContext(ctx, `DELETE FROM chat_members WHERE conversation_id=$1 AND user_id=$2`, conversationID, userID); err != nil {
+					return err
+				}
+			}
+		}
+		for conversationID := range desired {
+			if !current[conversationID] {
+				if _, err = tx.ExecContext(ctx, `
+					INSERT INTO chat_members(conversation_id,user_id,last_read_at)
+					SELECT id,$2,'epoch'::timestamptz FROM chat_conversations
+					WHERE id=$1 AND direct_key LIKE $3
+					ON CONFLICT DO NOTHING`, conversationID, userID, accountingConversationKeyPrefix+"%"); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return nil
 }

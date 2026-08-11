@@ -1,20 +1,26 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { BellRing, Check, ChevronLeft, Download, FileText, MessageCircle, Paperclip, Plus, ScanLine, Search, Send, UserPlus, Users, X } from 'lucide-react'
+import { BellRing, Building2, Check, ChevronLeft, Download, FileText, Inbox, MailPlus, MessageCircle, Paperclip, Plus, ScanLine, Search, Send, SendHorizontal, UploadCloud, UserPlus, Users, X } from 'lucide-react'
 import { request, requestBlob } from './api'
 import { roleLabel } from './App'
 import { can } from './permissions'
 import AIScanModal from './AIScanModal'
 import { clearConversationUnread, dispatchChatRead } from './chatUnread'
+import { ACCOUNTING_DESCRIPTION_LIMIT, ACCOUNTING_FILE_ACCEPT, ACCOUNTING_SECTION, ACCOUNTING_SUBJECT_LIMIT, conversationsForSection, folderForAccountingConversation, validateAccountingMailDraft } from './accountingMail'
+import './accountingMail.css'
 
 const CHAT_FILE_ACCEPT = '.pdf,.png,.jpg,.jpeg,.gif,.webp,.docx,.xlsx,.csv,.txt,.zip'
 const CHAT_FILE_LIMIT = 25 * 1024 * 1024
 
-export default function Chat({ user, notify, compact = false, initialConversationID = null, notificationPermission, onEnableNotifications }) {
+export default function Chat({ user, notify, compact = false, initialConversationID = null, onInitialConversationApplied = () => {}, notificationPermission, onEnableNotifications }) {
   const canSend = can(user, 'chat.send')
   const canCreate = can(user, 'chat.create')
   const canAIScan = can(user, 'registry.ai_scan')
+  const canMailInbox = can(user, 'invoice_mail.inbox')
+  const canMailSend = can(user, 'invoice_mail.send')
   const [contacts, setContacts] = useState([])
   const [conversations, setConversations] = useState([])
+  const [section, setSection] = useState('chats')
+  const [accountingFolder, setAccountingFolder] = useState(canMailInbox ? 'inbox' : 'sent')
   const [selectedID, setSelectedID] = useState(null)
   const [messages, setMessages] = useState([])
   const [search, setSearch] = useState('')
@@ -26,6 +32,7 @@ export default function Chat({ user, notify, compact = false, initialConversatio
   const [aiSource, setAISource] = useState(null)
   const [references, setReferences] = useState({})
   const [creating, setCreating] = useState(false)
+  const [composingAccountingMail, setComposingAccountingMail] = useState(false)
   const [sending, setSending] = useState(false)
   const messagesViewportRef = useRef(null)
   const stickToBottomRef = useRef(true)
@@ -34,9 +41,19 @@ export default function Chat({ user, notify, compact = false, initialConversatio
   const fileInputRef = useRef(null)
   const lastImagePasteRef = useRef(0)
   const selectedConversationRef = useRef(null)
+  const appliedInitialConversationRef = useRef(null)
+
+  const sectionConversations = useMemo(
+    () => conversationsForSection(conversations, section, accountingFolder, user.id),
+    [conversations, section, accountingFolder, user.id],
+  )
 
   const loadContacts = () => request('/api/chat/users').then(setContacts).catch(error => notify(error.message, 'error'))
-  const loadConversations = () => request('/api/chat/conversations').then(items => setConversations(clearConversationUnread(items, selectedConversationRef.current))).catch(error => notify(error.message, 'error'))
+  const loadConversations = () => request('/api/chat/conversations').then(items => {
+    const next = clearConversationUnread(items, selectedConversationRef.current)
+    setConversations(next)
+    return next
+  }).catch(error => { notify(error.message, 'error'); return [] })
   const markConversationRead = useCallback(conversationID => {
     if (conversationID == null) return
     setConversations(current => clearConversationUnread(current, conversationID))
@@ -52,6 +69,21 @@ export default function Chat({ user, notify, compact = false, initialConversatio
     setSelectedID(null)
   }, [])
 
+  const switchSection = nextSection => {
+    if (nextSection === section) return
+    closeConversation()
+    setSearch('')
+    setSection(nextSection)
+    if (nextSection === ACCOUNTING_SECTION && !canMailInbox) setAccountingFolder('sent')
+  }
+
+  const switchAccountingFolder = nextFolder => {
+    if (nextFolder === accountingFolder) return
+    closeConversation()
+    setSearch('')
+    setAccountingFolder(nextFolder)
+  }
+
   useEffect(() => {
     loadContacts(); loadConversations()
     const timer = window.setInterval(() => { loadContacts(); loadConversations() }, 5000)
@@ -60,13 +92,31 @@ export default function Chat({ user, notify, compact = false, initialConversatio
 
   useEffect(() => { if (canAIScan) request('/api/references').then(setReferences).catch(error => notify(error.message, 'error')) }, [canAIScan])
 
-  useEffect(() => { if (initialConversationID) selectConversation(initialConversationID) }, [initialConversationID, selectConversation])
+  useEffect(() => {
+    if (!canMailInbox && accountingFolder === 'inbox') setAccountingFolder('sent')
+  }, [canMailInbox, accountingFolder])
 
   useEffect(() => {
-    if (!conversations.length) { closeConversation(); return }
-    if (selectedID && !conversations.some(item => item.id === selectedID)) closeConversation()
-    else if (!compact && !selectedID) selectConversation(conversations[0].id)
-  }, [conversations, selectedID, compact, closeConversation, selectConversation])
+    if (!initialConversationID) { appliedInitialConversationRef.current = null; return }
+    if (String(appliedInitialConversationRef.current) === String(initialConversationID)) return
+    const target = conversations.find(item => String(item.id) === String(initialConversationID))
+    if (!target) return
+    if (target.category === ACCOUNTING_SECTION) {
+      setSection(ACCOUNTING_SECTION)
+      setAccountingFolder(folderForAccountingConversation(target, user.id, canMailInbox))
+    } else setSection('chats')
+    appliedInitialConversationRef.current = initialConversationID
+    selectConversation(target.id)
+    onInitialConversationApplied()
+  }, [initialConversationID, conversations, user.id, canMailInbox, selectConversation])
+
+  useEffect(() => {
+    if (initialConversationID && String(appliedInitialConversationRef.current) === String(initialConversationID) && String(selectedConversationRef.current) === String(initialConversationID)) return
+    if (!sectionConversations.length) { closeConversation(); return }
+    const selectedVisible = selectedID && sectionConversations.some(item => String(item.id) === String(selectedID))
+    if (!selectedVisible && !compact) selectConversation(sectionConversations[0].id)
+    else if (!selectedVisible) closeConversation()
+  }, [sectionConversations, selectedID, compact, initialConversationID, closeConversation, selectConversation])
 
   useEffect(() => {
     if (!selectedID) { setMessages([]); return undefined }
@@ -104,12 +154,16 @@ export default function Chat({ user, notify, compact = false, initialConversatio
     return () => document.removeEventListener('keydown', close)
   }, [viewingImage])
 
-  const selected = conversations.find(item => item.id === selectedID)
+  const selected = sectionConversations.find(item => String(item.id) === String(selectedID))
   const filtered = useMemo(() => {
     const needle = search.trim().toLocaleLowerCase('ru-RU')
-    if (!needle) return conversations
-    return conversations.filter(item => `${item.title} ${item.last_message} ${item.members.map(member => member.name).join(' ')}`.toLocaleLowerCase('ru-RU').includes(needle))
-  }, [conversations, search])
+    if (!needle) return sectionConversations
+    return sectionConversations.filter(item => `${item.subject || item.title} ${item.last_message} ${item.members.map(member => member.name).join(' ')}`.toLocaleLowerCase('ru-RU').includes(needle))
+  }, [sectionConversations, search])
+  const accountingUnread = useMemo(
+    () => conversations.filter(item => item.category === ACCOUNTING_SECTION).reduce((total, item) => total + Number(item.unread || 0), 0),
+    [conversations],
+  )
 
   const send = async event => {
     event.preventDefault()
@@ -205,27 +259,38 @@ export default function Chat({ user, notify, compact = false, initialConversatio
 
   const conversationCreated = async id => {
     setCreating(false)
+    setSection('chats')
+    await loadConversations()
+    selectConversation(id)
+  }
+
+  const accountingMailSent = async id => {
+    setComposingAccountingMail(false)
+    setSection(ACCOUNTING_SECTION)
+    setAccountingFolder('sent')
     await loadConversations()
     selectConversation(id)
   }
 
   return <div className={`chat-page ${compact ? 'chat-page-compact' : ''} ${selected ? 'has-room' : ''}`}>
     <aside className="chat-list-panel">
-      <header><div><p>Команда</p><h1>Сообщения</h1></div><div className="chat-list-actions">{notificationPermission === 'default' && <button type="button" className="chat-enable-bell" onClick={onEnableNotifications} aria-label="Включить уведомления" title="Включить уведомления"><BellRing size={17}/></button>}{canCreate && <button type="button" onClick={() => setCreating(true)} aria-label="Начать новый чат" title="Начать новый чат"><Plus size={19}/></button>}</div></header>
-      <label className="chat-search"><Search size={16}/><input value={search} onChange={event => setSearch(event.target.value)} placeholder="Поиск диалогов"/></label>
+      <header><div><p>{section === ACCOUNTING_SECTION ? 'Документы' : 'Команда'}</p><h1>Сообщения</h1></div><div className="chat-list-actions">{notificationPermission === 'default' && <button type="button" className="chat-enable-bell" onClick={onEnableNotifications} aria-label="Включить уведомления" title="Включить уведомления"><BellRing size={17}/></button>}{section === 'chats' && canCreate && <button type="button" onClick={() => setCreating(true)} aria-label="Начать новый чат" title="Начать новый чат"><Plus size={19}/></button>}</div></header>
+      {(canMailInbox || canMailSend) && <div className="chat-section-tabs" role="tablist" aria-label="Раздел сообщений"><button type="button" role="tab" aria-selected={section === 'chats'} className={section === 'chats' ? 'active' : ''} onClick={() => switchSection('chats')}><MessageCircle size={15}/>Чаты</button><button type="button" role="tab" aria-selected={section === ACCOUNTING_SECTION} className={section === ACCOUNTING_SECTION ? 'active' : ''} onClick={() => switchSection(ACCOUNTING_SECTION)}><FileText size={15}/>Счета в бухгалтерию{accountingUnread > 0 && <b>{accountingUnread > 99 ? '99+' : accountingUnread}</b>}</button></div>}
+      {section === ACCOUNTING_SECTION && <div className="accounting-mail-toolbar"><div className="accounting-mail-folders" role="tablist" aria-label="Папка счетов">{canMailInbox && <button type="button" role="tab" aria-selected={accountingFolder === 'inbox'} className={accountingFolder === 'inbox' ? 'active' : ''} onClick={() => switchAccountingFolder('inbox')}><Inbox size={14}/>Входящие</button>}<button type="button" role="tab" aria-selected={accountingFolder === 'sent'} className={accountingFolder === 'sent' ? 'active' : ''} onClick={() => switchAccountingFolder('sent')}><SendHorizontal size={14}/>Отправленные</button></div>{canMailSend && <button type="button" className="accounting-mail-create" onClick={() => setComposingAccountingMail(true)}><MailPlus size={15}/><span>Отправить счёт</span></button>}</div>}
+      <label className="chat-search"><Search size={16}/><input value={search} onChange={event => setSearch(event.target.value)} placeholder={section === ACCOUNTING_SECTION ? 'Поиск по теме или отправителю' : 'Поиск диалогов'}/></label>
       <div className="chat-conversations">
         {filtered.map(item => <button type="button" key={item.id} className={item.id === selectedID ? 'active' : ''} onClick={() => selectConversation(item.id)}>
           <ConversationAvatar item={item} currentUser={user}/>
-          <span className="chat-conversation-copy"><strong>{item.title}</strong><small>{item.last_message ? `${item.last_sender}: ${item.last_message}` : item.kind === 'group' ? `${item.members.length} участников` : 'Начните общение'}</small></span>
+          <span className="chat-conversation-copy"><strong>{item.subject || item.title}</strong><small className={item.category === ACCOUNTING_SECTION ? 'accounting-route' : ''}>{item.category === ACCOUNTING_SECTION ? accountingConversationPreview(item, user) : item.last_message ? `${item.last_sender}: ${item.last_message}` : item.kind === 'group' ? `${item.members.length} участников` : 'Начните общение'}</small></span>
           <span className="chat-conversation-meta"><time>{chatListTime(item.last_at)}</time>{item.unread > 0 && <b>{item.unread > 99 ? '99+' : item.unread}</b>}</span>
         </button>)}
-        {!filtered.length && <div className="chat-list-empty"><MessageCircle size={25}/><strong>{search ? 'Ничего не найдено' : 'Диалогов пока нет'}</strong><span>{search ? 'Попробуйте другой запрос' : 'Напишите коллеге или создайте группу'}</span></div>}
+        {!filtered.length && (section === ACCOUNTING_SECTION ? <div className="chat-list-empty chat-accounting-empty"><FileText size={27}/><strong>{search ? 'Ничего не найдено' : accountingFolder === 'inbox' ? 'Новых счетов нет' : 'Счета ещё не отправлялись'}</strong><span>{search ? 'Попробуйте другой запрос' : accountingFolder === 'inbox' ? 'Счета сотрудников появятся здесь' : 'Отправленные документы сохраняются как письма'}</span>{!search && canMailSend && <button type="button" className="primary" onClick={() => setComposingAccountingMail(true)}><MailPlus size={15}/>Отправить счёт</button>}</div> : <div className="chat-list-empty"><MessageCircle size={25}/><strong>{search ? 'Ничего не найдено' : 'Диалогов пока нет'}</strong><span>{search ? 'Попробуйте другой запрос' : 'Напишите коллеге или создайте группу'}</span></div>)}
       </div>
     </aside>
 
     <main className="chat-room">
       {selected ? <>
-        <header className="chat-room-head">{compact && <button type="button" className="chat-room-back" onClick={closeConversation} aria-label="Назад к диалогам"><ChevronLeft size={19}/></button>}<ConversationAvatar item={selected} currentUser={user}/><div><strong>{selected.title}</strong><span>{conversationSubtitle(selected, user)}</span></div></header>
+        <header className="chat-room-head">{compact && <button type="button" className="chat-room-back" onClick={closeConversation} aria-label="Назад к диалогам"><ChevronLeft size={19}/></button>}<ConversationAvatar item={selected} currentUser={user}/><div><strong>{selected.subject || selected.title}</strong><span>{conversationSubtitle(selected, user)}</span>{selected.category === ACCOUNTING_SECTION && <em className="accounting-route-label">Получатель: Бухгалтерия</em>}</div></header>
         <div className="chat-messages" ref={messagesViewportRef} onScroll={event => {
           const viewport = event.currentTarget
           stickToBottomRef.current = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 80
@@ -246,9 +311,10 @@ export default function Chat({ user, notify, compact = false, initialConversatio
           {draftAttachment && <div className="chat-composer-preview">{draftAttachment.url ? <img src={draftAttachment.url} alt="Файл перед отправкой"/> : <span className="chat-file-icon"><FileText size={27}/></span>}<span><strong>{draftAttachment.file.name}</strong><small>{formatFileSize(draftAttachment.file.size)}</small></span><button type="button" onClick={() => setDraftAttachment(current => { if (current?.url) URL.revokeObjectURL(current.url); return null })} aria-label="Удалить файл" title="Удалить файл"><X size={16}/></button></div>}
           <div className="chat-composer-main"><input ref={fileInputRef} type="file" accept={CHAT_FILE_ACCEPT} hidden onChange={event => { selectAttachment(event.target.files?.[0]); event.target.value = '' }}/><button type="button" className="chat-attach-button" onClick={() => fileInputRef.current?.click()} aria-label="Прикрепить файл" title="Прикрепить файл"><Paperclip size={19}/></button><textarea value={draft} onChange={event => setDraft(event.target.value)} onPaste={pasteImage} onKeyDown={composerKeyDown} maxLength={3900} rows={1} placeholder="Сообщение или перетащите файл…"/><button type="submit" disabled={(!draft.trim() && !draftAttachment) || sending} aria-label="Отправить сообщение"><Send size={19}/></button></div>
         </form> : <div className="chat-readonly-note">Доступен только просмотр сообщений</div>}
-      </> : <div className="chat-no-room"><div><MessageCircle size={34}/></div><h2>Корпоративный чат</h2><p>Общайтесь с коллегами лично или создавайте группы для совместной работы.</p>{canCreate && <button type="button" className="primary" onClick={() => setCreating(true)}><UserPlus size={17}/>Начать общение</button>}</div>}
+      </> : section === ACCOUNTING_SECTION ? <div className="chat-no-room"><div><FileText size={34}/></div><h2>Счета в бухгалтерию</h2><p>Отправляйте счета как письма: укажите тему, добавьте описание и приложите документ.</p>{canMailSend && <button type="button" className="primary" onClick={() => setComposingAccountingMail(true)}><MailPlus size={17}/>Отправить счёт</button>}</div> : <div className="chat-no-room"><div><MessageCircle size={34}/></div><h2>Корпоративный чат</h2><p>Общайтесь с коллегами лично или создавайте группы для совместной работы.</p>{canCreate && <button type="button" className="primary" onClick={() => setCreating(true)}><UserPlus size={17}/>Начать общение</button>}</div>}
     </main>
     {creating && canCreate && <NewChatModal currentUser={user} contacts={contacts} onClose={() => setCreating(false)} onCreated={conversationCreated} notify={notify}/>}
+    {composingAccountingMail && canMailSend && <AccountingMailModal onClose={() => setComposingAccountingMail(false)} onSent={accountingMailSent} notify={notify}/>}
     {viewingImage && <div className="chat-image-viewer" role="dialog" aria-modal="true" aria-label="Просмотр изображения" onClick={() => setViewingImage(null)}><button type="button" onClick={() => setViewingImage(null)} aria-label="Закрыть изображение" title="Закрыть"><X size={25}/></button><ChatImage path={viewingImage.path} alt={viewingImage.alt} fullscreen onClick={event => event.stopPropagation()}/></div>}
     {aiScan && <AIScanModal state={aiScan} references={references} onChange={setAIScan} onRetry={() => aiSource?.file && runChatAIScan(aiSource.file)} onClose={() => !aiScan.loading && !aiScan.saving && setAIScan(null)} onSave={saveChatAIScan}/>}
   </div>
@@ -284,6 +350,62 @@ function ChatImage({ path, alt, onOpen, fullscreen = false, onClick }) {
   if (!source) return <span className={`chat-image-loading ${fullscreen ? 'fullscreen' : ''}`}>Загружаем изображение…</span>
   if (fullscreen) return <img className="chat-image-full" src={source} alt={alt} onClick={onClick}/>
   return <button type="button" className="chat-message-image" onClick={onOpen} aria-label="Открыть изображение на весь экран"><img src={source} alt={alt}/></button>
+}
+
+function AccountingMailModal({ onClose, onSent, notify }) {
+  const [subject, setSubject] = useState('')
+  const [description, setDescription] = useState('')
+  const [file, setFile] = useState(null)
+  const [dragging, setDragging] = useState(false)
+  const [sending, setSending] = useState(false)
+  const inputRef = useRef(null)
+  useEffect(() => {
+    const closeOnEscape = event => { if (event.key === 'Escape' && !sending) onClose() }
+    document.addEventListener('keydown', closeOnEscape)
+    return () => document.removeEventListener('keydown', closeOnEscape)
+  }, [sending, onClose])
+
+  const selectFile = nextFile => {
+    if (!nextFile) return
+    const error = validateAccountingMailDraft({ subject: 'Счёт', description: '', file: nextFile })
+    if (error) { notify(error, 'error'); return }
+    setFile(nextFile)
+  }
+
+  const submit = async event => {
+    event.preventDefault()
+    if (sending) return
+    const error = validateAccountingMailDraft({ subject, description, file })
+    if (error) { notify(error, 'error'); return }
+    setSending(true)
+    const payload = new FormData()
+    payload.append('body', description.trim())
+    payload.append('file', file, file.name || 'invoice')
+    try {
+      const result = await request(`/api/chat/accounting?subject=${encodeURIComponent(subject.trim())}`, { method: 'POST', body: payload })
+      notify('Счёт отправлен в бухгалтерию')
+      await onSent(result.id)
+    } catch (requestError) {
+      notify(requestError.message, 'error')
+      setSending(false)
+    }
+  }
+
+  return <div className="modal-backdrop accounting-mail-backdrop"><form className="modal accounting-mail-compose" onSubmit={submit} role="dialog" aria-modal="true" aria-labelledby="accounting-mail-title">
+    <div className="modal-head"><div><p className="eyebrow">Новое письмо</p><h2 id="accounting-mail-title">Отправить счёт</h2><span>Документ получат все активные сотрудники бухгалтерии.</span></div><button type="button" onClick={onClose} disabled={sending} aria-label="Закрыть"><X/></button></div>
+    <div className="accounting-mail-body">
+      <div className="accounting-mail-recipient"><span>Кому</span><div><strong>Бухгалтерия</strong><small>Получатели определяются автоматически по роли и правам</small></div><i><Building2 size={19}/></i></div>
+      <label className="field"><span>Тема письма *</span><input autoFocus required value={subject} maxLength={ACCOUNTING_SUBJECT_LIMIT} onChange={event => setSubject(event.target.value)} placeholder="Например, счёт за медицинское оборудование"/></label>
+      <span className="accounting-mail-counter">{[...subject].length} / {ACCOUNTING_SUBJECT_LIMIT}</span>
+      <label className="field"><span>Описание</span><textarea value={description} maxLength={ACCOUNTING_DESCRIPTION_LIMIT} onChange={event => setDescription(event.target.value)} placeholder="Комментарий для бухгалтерии, срок или назначение платежа"/></label>
+      <span className="accounting-mail-counter">{[...description].length} / {ACCOUNTING_DESCRIPTION_LIMIT}</span>
+      <div className={`accounting-mail-drop ${dragging ? 'is-dragging' : ''}`} onDragEnter={event => { event.preventDefault(); setDragging(true) }} onDragOver={event => event.preventDefault()} onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget)) setDragging(false) }} onDrop={event => { event.preventDefault(); setDragging(false); selectFile(event.dataTransfer.files?.[0]) }}>
+        <input ref={inputRef} type="file" accept={ACCOUNTING_FILE_ACCEPT} onChange={event => { selectFile(event.target.files?.[0]); event.target.value = '' }}/>
+        {file ? <div className="accounting-mail-file"><i><FileText size={25}/></i><span><strong>{file.name}</strong><small>{formatFileSize(file.size)}</small></span><button type="button" onClick={() => setFile(null)} aria-label="Удалить приложенный счёт" title="Удалить файл"><X size={16}/></button></div> : <><UploadCloud size={29}/><strong>Перетащите файл счёта сюда</strong><span>Обязательное вложение до 25 МБ</span><button type="button" className="secondary" onClick={() => inputRef.current?.click()}><Paperclip size={15}/>Выбрать файл</button></>}
+      </div>
+    </div>
+    <div className="modal-footer accounting-mail-actions"><span>Получатель: Бухгалтерия</span><button type="button" className="secondary" onClick={onClose} disabled={sending}>Отмена</button><button type="submit" className="primary" disabled={sending || !subject.trim() || !file}><SendHorizontal size={16}/>{sending ? 'Отправляем…' : 'Отправить счёт'}</button></div>
+  </form></div>
 }
 
 function NewChatModal({ currentUser, contacts, onClose, onCreated, notify }) {
@@ -324,11 +446,14 @@ function NewChatModal({ currentUser, contacts, onClose, onCreated, notify }) {
 }
 
 function ConversationAvatar({ item, currentUser }) {
+  if (item.category === ACCOUNTING_SECTION) return <span className="conversation-avatar accounting"><FileText size={18}/></span>
   if (item.kind === 'group') return <span className="conversation-avatar group"><Users size={18}/></span>
   const other = item.members.find(member => member.id !== currentUser.id)
   return <span className="conversation-avatar">{initials(other?.name || item.title)}</span>
 }
-function conversationSubtitle(item, user) { if (item.kind === 'group') return `${item.members.length} участников · ${item.members.map(member => member.id === user.id ? 'Вы' : member.name).join(', ')}`; const other = item.members.find(member => member.id !== user.id); return other ? `${other.email} · ${roleLabel(other.role)}` : 'Личный диалог' }
+function accountingSender(item) { return item.members.find(member => String(member.id) === String(item.created_by)) }
+function accountingConversationPreview(item, user) { const route = String(item.created_by) === String(user.id) ? 'Вы → Бухгалтерия' : `${accountingSender(item)?.name || item.last_sender || 'Сотрудник'} → Бухгалтерия`; return `${route}${item.last_message ? ` · ${item.last_message}` : ''}` }
+function conversationSubtitle(item, user) { if (item.category === ACCOUNTING_SECTION) return String(item.created_by) === String(user.id) ? 'Отправлено вами' : `Отправитель: ${accountingSender(item)?.name || item.last_sender || 'Сотрудник'}`; if (item.kind === 'group') return `${item.members.length} участников · ${item.members.map(member => member.id === user.id ? 'Вы' : member.name).join(', ')}`; const other = item.members.find(member => member.id !== user.id); return other ? `${other.email} · ${roleLabel(other.role)}` : 'Личный диалог' }
 function initials(value = '') { return value.trim().split(/\s+/).slice(0, 2).map(part => part[0]?.toUpperCase()).join('') || '•' }
 function parseChatDate(value) { return value ? new Date(value.replace(' ', 'T')) : null }
 function chatClock(value) { const date = parseChatDate(value); return date && !Number.isNaN(date.getTime()) ? date.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) : '' }

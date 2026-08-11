@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Check, Code2, Plus, ShieldCheck, UserPen, X } from 'lucide-react'
+import { Calculator, Check, Code2, Plus, ShieldCheck, UserPen, X } from 'lucide-react'
 import { request } from './api'
 import { dateTime, PageHeader, roleLabel } from './App'
 import { can } from './permissions'
@@ -39,6 +39,7 @@ export default function UsersPage({ user: currentUser, notify }) {
     <div className="role-cards">
       <RoleCard role="developer" icon={<Code2/>} title="Программист" text="Все права и управление индивидуальными доступами"/>
       <RoleCard role="admin" title="Администратор" text="Полный рабочий доступ без управления ролью программиста"/>
+      <RoleCard role="accountant" icon={<Calculator/>} title="Бухгалтер" text="Получение и обработка счетов, отправленных сотрудниками"/>
       <RoleCard role="editor" title="Редактор" text="Работа с реестром, оплатами и справочниками"/>
       <RoleCard role="viewer" title="Зритель" text="Просмотр основных разделов без изменения данных"/>
     </div>
@@ -105,7 +106,9 @@ function UserModal({ item, catalog, granular, onClose, onSave }) {
           <label className="field"><span>Базовый профиль</span>
             <select value={form.is_developer ? 'developer' : form.role} disabled={form.is_developer} onChange={event => setRole(event.target.value)}>
               {form.is_developer && <option value="developer">Программист</option>}
-              <option value="admin">Администратор</option><option value="editor">Редактор</option><option value="viewer">Зритель</option>
+              <option value="admin">Администратор</option>
+              {(granular || form.role === 'accountant') && <option value="accountant" disabled={!granular}>Бухгалтер</option>}
+              <option value="editor">Редактор</option><option value="viewer">Зритель</option>
             </select>
           </label>
           <label className="field"><span>{item.id ? 'Новый пароль (необязательно)' : 'Пароль'}</span><input type="password" required={!item.id} minLength="8" value={form.password} onChange={event => setForm({ ...form, password: event.target.value })}/></label>

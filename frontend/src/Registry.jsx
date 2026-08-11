@@ -430,7 +430,7 @@ function DuplicateObligationModal({ conflict, onCancel, onConfirm }) {
         </article>)}</div>
         {total > matches.length && <p className="duplicate-obligation-more">Показаны первые {matches.length} из {total} совпадений.</p>}
       </div>
-      <footer className="modal-footer duplicate-obligation-actions"><button type="button" className="secondary" onClick={onCancel}>Вернуться и исправить</button><button type="button" className="danger duplicate-obligation-confirm" onClick={onConfirm}><AlertTriangle size={16}/>Сохранить всё равно</button></footer>
+      <footer className="modal-footer duplicate-obligation-actions"><button type="button" className="secondary" onClick={onCancel}>Вернуться и исправить</button><button type="button" className="danger duplicate-obligation-confirm" onClick={onConfirm}><span className="duplicate-obligation-confirm-icon"><AlertTriangle size={17}/></span><span>Продолжить всё равно</span></button></footer>
     </section>
   </div>
 }

@@ -68,6 +68,7 @@ func main() {
 	mux.Handle("GET /api/chat/conversations", a.authorize(a.requirePermission("chat.view")(http.HandlerFunc(a.listChatConversations))))
 	mux.Handle("POST /api/chat/direct", a.authorize(a.requirePermission("chat.create")(http.HandlerFunc(a.createDirectChat))))
 	mux.Handle("POST /api/chat/groups", a.authorize(a.requirePermission("chat.create")(http.HandlerFunc(a.createGroupChat))))
+	mux.Handle("POST /api/chat/accounting", a.authorize(a.requirePermission("invoice_mail.send")(http.HandlerFunc(a.createAccountingMail))))
 	mux.Handle("GET /api/chat/conversations/{id}/messages", a.authorize(a.requirePermission("chat.view")(http.HandlerFunc(a.listChatMessages))))
 	mux.Handle("POST /api/chat/conversations/{id}/messages", a.authorize(a.requirePermission("chat.send")(http.HandlerFunc(a.sendChatMessage))))
 	mux.Handle("GET /api/chat/conversations/{id}/images/{name}", a.authorize(a.requirePermission("chat.view")(http.HandlerFunc(a.serveChatImage))))
