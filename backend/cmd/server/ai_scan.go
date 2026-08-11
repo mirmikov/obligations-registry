@@ -471,8 +471,8 @@ func aiScanTextScore(text string) int {
 }
 
 var (
-	aiDocumentPattern         = regexp.MustCompile(`(?i)(сч[её]т\s*[-–—]?\s*оферта|сч[её]т\s*[-–—]\s*фактура|сч[её]т\s*[-–—]?\s*договор(?:\s+поставки\s+[A-Za-zА-Яа-яЁё]+)?|универсальный\s+передаточный\s+документ|упд|сч[её]т(?:\s+на\s+опл\s*ату)?|товарная\s+накладная|накладная|акт(?:\s+(?:выполненных\s+работ|оказанных\s+услуг|при[её]ма\s*[-–—]?\s*передачи))?)\s*(?:№|N(?:o|е|2)?|No)?\s*([0-9A-Za-zА-Яа-яЁё./_-]+)\s+от\s+([0-9]{1,2}(?:[.\-/][0-9]{1,2}[.\-/][0-9]{2,4}|\s+[А-Яа-яЁё]+\s+[0-9]{4}))`)
-	aiLooseDocumentPattern    = regexp.MustCompile(`(?is)(сч[её]т\s*[-–—]?\s*оферта|сч[её]т\s*[-–—]\s*фактура|сч[её]т\s*[-–—]?\s*договор(?:\s+поставки\s+[A-Za-zА-Яа-яЁё]+)?|универсальный\s+передаточный\s+документ|упд|сч[её]т(?:\s+на\s+опл\s*ату)?|товарная\s+накладная|накладная|акт(?:\s+(?:выполненных\s+работ|оказанных\s+услуг|при[её]ма\s*[-–—]?\s*передачи))?)\s*(?:№|N(?:o|е|2)?|No)?\s*([0-9A-Za-zА-Яа-яЁё]+(?:\s*[./_-]\s*[0-9A-Za-zА-Яа-яЁё]+)*)\s+от\s+([0-9]{1,2}(?:\s*[.\-/]\s*[0-9]{1,2}\s*[.\-/]\s*[0-9]{2,4}|\s+[А-Яа-яЁё]+\s+[0-9]{4}))`)
+	aiDocumentPattern         = regexp.MustCompile(`(?i)(сч[её]т\s*[-–—]?\s*оферта|сч[её]т\s*[-–—]\s*фактура|сч[её]т\s*[-–—]?\s*договор(?:\s+поставки\s+[A-Za-zА-Яа-яЁё]+)?|универсальный\s+передаточный\s+документ|упд|сч[её]т(?:\s+на\s+опл\s*ату)?|товарная\s+накладная|накладная|акт(?:\s+(?:выполненных\s+работ|оказанных\s+услуг|при[её]ма\s*[-–—]?\s*передачи))?)\s*(?:№|N(?:o|е|e|2|°|º)?|No)?\s*([0-9A-Za-zА-Яа-яЁё#./_-]+)\s+от\s+([0-9]{1,2}(?:[.\-/][0-9]{1,2}[.\-/][0-9]{2,4}|\s+[А-Яа-яЁё]+\s+[0-9]{4}))`)
+	aiLooseDocumentPattern    = regexp.MustCompile(`(?is)(сч[её]т\s*[-–—]?\s*оферта|сч[её]т\s*[-–—]\s*фактура|сч[её]т\s*[-–—]?\s*договор(?:\s+поставки\s+[A-Za-zА-Яа-яЁё]+)?|универсальный\s+передаточный\s+документ|упд|сч[её]т(?:\s+на\s+опл\s*ату)?|товарная\s+накладная|накладная|акт(?:\s+(?:выполненных\s+работ|оказанных\s+услуг|при[её]ма\s*[-–—]?\s*передачи))?)\s*(?:№|N(?:o|е|e|2|°|º)?|No)?\s*([0-9A-Za-zА-Яа-яЁё]+(?:\s*[#./_-]\s*[0-9A-Za-zА-Яа-яЁё]+)*)\s+от\s+([0-9]{1,2}(?:\s*[.\-/]\s*[0-9]{1,2}\s*[.\-/]\s*[0-9]{2,4}|\s+[А-Яа-яЁё]+\s+[0-9]{4}))`)
 	aiAmountPattern           = regexp.MustCompile(`[0-9]{1,3}(?:[ \x{00A0}][0-9]{3})*(?:[,.][0-9]{2})|[0-9]+(?:[,.][0-9]{2})|[0-9]+`)
 	aiSupplierPattern         = regexp.MustCompile(`(?is)(?:поставщик|исполнитель|продавец)(?:\s*\([^)]*\))?\s*[:;]?\s*(.{3,1000}?)(?:покупатель|заказчик|плательщик|основание|товары|услуги)`)
 	aiSupplierLinePattern     = regexp.MustCompile(`(?i)(?:поставщик|исполнитель|продавец)(?:\s*\([^)]*\))?\s*[:;—–-]?\s*(.*)$`)
@@ -482,6 +482,11 @@ var (
 	aiExplicitPartyPattern    = regexp.MustCompile(`(?i)(?:[ОO0]{3}|ПАО|ОАО|ЗАО|АО|ИП)\s*(?:["«][^"»\n]{1,100}["»]|[A-Za-zА-Яа-яЁё][^,;|\n]{1,100})`)
 	aiInterleavedPartyPattern = regexp.MustCompile(`(?is)^\s*(акционерное\s+общество|общество\s+с\s+ограниченной\s+ответственностью)\s+(?:менеджер|телефон|почта).{0,160}?["«]([^"»\n]{2,100})["»]`)
 	aiTaxIDPattern            = regexp.MustCompile(`(?i)инн(?:\s*/\s*кпп)?\s*[:;]?\s*([0-9OО][0-9OО\s-]{8,18}[0-9OО])`)
+)
+
+var (
+	aiStandaloneInvoicePattern    = regexp.MustCompile(`(?im)^\s*(сч[её]т(?:\s+на\s+опл\s*ату)?)\s*(?:№|N(?:o|е|e|2|°|º)?|No)?\s*([0-9A-Za-zА-Яа-яЁё]+(?:\s*[#./_-]\s*[0-9A-Za-zА-Яа-яЁё]+)*)\s*$`)
+	aiLabelledDocumentDatePattern = regexp.MustCompile(`(?im)^\s*дата(?:\s+документа)?\s*[:;]?\s*([0-9]{1,2}(?:\s*[.\-/]\s*[0-9]{1,2}\s*[.\-/]\s*[0-9]{2,4}|\s+[А-Яа-яЁё]+\s+[0-9]{4}))\s*(?:г\.?|года)?\s*$`)
 )
 
 var aiMonths = map[string]int{"января": 1, "февраля": 2, "марта": 3, "апреля": 4, "мая": 5, "июня": 6, "июля": 7, "августа": 8, "сентября": 9, "октября": 10, "ноября": 11, "декабря": 12}
@@ -494,6 +499,28 @@ func parseAIScanText(text string, counterparties, legalEntities []string) aiScan
 	return parseAIScanTextWithReferences(text, references, legalEntities)
 }
 
+func setAIScanDocumentFields(result *aiScanSuggestion, text, kind, number, date string) {
+	documentKind := strings.Join(strings.Fields(kind), " ")
+	documentKind = regexp.MustCompile(`(?i)опл\s+ату`).ReplaceAllString(documentKind, "оплату")
+	if strings.Contains(foldAIScanText(text), "универсальный передаточный документ") {
+		documentKind = "УПД"
+	} else if strings.Contains(foldAIScanText(documentKind), "счет договор") {
+		documentKind = "Счет-договор"
+	} else if strings.Contains(foldAIScanText(documentKind), "оферта") {
+		documentKind = "Счет-оферта"
+	} else if strings.Contains(foldAIScanText(documentKind), "фактура") {
+		documentKind = "Счет-фактура"
+	} else if foldAIScanText(documentKind) == "счет" {
+		documentKind = "Счет"
+	}
+	result.DocumentNumber = documentKind + " № " + normalizeAIScanDocumentNumber(number)
+	result.Confidence["document_number"] = "high"
+	result.DocumentDate = parseAIScanDate(date)
+	if result.DocumentDate != "" {
+		result.Confidence["document_date"] = "high"
+	}
+}
+
 func parseAIScanTextWithReferences(text string, counterparties []aiScanCounterpartyReference, legalEntities []string) aiScanSuggestion {
 	result := aiScanSuggestion{Confidence: map[string]string{}, Warnings: []string{}}
 	match := aiDocumentPattern.FindStringSubmatch(text)
@@ -504,24 +531,20 @@ func parseAIScanTextWithReferences(text string, counterparties []aiScanCounterpa
 		match = aiLooseDocumentPattern.FindStringSubmatch(text)
 	}
 	if len(match) == 4 {
-		documentKind := strings.Join(strings.Fields(match[1]), " ")
-		documentKind = regexp.MustCompile(`(?i)опл\s+ату`).ReplaceAllString(documentKind, "оплату")
-		if strings.Contains(foldAIScanText(text), "универсальный передаточный документ") {
-			documentKind = "УПД"
-		} else if strings.Contains(foldAIScanText(documentKind), "счет договор") {
-			documentKind = "Счет-договор"
-		} else if strings.Contains(foldAIScanText(documentKind), "оферта") {
-			documentKind = "Счет-оферта"
-		} else if strings.Contains(foldAIScanText(documentKind), "фактура") {
-			documentKind = "Счет-фактура"
-		} else if foldAIScanText(documentKind) == "счет" {
-			documentKind = "Счет"
-		}
-		result.DocumentNumber = documentKind + " № " + normalizeAIScanDocumentNumber(match[2])
-		result.DocumentDate = parseAIScanDate(match[3])
-		result.Confidence["document_number"] = "high"
-		if result.DocumentDate != "" {
-			result.Confidence["document_date"] = "high"
+		setAIScanDocumentFields(&result, text, match[1], match[2], match[3])
+	} else {
+		// Some providers put the invoice number in its own centered header and
+		// print the document date on a separate labelled line. OCR also commonly
+		// turns the № sign into "Ne". Join only those two explicit invoice fields;
+		// do not reuse unrelated dates elsewhere in the document.
+		standalone := aiStandaloneInvoicePattern.FindStringSubmatch(text)
+		labelledDate := aiLabelledDocumentDatePattern.FindStringSubmatch(text)
+		if len(standalone) == 3 {
+			date := ""
+			if len(labelledDate) == 2 {
+				date = labelledDate[1]
+			}
+			setAIScanDocumentFields(&result, text, standalone[1], standalone[2], date)
 		}
 	}
 	result.Amount = parseAIScanAmount(text)
@@ -593,7 +616,11 @@ func regexpCapture(pattern *regexp.Regexp, text string) string {
 
 func normalizeAIScanDocumentNumber(value string) string {
 	value = strings.Join(strings.Fields(value), " ")
-	value = regexp.MustCompile(`\s*([./_-])\s*`).ReplaceAllString(value, "$1")
+	value = regexp.MustCompile(`\s*([#./_-])\s*`).ReplaceAllString(value, "$1")
+	// Mango invoice prefixes are Cyrillic, while OCR often returns the three
+	// visually identical Latin letters. Canonicalize this exact prefix so
+	// duplicate checks treat the scanned number and the printed number equally.
+	value = regexp.MustCompile(`(?i)^[MМ][KК][OО](#.*)$`).ReplaceAllString(value, "МКО$1")
 	// In Russian invoice prefixes Tesseract often substitutes the visually
 	// identical Latin B/X for Cyrillic В/Х. Limit normalization to the common
 	// two-letter prefix followed by two digits and a separator.

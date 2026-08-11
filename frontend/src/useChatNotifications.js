@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { request } from './api'
+import { CHAT_READ_EVENT, normalizeUnreadSnapshot, takeConversationUnread } from './chatUnread'
 
 function currentPermission() {
   return typeof Notification === 'undefined' ? 'unsupported' : Notification.permission
@@ -14,12 +15,27 @@ export default function useChatNotifications({ user, page, onOpenChat, notify })
   const pageRef = useRef(page)
   const openChatRef = useRef(onOpenChat)
   const noticeTimersRef = useRef(new Map())
+  const suppressedReadRef = useRef(new Set())
 
   useEffect(() => { pageRef.current = page }, [page])
   useEffect(() => { openChatRef.current = onOpenChat }, [onOpenChat])
   useEffect(() => () => {
     noticeTimersRef.current.forEach(window.clearTimeout)
     noticeTimersRef.current.clear()
+  }, [])
+  useEffect(() => {
+    const conversationRead = event => {
+      const conversationID = event.detail?.conversationID
+      if (conversationID == null) return
+      suppressedReadRef.current.add(String(conversationID))
+      const previousUnread = takeConversationUnread(previousRef.current, conversationID)
+      setUnread(current => Math.max(0, current - previousUnread))
+      setNotices(current => current.filter(item => String(item.conversationID) !== String(conversationID)))
+      window.clearTimeout(noticeTimersRef.current.get(conversationID))
+      noticeTimersRef.current.delete(conversationID)
+    }
+    window.addEventListener(CHAT_READ_EVENT, conversationRead)
+    return () => window.removeEventListener(CHAT_READ_EVENT, conversationRead)
   }, [])
   useEffect(() => {
     if (page !== 'chat') return
@@ -31,6 +47,7 @@ export default function useChatNotifications({ user, page, onOpenChat, notify })
   useEffect(() => {
     if (!user) {
       setUnread(0); setNotices([]); previousRef.current = new Map(); initializedRef.current = false
+      suppressedReadRef.current = new Set()
       noticeTimersRef.current.forEach(window.clearTimeout)
       noticeTimersRef.current.clear()
       return undefined
@@ -40,13 +57,15 @@ export default function useChatNotifications({ user, page, onOpenChat, notify })
       try {
         const conversations = await request('/api/chat/conversations')
         if (!active) return
-        const next = new Map(conversations.map(item => [item.id, item.unread || 0]))
-        setUnread(conversations.reduce((total, item) => total + Number(item.unread || 0), 0))
+        const snapshot = normalizeUnreadSnapshot(conversations, suppressedReadRef.current)
+        const next = snapshot.unreadByConversation
+        setUnread(snapshot.total)
         if (initializedRef.current && pageRef.current !== 'chat') {
           for (const item of conversations) {
             const before = previousRef.current.get(item.id) || 0
-            if (item.unread > before) {
-              showSiteNotification(item, item.unread - before, setNotices, noticeTimersRef)
+            const after = next.get(item.id) || 0
+            if (after > before) {
+              showSiteNotification(item, after - before, setNotices, noticeTimersRef)
               if (permission === 'granted') showBrowserNotification(item, openChatRef)
             }
           }

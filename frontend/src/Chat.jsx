@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { BellRing, Check, ChevronLeft, Download, FileText, MessageCircle, Paperclip, Plus, ScanLine, Search, Send, UserPlus, Users, X } from 'lucide-react'
 import { request, requestBlob } from './api'
 import { roleLabel } from './App'
 import { can } from './permissions'
 import AIScanModal from './AIScanModal'
+import { clearConversationUnread, dispatchChatRead } from './chatUnread'
 
 const CHAT_FILE_ACCEPT = '.pdf,.png,.jpg,.jpeg,.gif,.webp,.docx,.xlsx,.csv,.txt,.zip'
 const CHAT_FILE_LIMIT = 25 * 1024 * 1024
@@ -32,9 +33,24 @@ export default function Chat({ user, notify, compact = false, initialConversatio
   const draftAttachmentRef = useRef(null)
   const fileInputRef = useRef(null)
   const lastImagePasteRef = useRef(0)
+  const selectedConversationRef = useRef(null)
 
   const loadContacts = () => request('/api/chat/users').then(setContacts).catch(error => notify(error.message, 'error'))
-  const loadConversations = () => request('/api/chat/conversations').then(setConversations).catch(error => notify(error.message, 'error'))
+  const loadConversations = () => request('/api/chat/conversations').then(items => setConversations(clearConversationUnread(items, selectedConversationRef.current))).catch(error => notify(error.message, 'error'))
+  const markConversationRead = useCallback(conversationID => {
+    if (conversationID == null) return
+    setConversations(current => clearConversationUnread(current, conversationID))
+    dispatchChatRead(conversationID)
+  }, [])
+  const selectConversation = useCallback(conversationID => {
+    selectedConversationRef.current = conversationID
+    setSelectedID(conversationID)
+    markConversationRead(conversationID)
+  }, [markConversationRead])
+  const closeConversation = useCallback(() => {
+    selectedConversationRef.current = null
+    setSelectedID(null)
+  }, [])
 
   useEffect(() => {
     loadContacts(); loadConversations()
@@ -44,22 +60,24 @@ export default function Chat({ user, notify, compact = false, initialConversatio
 
   useEffect(() => { if (canAIScan) request('/api/references').then(setReferences).catch(error => notify(error.message, 'error')) }, [canAIScan])
 
-  useEffect(() => { if (initialConversationID) setSelectedID(initialConversationID) }, [initialConversationID])
+  useEffect(() => { if (initialConversationID) selectConversation(initialConversationID) }, [initialConversationID, selectConversation])
 
   useEffect(() => {
-    if (!conversations.length) { setSelectedID(null); return }
-    if (selectedID && !conversations.some(item => item.id === selectedID)) setSelectedID(null)
-    else if (!compact && !selectedID) setSelectedID(conversations[0].id)
-  }, [conversations, selectedID, compact])
+    if (!conversations.length) { closeConversation(); return }
+    if (selectedID && !conversations.some(item => item.id === selectedID)) closeConversation()
+    else if (!compact && !selectedID) selectConversation(conversations[0].id)
+  }, [conversations, selectedID, compact, closeConversation, selectConversation])
 
   useEffect(() => {
     if (!selectedID) { setMessages([]); return undefined }
     let active = true
-    const load = () => request(`/api/chat/conversations/${selectedID}/messages`).then(items => { if (active) setMessages(items) }).catch(error => notify(error.message, 'error'))
+    markConversationRead(selectedID)
+    request(`/api/chat/conversations/${selectedID}/read`, { method: 'POST' }).then(() => { if (active) markConversationRead(selectedID) }).catch(error => notify(error.message, 'error'))
+    const load = () => request(`/api/chat/conversations/${selectedID}/messages`).then(items => { if (active) { setMessages(items); markConversationRead(selectedID) } }).catch(error => notify(error.message, 'error'))
     load()
     const timer = window.setInterval(load, 2500)
     return () => { active = false; window.clearInterval(timer) }
-  }, [selectedID])
+  }, [selectedID, markConversationRead])
 
   useEffect(() => {
     const viewport = messagesViewportRef.current
@@ -188,7 +206,7 @@ export default function Chat({ user, notify, compact = false, initialConversatio
   const conversationCreated = async id => {
     setCreating(false)
     await loadConversations()
-    setSelectedID(id)
+    selectConversation(id)
   }
 
   return <div className={`chat-page ${compact ? 'chat-page-compact' : ''} ${selected ? 'has-room' : ''}`}>
@@ -196,7 +214,7 @@ export default function Chat({ user, notify, compact = false, initialConversatio
       <header><div><p>Команда</p><h1>Сообщения</h1></div><div className="chat-list-actions">{notificationPermission === 'default' && <button type="button" className="chat-enable-bell" onClick={onEnableNotifications} aria-label="Включить уведомления" title="Включить уведомления"><BellRing size={17}/></button>}{canCreate && <button type="button" onClick={() => setCreating(true)} aria-label="Начать новый чат" title="Начать новый чат"><Plus size={19}/></button>}</div></header>
       <label className="chat-search"><Search size={16}/><input value={search} onChange={event => setSearch(event.target.value)} placeholder="Поиск диалогов"/></label>
       <div className="chat-conversations">
-        {filtered.map(item => <button type="button" key={item.id} className={item.id === selectedID ? 'active' : ''} onClick={() => setSelectedID(item.id)}>
+        {filtered.map(item => <button type="button" key={item.id} className={item.id === selectedID ? 'active' : ''} onClick={() => selectConversation(item.id)}>
           <ConversationAvatar item={item} currentUser={user}/>
           <span className="chat-conversation-copy"><strong>{item.title}</strong><small>{item.last_message ? `${item.last_sender}: ${item.last_message}` : item.kind === 'group' ? `${item.members.length} участников` : 'Начните общение'}</small></span>
           <span className="chat-conversation-meta"><time>{chatListTime(item.last_at)}</time>{item.unread > 0 && <b>{item.unread > 99 ? '99+' : item.unread}</b>}</span>
@@ -207,7 +225,7 @@ export default function Chat({ user, notify, compact = false, initialConversatio
 
     <main className="chat-room">
       {selected ? <>
-        <header className="chat-room-head">{compact && <button type="button" className="chat-room-back" onClick={() => setSelectedID(null)} aria-label="Назад к диалогам"><ChevronLeft size={19}/></button>}<ConversationAvatar item={selected} currentUser={user}/><div><strong>{selected.title}</strong><span>{conversationSubtitle(selected, user)}</span></div></header>
+        <header className="chat-room-head">{compact && <button type="button" className="chat-room-back" onClick={closeConversation} aria-label="Назад к диалогам"><ChevronLeft size={19}/></button>}<ConversationAvatar item={selected} currentUser={user}/><div><strong>{selected.title}</strong><span>{conversationSubtitle(selected, user)}</span></div></header>
         <div className="chat-messages" ref={messagesViewportRef} onScroll={event => {
           const viewport = event.currentTarget
           stickToBottomRef.current = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 80

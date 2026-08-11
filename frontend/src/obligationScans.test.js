@@ -14,7 +14,8 @@ test('registry selection cell is split into selection and scan controls', () => 
 
 test('scan control uploads, views, replaces and deletes a document', () => {
   assert.match(registry, /form\.append\('scan', file\)/)
-  assert.match(registry, /requestBlob\(`\/api\/obligations\/\$\{item\.id\}\/scan`\)/)
+  assert.match(registry, /scanURL = `\/api\/obligations\/\$\{item\.id\}\/scan`/)
+  assert.match(registry, /requestBlob\(scanURL\)/)
   assert.match(registry, /Заменить файл/)
   assert.match(registry, /Нажмите ещё раз для удаления/)
   assert.match(registry, /<iframe src=\{preview\.url\}/)

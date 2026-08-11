@@ -375,3 +375,28 @@ func TestSelectAIScanStoredCounterpartyReusesExistingAndRejectsConflictingTaxID(
 		t.Fatalf("expected tax-ID match, got %#v, %v", selected, ok)
 	}
 }
+
+func TestParseAIScanTextSupportsStandaloneInvoiceNumberAndLabelledDate(t *testing.T) {
+	text := `
+Продавец: Общество с ограниченной ответственностью «Манго Телеком»
+Телефон: 8-800-555-55-22 Плательщик: ООО "МЦ "МИРТ"
+ИНН / КПП: 7709501144 / 772801001
+СЧЕТ NeMKO#608000010
+
+Дата: 10.08.2026
+Номер лицевого счета: 16965757
+Плательщик: ООО "МЦ "МИРТ"
+Всего к оплате: 16393.44 3606.56 20000.00
+Оплата телекоммуникационных услуг связи по Счету МКО#608000010 от 10.08.2026г.
+`
+	result := parseAIScanText(text, []string{`ООО «Манго Телеком»`}, []string{`ООО "МЦ "МИРТ"`})
+	if result.DocumentNumber != "Счет № МКО#608000010" {
+		t.Fatalf("unexpected standalone invoice number: %q", result.DocumentNumber)
+	}
+	if result.DocumentDate != "2026-08-10" {
+		t.Fatalf("unexpected labelled document date: %q", result.DocumentDate)
+	}
+	if result.Confidence["document_number"] != "high" || result.Confidence["document_date"] != "high" {
+		t.Fatalf("unexpected document confidence: %#v", result.Confidence)
+	}
+}
