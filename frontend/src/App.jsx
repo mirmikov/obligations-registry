@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { BarChart3, BellRing, BookOpen, ChartNoAxesCombined, ChevronDown, ChevronLeft, ChevronRight, CircleDollarSign, DatabaseBackup, FileClock, Landmark, LogOut, Maximize2, Menu, MessageCircle, Minus, Moon, ReceiptText, Settings, ShieldCheck, Sun, Undo2, Users, X } from 'lucide-react'
+import { BarChart3, BellRing, BookOpen, ChartNoAxesCombined, ChevronDown, ChevronLeft, ChevronRight, CircleDollarSign, DatabaseBackup, FileCheck2, FileClock, Landmark, LogOut, Maximize2, Menu, MessageCircle, Minus, Moon, ReceiptText, Settings, ShieldCheck, Sun, Undo2, Users, X } from 'lucide-react'
 import { request } from './api'
 import Dashboard from './Dashboard'
 import Registry from './Registry'
@@ -11,6 +11,7 @@ import Audit from './Audit'
 import CreditsLeasing from './CreditsLeasing'
 import Chat from './Chat'
 import ExecutiveDashboard from './ExecutiveDashboard'
+import MyInvoices from './MyInvoices'
 import useChatNotifications from './useChatNotifications'
 import { can, firstAllowedPage, pagePermissions } from './permissions'
 import { applyTheme, resolveTheme, THEME_STORAGE_KEY } from './theme'
@@ -18,6 +19,7 @@ import { backupStatusPresentation, backupStatusTooltip } from './backupStatus'
 
 const nav = [
   { id: 'dashboard', label: 'Сводка', icon: BarChart3, permission: 'dashboard.view' },
+  { id: 'my-invoices', label: 'Мои счета', icon: FileCheck2, permission: 'my_invoices.view' },
   { id: 'executive', label: 'Панель руководителя', icon: ChartNoAxesCombined, permission: 'executive.view' },
   { id: 'registry', label: 'Реестр', icon: BookOpen, permission: 'registry.view', children: [{ id: 'credits-leasing', label: 'Кредиты и лизинги', icon: Landmark, permission: 'credits.view' }] },
   { id: 'payments', label: 'К оплате', icon: CircleDollarSign, permission: 'payments.view' },
@@ -127,6 +129,7 @@ export default function App() {
 
   const pages = {
     dashboard: <Dashboard key={`dashboard-${dataRevision}`} notify={notify} />,
+    'my-invoices': <MyInvoices key={`my-invoices-${dataRevision}`} notify={notify} />,
     executive: <ExecutiveDashboard key={`executive-${dataRevision}`} user={user} notify={notify} />,
     registry: <Registry key={`registry-${dataRevision}`} user={user} notify={notify} maintenance={maintenance} onToggleMaintenance={toggleMaintenance} />,
     'credits-leasing': <CreditsLeasing key={`credits-${dataRevision}`} user={user} notify={notify} />,

@@ -26,13 +26,20 @@ export default function References({ user, notify }) {
   const [mergeModal, setMergeModal] = useState(null)
   const [selectedCounterparties, setSelectedCounterparties] = useState([])
   const [savingAssignment, setSavingAssignment] = useState(null)
+  const [assignableUsers, setAssignableUsers] = useState([])
   const load = () => request('/api/references').then(setData).catch(error => notify(error.message, 'error'))
 
-  useEffect(() => { load() }, [])
+  useEffect(() => {
+    load()
+    if (editable) request('/api/references/assignable-users').then(setAssignableUsers).catch(error => notify(error.message, 'error'))
+  }, [editable])
 
   const assignments = useMemo(() => Object.fromEntries(
     (data.cost_category_responsibles || []).map(item => [Number(item.cost_category_id), item.responsible]),
   ), [data.cost_category_responsibles])
+  const userAssignments = useMemo(() => Object.fromEntries(
+    (data.responsible_users || []).map(item => [Number(item.responsible_id), Number(item.user_id)]),
+  ), [data.responsible_users])
 
   const add = async (nextValue, taxID = '') => {
     if (!nextValue.trim()) return
@@ -90,7 +97,7 @@ export default function References({ user, notify }) {
   }
 
   const assignResponsible = async (categoryID, responsible) => {
-    setSavingAssignment(categoryID)
+    setSavingAssignment(`category:${categoryID}`)
     try {
       await request(`/api/references/cost-categories/${categoryID}/responsible`, {
         method: 'PUT',
@@ -104,6 +111,28 @@ export default function References({ user, notify }) {
         ],
       }))
       notify(responsible ? 'Ответственный привязан к статье затрат' : 'Привязка ответственного удалена')
+    } catch (error) {
+      notify(error.message, 'error')
+    } finally {
+      setSavingAssignment(null)
+    }
+  }
+
+  const assignUser = async (responsibleID, userID) => {
+    setSavingAssignment(`responsible:${responsibleID}`)
+    try {
+      await request(`/api/references/responsibles/${responsibleID}/user`, {
+        method: 'PUT',
+        body: JSON.stringify({ user_id: userID || null }),
+      })
+      setData(current => ({
+        ...current,
+        responsible_users: [
+          ...(current.responsible_users || []).filter(item => Number(item.responsible_id) !== Number(responsibleID)),
+          ...(userID ? [{ responsible_id: Number(responsibleID), user_id: Number(userID) }] : []),
+        ],
+      }))
+      notify(userID ? 'Пользователь привязан к ответственному' : 'Привязка пользователя удалена')
     } catch (error) {
       notify(error.message, 'error')
     } finally {
@@ -138,8 +167,11 @@ export default function References({ user, notify }) {
         {active === 'cost_categories' && <div className="reference-assignment-hint">
           Для каждой статьи можно назначить ответственного по умолчанию. В реестре его по-прежнему можно изменить вручную.
         </div>}
+        {active === 'responsibles' && editable && <div className="reference-assignment-hint">
+          Привяжите значение ответственного к учётной записи сотрудника. После этого все строки реестра с этим ответственным появятся у сотрудника во вкладке «Мои счета».
+        </div>}
         <div className="reference-list">
-          {currentItems.map((item, index) => <div key={item.id} className={`${active === 'cost_categories' ? 'has-assignment' : ''} ${active === 'counterparties' ? 'counterparty-reference-row' : ''}`}>
+          {currentItems.map((item, index) => <div key={item.id} className={`${active === 'cost_categories' ? 'has-assignment' : ''} ${active === 'responsibles' && editable ? 'has-user-assignment' : ''} ${active === 'counterparties' ? 'counterparty-reference-row' : ''}`}>
             <span>{String(index + 1).padStart(2, '0')}</span>
             {active === 'counterparties' && editable && <button type="button" className={`reference-merge-checkbox ${selectedCounterparties.includes(Number(item.id)) ? 'selected' : ''}`} onClick={() => toggleCounterparty(Number(item.id))} aria-label={`Выбрать контрагента ${item.value} для объединения`} aria-pressed={selectedCounterparties.includes(Number(item.id))}>{selectedCounterparties.includes(Number(item.id)) && <Check size={15}/>}</button>}
             <strong>{item.value}</strong>
@@ -147,9 +179,16 @@ export default function References({ user, notify }) {
             {active === 'cost_categories' && <ResponsiblePicker
               value={assignments[Number(item.id)] || ''}
               options={data.responsibles || []}
-              disabled={!editable || savingAssignment === item.id}
-              saving={savingAssignment === item.id}
+              disabled={!editable || savingAssignment === `category:${item.id}`}
+              saving={savingAssignment === `category:${item.id}`}
               onChange={responsible => assignResponsible(item.id, responsible)}
+            />}
+            {active === 'responsibles' && editable && <UserPicker
+              value={userAssignments[Number(item.id)] || 0}
+              options={assignableUsers}
+              disabled={savingAssignment === `responsible:${item.id}`}
+              saving={savingAssignment === `responsible:${item.id}`}
+              onChange={userID => assignUser(item.id, userID)}
             />}
             {editable && <button className="reference-delete" onClick={() => remove(item.id)} title="Удалить значение"><Trash2 size={16} /></button>}
           </div>)}
@@ -248,6 +287,36 @@ function ResponsiblePicker({ value, options, disabled, saving, onChange }) {
       {options.map(option => <button type="button" key={option.id} className={option.value === value ? 'selected' : ''} onClick={() => choose(option.value)} role="option" aria-selected={option.value === value}>
         <span>{option.value}</span>{option.value === value && <Check size={14} />}
       </button>)}
+    </div>}
+  </div>
+}
+
+function UserPicker({ value, options, disabled, saving, onChange }) {
+  const [open, setOpen] = useState(false)
+  const rootRef = useRef(null)
+  const selected = options.find(option => Number(option.id) === Number(value))
+
+  useEffect(() => {
+    if (!open) return undefined
+    const close = event => { if (!rootRef.current?.contains(event.target)) setOpen(false) }
+    const escape = event => { if (event.key === 'Escape') setOpen(false) }
+    document.addEventListener('mousedown', close)
+    document.addEventListener('keydown', escape)
+    return () => { document.removeEventListener('mousedown', close); document.removeEventListener('keydown', escape) }
+  }, [open])
+
+  const choose = next => {
+    setOpen(false)
+    if (Number(next) !== Number(value)) onChange(Number(next) || 0)
+  }
+
+  return <div className={`reference-user-picker ${open ? 'is-open' : ''}`} ref={rootRef}>
+    <button type="button" disabled={disabled} onClick={() => setOpen(current => !current)} aria-haspopup="listbox" aria-expanded={open} aria-label={`Пользователь: ${selected?.name || 'не привязан'}`}>
+      <span><strong>{saving ? 'Сохранение…' : selected?.name || 'Привязать пользователя'}</strong>{selected?.email && <small>{selected.email}</small>}</span><ChevronDown size={15}/>
+    </button>
+    {open && <div className="reference-user-menu" role="listbox" aria-label="Выбор пользователя для ответственного">
+      <button type="button" className={!value ? 'selected' : ''} onClick={() => choose(0)} role="option" aria-selected={!value}><span><strong>Не привязан</strong><small>Сотрудник не увидит эти счета</small></span>{!value && <Check size={14}/>}</button>
+      {options.map(option => <button type="button" key={option.id} className={Number(option.id) === Number(value) ? 'selected' : ''} onClick={() => choose(option.id)} role="option" aria-selected={Number(option.id) === Number(value)}><span><strong>{option.name}</strong><small>{option.email}</small></span>{Number(option.id) === Number(value) && <Check size={14}/>}</button>)}
     </div>}
   </div>
 }

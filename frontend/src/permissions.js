@@ -4,6 +4,7 @@ export function can(user, permission) {
 
 export const pagePermissions = {
   dashboard: 'dashboard.view',
+  'my-invoices': 'my_invoices.view',
   executive: 'executive.view',
   registry: 'registry.view',
   'credits-leasing': 'credits.view',
@@ -15,6 +16,6 @@ export const pagePermissions = {
 }
 
 export function firstAllowedPage(user) {
-  return ['dashboard', 'registry', 'payments', 'chat', 'executive', 'credits-leasing', 'references', 'users', 'audit']
+  return ['dashboard', 'my-invoices', 'registry', 'payments', 'chat', 'executive', 'credits-leasing', 'references', 'users', 'audit']
     .find(page => can(user, pagePermissions[page])) || 'access-denied'
 }

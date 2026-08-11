@@ -79,6 +79,16 @@ func (a *app) listReferences(w http.ResponseWriter, r *http.Request) {
 			}
 			continue
 		}
+		if kind == responsibleUserReferenceKind {
+			user := currentUser(r)
+			if user.IsDeveloper || user.Permissions["references.edit"] {
+				mapping, ok := decodeResponsibleUserReference(value)
+				if ok && mapping.ResponsibleID == int64(order) {
+					result[kind] = append(result[kind], map[string]any{"id": id, "responsible_id": mapping.ResponsibleID, "user_id": mapping.UserID})
+				}
+			}
+			continue
+		}
 		item := map[string]any{"id": id, "value": value, "sort_order": order}
 		if kind == counterpartyReferenceKind {
 			item["tax_id"] = taxID.String
@@ -501,7 +511,7 @@ type workspaceState struct {
 
 func normalizeWorkspaceState(value workspaceState) workspaceState {
 	switch value.Page {
-	case "dashboard", "executive", "registry", "credits-leasing", "payments", "chat", "references", "users", "audit":
+	case "dashboard", "my-invoices", "executive", "registry", "credits-leasing", "payments", "chat", "references", "users", "audit":
 	default:
 		value.Page = "dashboard"
 	}
