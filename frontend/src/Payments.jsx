@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { CalendarDays, ChevronDown, Download, ExternalLink, Printer, RefreshCw } from 'lucide-react'
 import { download, request } from './api'
 import { DateInput, money, PageHeader, shortDate } from './App'
-import { InlineCellSelect, ObligationHistoryModal } from './Registry'
+import { InlineCellSelect, ObligationHistoryModal, ObligationScanControl } from './Registry'
 import { localTodayISO, paymentColumns, paymentScreenColumns, paymentUpdatePayload } from './paymentsView'
 import { can } from './permissions'
 
@@ -35,20 +35,23 @@ export default function Payments({ user, notify }) {
     <PageHeader eyebrow="Платёжный реестр" title="Обязательства к оплате" subtitle="Согласованные платежи по выбранным условиям" actions={<><button className="secondary" onClick={load}><RefreshCw size={17}/>Обновить</button>{can(user, 'payments.print') && <button className="secondary" onClick={() => window.print()} disabled={loading}><Printer size={17}/>Печать</button>}{can(user, 'registry.export') && <button className="primary" onClick={() => download(`/api/obligations/export.xlsx?status=${encodeURIComponent('К оплате')}&${query}`, 'К оплате.xlsx')}><Download size={17}/>Выгрузить</button>}</>}/>
     <section className="payment-toolbar"><label><span>Дата утверждения</span><DateInput value={filters.approval_date} onChange={value => setFilters({...filters,approval_date:value})} aria-label="Дата утверждения"/></label><label><span>Юридическое лицо</span><select value={filters.legal_entity} onChange={e => setFilters({...filters,legal_entity:e.target.value})}><option value="">Все юрлица</option>{(refs.legal_entities||[]).map(x=><option key={x.id} value={x.value}>{x.value}</option>)}</select></label><label><span>Признак учёта</span><select value={filters.account_type} onChange={e => setFilters({...filters,account_type:e.target.value})}><option value="">Все</option>{(refs.account_types||[]).map(x=><option key={x.id} value={x.value}>{x.value}</option>)}</select></label></section>
     <section className="payment-summary"><div><CalendarDays/><span>Количество платежей<strong>{data.count}</strong></span></div><div><span>Общая сумма<strong>{money(data.amount)}</strong></span></div></section>
-    <section className="payment-list panel"><div className="payment-head">{paymentScreenColumns.map(column => <span key={column.key}>{column.label}</span>)}</div>{loading ? <div className="loading-line"/> : data.items.length === 0 ? <div className="empty-state"><CalendarDays size={28}/><strong>По выбранным условиям платежей нет</strong><span>Выберите другую дату или юридическое лицо</span></div> : data.items.map(item => <PaymentRow key={item.id} item={item} statuses={refs.statuses || []} editable={can(user, 'payments.edit')} saving={saving} onSave={saveField} onOpenDetails={() => setDetailItem(item)}/>)}</section>
+    <section className="payment-list panel"><div className="payment-head">{paymentScreenColumns.map(column => <span key={column.key}>{column.label}</span>)}</div>{loading ? <div className="loading-line"/> : data.items.length === 0 ? <div className="empty-state"><CalendarDays size={28}/><strong>По выбранным условиям платежей нет</strong><span>Выберите другую дату или юридическое лицо</span></div> : data.items.map(item => <PaymentRow key={item.id} item={item} statuses={refs.statuses || []} editable={can(user, 'payments.edit')} saving={saving} onSave={saveField} onOpenDetails={() => setDetailItem(item)} notify={notify}/>)}</section>
     <PaymentPrintReport data={data} filters={filters}/>
     {detailItem && <ObligationHistoryModal item={detailItem} notify={notify} onClose={() => setDetailItem(null)}/>}
   </div>
 }
 
-function PaymentRow({ item, statuses, editable, saving, onSave, onOpenDetails }) {
+function PaymentRow({ item, statuses, editable, saving, onSave, onOpenDetails, notify }) {
   return <div className={`payment-row ${item.urgency === 'Критическая' ? 'critical' : ''}`}>
     {paymentScreenColumns.map(column => <span key={column.key} className={column.interactive ? 'payment-interactive-cell' : ''}>
       {column.key === 'status' ? <PaymentStatusCell item={item} statuses={statuses} editable={editable} saving={saving === `${item.id}:status`} onSave={onSave}/>
         : column.key === 'actual_payment_date' ? <PaymentActualDateCell item={item} editable={editable} saving={saving === `${item.id}:actual_payment_date`} onSave={onSave}/>
           : column.key === 'counterparty' ? <strong>{paymentValue(item, column.key)}</strong> : paymentValue(item, column.key)}
     </span>)}
-    <button type="button" className="payment-details-button" onClick={onOpenDetails} title="Подробнее о платеже" aria-label={`Подробнее о платеже №${item.id}`}><ExternalLink size={17}/></button>
+    <div className="payment-row-actions">
+      {item.has_scan && <span className="payment-scan-control"><ObligationScanControl item={item} editable={false} notify={notify} onChanged={() => {}} scanURL={`/api/payment-register/${item.id}/scan`}/></span>}
+      <button type="button" className="payment-details-button" onClick={onOpenDetails} title="Подробнее о платеже" aria-label={`Подробнее о платеже №${item.id}`}><ExternalLink size={17}/></button>
+    </div>
   </div>
 }
 

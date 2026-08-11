@@ -25,6 +25,11 @@ test('payment drilldown does not change print report columns', () => {
   const printReport = payments.slice(payments.indexOf('function PaymentPrintReport'))
   assert.match(printReport, /paymentColumns\.map\(column => <th/)
   assert.doesNotMatch(printReport, /payment-details-button/)
+  assert.doesNotMatch(printReport, /ObligationScanControl/)
+})
+
+test('payment rows show a read-only scan control only when a scan exists', () => {
+  assert.match(payments, /item\.has_scan && <span className="payment-scan-control"><ObligationScanControl item=\{item\} editable=\{false\}.*scanURL=\{`\/api\/payment-register\/\$\{item\.id\}\/scan`\}/)
 })
 
 test('payment drilldown keeps current payment values while preserving audit authors', () => {

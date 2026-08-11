@@ -39,4 +39,7 @@ test('duplicate dialog has responsive and dark theme styles', () => {
   assert.match(styles, /\.duplicate-obligation-backdrop/)
   assert.match(styles, /html\[data-theme="dark"\] \.duplicate-obligation-modal/)
   assert.match(styles, /@media\(max-width:720px\).*\.duplicate-obligation-modal/s)
+  assert.match(registry, /className="danger duplicate-obligation-confirm"/)
+  assert.match(styles, /\.duplicate-obligation-confirm:hover/)
+  assert.match(styles, /\.duplicate-obligation-confirm:focus-visible/)
 })

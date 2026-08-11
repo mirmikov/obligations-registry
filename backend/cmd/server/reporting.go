@@ -453,6 +453,12 @@ func (a *app) paymentRegister(w http.ResponseWriter, r *http.Request) {
 			fail(w, 500, "Ошибка данных")
 			return
 		}
+		if scan, ok := readObligationScan(item.ID); ok {
+			item.HasScan = true
+			item.ScanName = scan.OriginalName
+			item.ScanSize = scan.Size
+			item.ScanUpdatedAt = scan.UpdatedAt
+		}
 		items = append(items, item)
 		if item.Amount != nil {
 			total += *item.Amount

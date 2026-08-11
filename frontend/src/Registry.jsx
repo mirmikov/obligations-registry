@@ -428,7 +428,7 @@ function DuplicateObligationModal({ conflict, onCancel, onConfirm }) {
         </article>)}</div>
         {total > matches.length && <p className="duplicate-obligation-more">Показаны первые {matches.length} из {total} совпадений.</p>}
       </div>
-      <footer className="modal-footer duplicate-obligation-actions"><button type="button" className="secondary" onClick={onCancel}>Вернуться и исправить</button><button type="button" className="danger" onClick={onConfirm}>Сохранить всё равно</button></footer>
+      <footer className="modal-footer duplicate-obligation-actions"><button type="button" className="secondary" onClick={onCancel}>Вернуться и исправить</button><button type="button" className="danger duplicate-obligation-confirm" onClick={onConfirm}><AlertTriangle size={16}/>Сохранить всё равно</button></footer>
     </section>
   </div>
 }
@@ -570,7 +570,7 @@ function RegistryRow({ item, refs, editable, isNew = false, selected, savingCell
   </tr>
 }
 
-function ObligationScanControl({ item, editable, notify, onChanged }) {
+export function ObligationScanControl({ item, editable, notify, onChanged, scanURL = `/api/obligations/${item.id}/scan` }) {
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
@@ -584,13 +584,13 @@ function ObligationScanControl({ item, editable, notify, onChanged }) {
     let active = true
     let objectURL = ''
     setPreview({ loading: true, url: '', type: '', error: '' })
-    requestBlob(`/api/obligations/${item.id}/scan`).then(blob => {
+    requestBlob(scanURL).then(blob => {
       if (!active) return
       objectURL = URL.createObjectURL(blob)
       setPreview({ loading: false, url: objectURL, type: blob.type, error: '' })
     }).catch(error => { if (active) setPreview({ loading: false, url: '', type: '', error: error.message }) })
     return () => { active = false; if (objectURL) URL.revokeObjectURL(objectURL) }
-  }, [open, item.id, item.has_scan, item.scan_name, item.scan_size, previewVersion])
+  }, [open, item.id, item.has_scan, item.scan_name, item.scan_size, previewVersion, scanURL])
   useEffect(() => {
     if (!open) return
     const closeOnEscape = event => { if (event.key === 'Escape') closeModal() }
