@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from 'react'
-import { AlertTriangle, CalendarClock, CheckCircle2, Landmark, Layers3, RefreshCw, WalletCards } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { AlertTriangle, CalendarClock, CheckCircle2, ChevronRight, Landmark, Layers3, RefreshCw, WalletCards, X } from 'lucide-react'
 import { request } from './api'
 import { DateInput, money, PageHeader, shortDate } from './App'
+import { groupCreditSchedule, summarizeCreditDetails } from './creditsLeasingView'
 
 const emptyData = { entities: [], creditors: [], months: [], payments: [], totals: {} }
 
@@ -14,6 +15,9 @@ export default function CreditsLeasing({ notify }) {
   const [scheduleMode, setScheduleMode] = useState('upcoming')
   const [creditor, setCreditor] = useState('')
   const [shownPeriods, setShownPeriods] = useState(8)
+  const [details, setDetails] = useState(null)
+  const [detailsLoading, setDetailsLoading] = useState(false)
+  const detailsRequest = useRef(0)
 
   const load = () => {
     setLoading(true)
@@ -25,12 +29,32 @@ export default function CreditsLeasing({ notify }) {
 
   const chartMonths = useMemo(() => filterMonths(data.months, asOf, monthScope), [data.months, asOf, monthScope])
   const maxMonth = Math.max(1, ...chartMonths.map(item => item.total_amount))
-  const schedule = useMemo(() => groupSchedule(data.payments, { asOf, scheduleMode, creditor }), [data.payments, asOf, scheduleMode, creditor])
+  const schedule = useMemo(() => groupCreditSchedule(data.payments, { asOf, scheduleMode, creditor }).map(period => ({ ...period, label: monthName(period.month), year: period.month.slice(0, 4) })), [data.payments, asOf, scheduleMode, creditor])
   const visibleSchedule = schedule.slice(0, shownPeriods)
   const totals = data.totals || {}
 
   const chooseScheduleMode = value => { setScheduleMode(value); setShownPeriods(8) }
   const chooseCreditor = value => { setCreditor(current => current === value ? '' : value); setShownPeriods(8) }
+  const closeDetails = () => { detailsRequest.current += 1; setDetails(null); setDetailsLoading(false) }
+  const openDay = async day => {
+    const requestID = ++detailsRequest.current
+    const selectedEntity = data.selected_entity || entity
+    setDetails({ date: day.date, legal_entity: selectedEntity, creditor, items: [], count: day.count, amount: day.total, outstanding_amount: day.outstanding })
+    setDetailsLoading(true)
+    const params = new URLSearchParams({ date: day.date, legal_entity: selectedEntity })
+    day.items.forEach(item => params.append('counterparty', item.counterparty))
+    try {
+      const result = await request(`/api/reports/credits-leasing/details?${params}`)
+      if (detailsRequest.current === requestID) setDetails({ ...result, creditor })
+    } catch (error) {
+      if (detailsRequest.current === requestID) {
+        notify(error.message, 'error')
+        setDetails(null)
+      }
+    } finally {
+      if (detailsRequest.current === requestID) setDetailsLoading(false)
+    }
+  }
 
   return <div className="page credits-page">
     <PageHeader eyebrow="Подраздел реестра" title="Кредиты и лизинги" subtitle="Платёжный график по статье затрат в разрезе юрлица и кредиторов" actions={<button className="secondary" onClick={load} disabled={loading}><RefreshCw size={16} className={loading ? 'spin' : ''}/>Обновить</button>}/>
@@ -75,43 +99,55 @@ export default function CreditsLeasing({ notify }) {
       <section className="panel credits-schedule-panel">
         <div className="panel-head credits-panel-head"><div><h3>Календарный график платежей</h3><span>{creditor ? `Кредитор: ${creditor}` : 'Все кредиторы'} · вместо строк сводной таблицы</span></div><div className="report-switch">{[['upcoming','Предстоящие'],['overdue','Просроченные'],['all','Весь график']].map(option => <button key={option[0]} className={scheduleMode === option[0] ? 'active' : ''} onClick={() => chooseScheduleMode(option[0])}>{option[1]}</button>)}</div></div>
         {creditor && <button className="clear-creditor" onClick={() => chooseCreditor(creditor)}>Показать всех кредиторов</button>}
-        <div className="schedule-periods">{visibleSchedule.map(period => <SchedulePeriod key={period.month} period={period}/>)}</div>
+        <div className="schedule-periods">{visibleSchedule.map(period => <SchedulePeriod key={period.month} period={period} onOpenDay={openDay}/>)}</div>
         {!schedule.length && <div className="schedule-empty"><CalendarClock size={27}/><strong>В этом срезе платежей нет</strong><span>Измените режим или выберите другого кредитора.</span></div>}
         {shownPeriods < schedule.length && <button className="schedule-more" onClick={() => setShownPeriods(value => value + 8)}>Показать ещё периоды</button>}
       </section>
     </>}
+    {details && <CreditDayDetails details={details} loading={detailsLoading} onClose={closeDetails}/>}
   </div>
 }
 
 function ReportKPI({ icon: Icon, label, value, note, tone }) { return <article className={`report-kpi ${tone}`}><div className="report-kpi-icon"><Icon size={19}/></div><div><span>{label}</span><strong>{value}</strong><small>{note}</small></div></article> }
 
-function SchedulePeriod({ period }) {
-  return <article className="schedule-period"><header><div><span>{period.year}</span><strong>{period.label}</strong></div><b>{money(period.total)}</b></header><div className="schedule-days">{period.days.map(day => <div className={`schedule-day ${day.overdue ? 'overdue' : ''}`} key={day.date}>
+function SchedulePeriod({ period, onOpenDay }) {
+  return <article className="schedule-period"><header><div><span>{period.year}</span><strong>{period.label}</strong></div><b>{money(period.total)}</b></header><div className="schedule-days">{period.days.map(day => <button type="button" className={`schedule-day ${day.overdue ? 'overdue' : ''}`} key={day.date} onClick={() => onOpenDay(day)} aria-label={`Открыть ${day.count} ${paymentWord(day.count)} за ${fullDate(day.date)}`}>
     <div className="schedule-date"><strong>{dayNumber(day.date)}</strong><span>{weekday(day.date)}</span></div>
     <div className="schedule-payments">{day.items.map(item => <div className="schedule-payment" key={`${day.date}-${item.counterparty}`}><div><strong>{item.counterparty}</strong><span>{item.count} {paymentWord(item.count)}{item.overdue ? ' · просрочено' : ''}</span></div><b>{money(item.total_amount)}</b></div>)}</div>
-    <div className="schedule-day-total"><span>Итого</span><strong>{money(day.total)}</strong>{day.outstanding > 0 && <small>К оплате {money(day.outstanding)}</small>}</div>
-  </div>)}</div></article>
+    <div className="schedule-day-total"><span>Итого</span><strong>{money(day.total)}</strong>{day.outstanding > 0 && <small>К оплате {money(day.outstanding)}</small>}<em>Открыть <ChevronRight size={13}/></em></div>
+  </button>)}</div></article>
 }
 
-function groupSchedule(payments = [], { asOf, scheduleMode, creditor }) {
-  const filtered = payments.filter(item => {
-    if (creditor && item.counterparty !== creditor) return false
-    if (scheduleMode === 'upcoming') return item.date >= asOf && item.outstanding_amount > 0
-    if (scheduleMode === 'overdue') return item.date < asOf && item.outstanding_amount > 0
-    return true
-  })
-  const months = new Map()
-  for (const item of filtered) {
-    const month = item.date.slice(0, 7)
-    if (!months.has(month)) months.set(month, new Map())
-    const days = months.get(month)
-    if (!days.has(item.date)) days.set(item.date, [])
-    days.get(item.date).push(item)
-  }
-  return [...months.entries()].map(([month, days]) => {
-    const dayItems = [...days.entries()].map(([date, items]) => ({ date, items, total: sum(items, 'total_amount'), outstanding: sum(items, 'outstanding_amount'), overdue: items.some(item => item.overdue) }))
-    return { month, label: monthName(month), year: month.slice(0, 4), days: dayItems, total: dayItems.reduce((value, day) => value + day.total, 0) }
-  })
+function CreditDayDetails({ details, loading, onClose }) {
+  useEffect(() => {
+    const close = event => { if (event.key === 'Escape') onClose() }
+    document.addEventListener('keydown', close)
+    return () => document.removeEventListener('keydown', close)
+  }, [onClose])
+  const summary = summarizeCreditDetails(details.items)
+  const count = loading ? details.count : summary.count
+  const total = loading ? details.amount : summary.total
+  return <div className="modal-backdrop credits-detail-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) onClose() }}>
+    <section className="modal credits-detail-modal" role="dialog" aria-modal="true" aria-label={`Платежи за ${fullDate(details.date)}`}>
+      <header className="modal-head credits-detail-head">
+        <div><p className="eyebrow">Кредиты и лизинги · {details.legal_entity}</p><h2>Платежи за {fullDate(details.date)}</h2><span>{count || 0} {paymentWord(count || 0)} · {money(total)}</span></div>
+        <button type="button" onClick={onClose} title="Закрыть" aria-label="Закрыть"><X/></button>
+      </header>
+      <div className="credits-detail-summary">
+        <div><span>Всего</span><strong>{money(total)}</strong></div>
+        <div><span>Оплачено</span><strong>{money(loading ? 0 : summary.paid)}</strong></div>
+        <div><span>Остаток</span><strong>{money(loading ? details.outstanding_amount : summary.outstanding)}</strong></div>
+      </div>
+      <div className="credits-detail-scroll">
+        {loading ? <div className="credits-detail-loading"><RefreshCw size={22} className="spin"/><span>Загружаем платежи выбранного дня…</span></div>
+          : !details.items.length ? <div className="credits-detail-loading"><CalendarClock size={25}/><span>Платежи не найдены</span></div>
+            : <table className="credits-detail-table"><thead><tr><th>№</th><th>Кредитор</th><th>Документ</th><th>Назначение и комментарий</th><th>График</th><th>Сумма</th><th>Статус</th><th>Факт. оплата</th><th>Ответственный</th></tr></thead>
+              <tbody>{details.items.map((item, index) => <tr key={item.id}><td>{index + 1}</td><td><strong>{item.counterparty || '—'}</strong></td><td><strong>{item.document_number || '—'}</strong><small>{shortDate(item.document_date)}</small></td><td><strong>{item.source_note || '—'}</strong>{item.comment && <small>{item.comment}</small>}</td><td>{installmentLabel(item)}</td><td className="credits-detail-amount">{money(item.amount)}</td><td><span className={`credits-detail-status ${statusTone(item)}`}>{item.status || '—'}</span></td><td>{shortDate(item.actual_payment_date)}</td><td>{item.responsible || '—'}</td></tr>)}</tbody>
+              <tfoot><tr><td colSpan="5">Итого · {summary.count} {paymentWord(summary.count)}</td><td>{money(summary.total)}</td><td colSpan="3">Остаток {money(summary.outstanding)}</td></tr></tfoot></table>}
+      </div>
+      <footer className="modal-footer"><button type="button" className="primary" onClick={onClose}>Закрыть</button></footer>
+    </section>
+  </div>
 }
 
 function filterMonths(months = [], asOf, scope) {
@@ -122,7 +158,6 @@ function filterMonths(months = [], asOf, scope) {
 }
 
 function addMonths(value, count) { const [year, month] = value.split('-').map(Number); const date = new Date(Date.UTC(year, month - 1 + count, 1)); return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}` }
-function sum(items, field) { return items.reduce((value, item) => value + Number(item[field] || 0), 0) }
 function share(value, total) { return `${shareNumber(value, total).toLocaleString('ru-RU', { maximumFractionDigits: 1 })}%` }
 function shareRaw(value, total) { return `${shareNumber(value, total)}%` }
 function shareNumber(value, total) { return total > 0 ? Math.min(100, Number(value || 0) / Number(total) * 100) : 0 }
@@ -132,6 +167,9 @@ function monthShort(value) { return new Date(`${value}-01T00:00:00Z`).toLocaleDa
 function compactMoney(value) { return new Intl.NumberFormat('ru-RU', { notation: 'compact', maximumFractionDigits: 1 }).format(value || 0) }
 function dayNumber(value) { return value.slice(8, 10) }
 function weekday(value) { return new Date(`${value}T00:00:00Z`).toLocaleDateString('ru-RU', { weekday: 'short', timeZone: 'UTC' }) }
+function fullDate(value) { return value ? new Date(`${value}T00:00:00Z`).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' }) : '—' }
+function installmentLabel(item) { return item.installment_count > 1 ? `${item.installment_number || '—'} из ${item.installment_count}` : 'Один платёж' }
+function statusTone(item) { return item.status === 'Оплачено' || item.actual_payment_date ? 'paid' : item.status === 'Отменено' ? 'cancelled' : 'outstanding' }
 function creditorColor(index) { return ['#267363','#d09249','#806997','#477c9b','#b45d4d'][index % 5] }
 function paymentWord(value) { const lastTwo = value % 100; const last = value % 10; return lastTwo >= 11 && lastTwo <= 14 ? 'платежей' : last === 1 ? 'платёж' : last >= 2 && last <= 4 ? 'платежа' : 'платежей' }
 function todayISO() { const date = new Date(); const offset = date.getTimezoneOffset() * 60000; return new Date(date.getTime() - offset).toISOString().slice(0, 10) }
