@@ -42,6 +42,20 @@ export function summarizeCreditDetails(items = []) {
   }, { count: 0, total: 0, paid: 0, outstanding: 0 })
 }
 
+export const CREDIT_APPROVAL_STATUSES = ['К оплате', 'Зарегистрирован']
+
+export function creditApprovalUpdatePayload(id, field, value) {
+  const payload = { ids: [id], status: '', approval_date: '', actual_payment_date: '' }
+  if (field === 'status') payload.status = value
+  else if (field === 'approval_date') {
+    payload.approval_date = value
+    payload.approval_date_set = true
+  } else {
+    throw new Error(`Unsupported credits approval field: ${field}`)
+  }
+  return payload
+}
+
 function sum(items, field) {
   return items.reduce((value, item) => value + Number(item[field] || 0), 0)
 }

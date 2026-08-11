@@ -352,20 +352,33 @@ const bulkUpdateSQL = `UPDATE obligations SET
 	updated_by=$5,updated_at=now()
 	WHERE id=ANY($6)`
 
-const executiveBulkUpdateKey contextKey = "executive-bulk-update"
+type approvalBulkUpdateScope struct {
+	Area         string
+	CostCategory string
+}
+
+const approvalBulkUpdateKey contextKey = "approval-bulk-update"
 
 func (a *app) executiveBulkUpdate(w http.ResponseWriter, r *http.Request) {
-	a.bulkUpdate(w, r.WithContext(context.WithValue(r.Context(), executiveBulkUpdateKey, true)))
+	scope := approvalBulkUpdateScope{Area: "В панели руководителя"}
+	a.bulkUpdate(w, r.WithContext(context.WithValue(r.Context(), approvalBulkUpdateKey, scope)))
+}
+
+func (a *app) creditsLeasingBulkUpdate(w http.ResponseWriter, r *http.Request) {
+	scope := approvalBulkUpdateScope{Area: "В кредитах и лизингах", CostCategory: creditsLeasingCategory}
+	a.bulkUpdate(w, r.WithContext(context.WithValue(r.Context(), approvalBulkUpdateKey, scope)))
+}
+
+type bulkUpdateInput struct {
+	IDs               []int64 `json:"ids"`
+	Status            string  `json:"status"`
+	ApprovalDateSet   bool    `json:"approval_date_set"`
+	ApprovalDate      string  `json:"approval_date"`
+	ActualPaymentDate string  `json:"actual_payment_date"`
 }
 
 func (a *app) bulkUpdate(w http.ResponseWriter, r *http.Request) {
-	var input struct {
-		IDs               []int64 `json:"ids"`
-		Status            string  `json:"status"`
-		ApprovalDateSet   bool    `json:"approval_date_set"`
-		ApprovalDate      string  `json:"approval_date"`
-		ActualPaymentDate string  `json:"actual_payment_date"`
-	}
+	var input bulkUpdateInput
 	if !decodeJSON(w, r, &input) {
 		return
 	}
@@ -373,9 +386,10 @@ func (a *app) bulkUpdate(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, "Не выбраны строки")
 		return
 	}
-	if executive, _ := r.Context().Value(executiveBulkUpdateKey).(bool); executive {
+	scope, approvalOnly := r.Context().Value(approvalBulkUpdateKey).(approvalBulkUpdateScope)
+	if approvalOnly {
 		if input.ActualPaymentDate != "" || (input.Status != "" && input.Status != "К оплате" && input.Status != "Зарегистрирован") {
-			fail(w, http.StatusForbidden, "В панели руководителя можно менять только статус согласования и дату утверждения")
+			fail(w, http.StatusForbidden, scope.Area+" можно менять только статус согласования и дату утверждения")
 			return
 		}
 	}
@@ -387,8 +401,19 @@ func (a *app) bulkUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback()
-	if err = tx.QueryRowContext(r.Context(), `SELECT count(*) FROM (SELECT id FROM obligations WHERE id=ANY($1) FOR UPDATE) locked`, input.IDs).Scan(new(int)); err != nil {
+	lockQuery := `SELECT count(*) FROM (SELECT id FROM obligations WHERE id=ANY($1) FOR UPDATE) locked`
+	lockArgs := []any{input.IDs}
+	if approvalOnly && scope.CostCategory != "" {
+		lockQuery = `SELECT count(*) FROM (SELECT id FROM obligations WHERE id=ANY($1) AND cost_category=$2 FOR UPDATE) locked`
+		lockArgs = append(lockArgs, scope.CostCategory)
+	}
+	var lockedCount int
+	if err = tx.QueryRowContext(r.Context(), lockQuery, lockArgs...).Scan(&lockedCount); err != nil {
 		fail(w, 500, "Не удалось подготовить историю отмены")
+		return
+	}
+	if approvalOnly && scope.CostCategory != "" && lockedCount != uniqueIDCount(input.IDs) {
+		fail(w, http.StatusForbidden, "Можно изменять только платежи из раздела «Кредиты и лизинги»")
 		return
 	}
 	before, err := snapshotRows(r.Context(), tx, "obligations", input.IDs)
@@ -413,6 +438,14 @@ func (a *app) bulkUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	a.audit(r.Context(), user.ID, "bulk_update", "obligation", nil, map[string]any{"count": count})
 	writeJSON(w, 200, map[string]any{"updated": count})
+}
+
+func uniqueIDCount(ids []int64) int {
+	unique := make(map[int64]struct{}, len(ids))
+	for _, id := range ids {
+		unique[id] = struct{}{}
+	}
+	return len(unique)
 }
 
 func (a *app) updatePaymentFields(w http.ResponseWriter, r *http.Request) {

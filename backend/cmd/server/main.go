@@ -106,6 +106,7 @@ func main() {
 	mux.Handle("POST /api/reports/executive/obligations/bulk", a.authorize(a.requirePermission("executive.approve")(http.HandlerFunc(a.executiveBulkUpdate))))
 	mux.Handle("GET /api/reports/credits-leasing", a.authorize(a.requirePermission("credits.view")(http.HandlerFunc(a.creditsLeasingReport))))
 	mux.Handle("GET /api/reports/credits-leasing/details", a.authorize(a.requirePermission("credits.view")(http.HandlerFunc(a.creditsLeasingDetails))))
+	mux.Handle("POST /api/reports/credits-leasing/obligations/bulk", a.authorize(a.requirePermission("credits.approve")(http.HandlerFunc(a.creditsLeasingBulkUpdate))))
 	mux.Handle("GET /api/payment-register", a.authorize(a.requirePermission("payments.view")(http.HandlerFunc(a.paymentRegister))))
 	mux.Handle("GET /api/payment-register/{id}/scan", a.authorize(a.requirePermission("payments.view")(http.HandlerFunc(a.serveObligationScan))))
 	mux.Handle("PATCH /api/payment-register/{id}", a.authorize(a.requirePermission("payments.edit")(http.HandlerFunc(a.updatePaymentFields))))

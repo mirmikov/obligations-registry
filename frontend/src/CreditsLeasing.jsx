@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { AlertTriangle, CalendarClock, CheckCircle2, ChevronRight, Landmark, Layers3, RefreshCw, WalletCards, X } from 'lucide-react'
+import { AlertTriangle, CalendarClock, Check, CheckCircle2, ChevronDown, ChevronRight, Landmark, Layers3, RefreshCw, WalletCards, X } from 'lucide-react'
 import { request } from './api'
 import { DateInput, money, PageHeader, shortDate } from './App'
-import { groupCreditSchedule, summarizeCreditDetails } from './creditsLeasingView'
+import { CREDIT_APPROVAL_STATUSES, creditApprovalUpdatePayload, groupCreditSchedule, summarizeCreditDetails } from './creditsLeasingView'
+import { can } from './permissions'
+import './creditsApproval.css'
 
 const emptyData = { entities: [], creditors: [], months: [], payments: [], totals: {} }
 
-export default function CreditsLeasing({ notify }) {
+export default function CreditsLeasing({ user, notify }) {
   const [data, setData] = useState(emptyData)
   const [entity, setEntity] = useState('')
   const [asOf, setAsOf] = useState(todayISO())
@@ -17,6 +19,7 @@ export default function CreditsLeasing({ notify }) {
   const [shownPeriods, setShownPeriods] = useState(8)
   const [details, setDetails] = useState(null)
   const [detailsLoading, setDetailsLoading] = useState(false)
+  const [detailsSaving, setDetailsSaving] = useState(() => new Set())
   const detailsRequest = useRef(0)
 
   const load = () => {
@@ -53,6 +56,41 @@ export default function CreditsLeasing({ notify }) {
       }
     } finally {
       if (detailsRequest.current === requestID) setDetailsLoading(false)
+    }
+  }
+
+  const saveDetailField = async (item, field, value) => {
+    const key = `${item.id}:${field}`
+    const currentDetails = details
+    setDetailsSaving(current => new Set(current).add(key))
+    try {
+      await request('/api/reports/credits-leasing/obligations/bulk', {
+        method: 'POST',
+        body: JSON.stringify(creditApprovalUpdatePayload(item.id, field, value)),
+      })
+      const reportParams = new URLSearchParams({ as_of: asOf })
+      if (entity) reportParams.set('legal_entity', entity)
+      const detailParams = new URLSearchParams({ date: currentDetails.date, legal_entity: currentDetails.legal_entity })
+      currentDetails.counterparties?.forEach(counterparty => detailParams.append('counterparty', counterparty))
+      const [reportResult, detailsResult] = await Promise.all([
+        request(`/api/reports/credits-leasing?${reportParams}`),
+        request(`/api/reports/credits-leasing/details?${detailParams}`),
+      ])
+      setData(reportResult)
+      setDetails(current => current?.date === currentDetails.date && current?.legal_entity === currentDetails.legal_entity
+        ? { ...detailsResult, creditor: current.creditor }
+        : current)
+      notify(field === 'status' ? 'Статус обновлён' : value ? 'Дата утверждения обновлена' : 'Дата утверждения очищена')
+      return true
+    } catch (error) {
+      notify(error.message, 'error')
+      return false
+    } finally {
+      setDetailsSaving(current => {
+        const next = new Set(current)
+        next.delete(key)
+        return next
+      })
     }
   }
 
@@ -104,7 +142,7 @@ export default function CreditsLeasing({ notify }) {
         {shownPeriods < schedule.length && <button className="schedule-more" onClick={() => setShownPeriods(value => value + 8)}>Показать ещё периоды</button>}
       </section>
     </>}
-    {details && <CreditDayDetails details={details} loading={detailsLoading} onClose={closeDetails}/>}
+    {details && <CreditDayDetails details={details} loading={detailsLoading} savingCells={detailsSaving} editable={can(user, 'credits.approve')} onCommit={saveDetailField} onClose={closeDetails}/>}
   </div>
 }
 
@@ -118,7 +156,7 @@ function SchedulePeriod({ period, onOpenDay }) {
   </button>)}</div></article>
 }
 
-function CreditDayDetails({ details, loading, onClose }) {
+function CreditDayDetails({ details, loading, savingCells, editable, onCommit, onClose }) {
   useEffect(() => {
     const close = event => { if (event.key === 'Escape') onClose() }
     document.addEventListener('keydown', close)
@@ -141,13 +179,57 @@ function CreditDayDetails({ details, loading, onClose }) {
       <div className="credits-detail-scroll">
         {loading ? <div className="credits-detail-loading"><RefreshCw size={22} className="spin"/><span>Загружаем платежи выбранного дня…</span></div>
           : !details.items.length ? <div className="credits-detail-loading"><CalendarClock size={25}/><span>Платежи не найдены</span></div>
-            : <table className="credits-detail-table"><thead><tr><th>№</th><th>Кредитор</th><th>Документ</th><th>Назначение и комментарий</th><th>График</th><th>Сумма</th><th>Статус</th><th>Факт. оплата</th><th>Ответственный</th></tr></thead>
-              <tbody>{details.items.map((item, index) => <tr key={item.id}><td>{index + 1}</td><td><strong>{item.counterparty || '—'}</strong></td><td><strong>{item.document_number || '—'}</strong><small>{shortDate(item.document_date)}</small></td><td><strong>{item.source_note || '—'}</strong>{item.comment && <small>{item.comment}</small>}</td><td>{installmentLabel(item)}</td><td className="credits-detail-amount">{money(item.amount)}</td><td><span className={`credits-detail-status ${statusTone(item)}`}>{item.status || '—'}</span></td><td>{shortDate(item.actual_payment_date)}</td><td>{item.responsible || '—'}</td></tr>)}</tbody>
-              <tfoot><tr><td colSpan="5">Итого · {summary.count} {paymentWord(summary.count)}</td><td>{money(summary.total)}</td><td colSpan="3">Остаток {money(summary.outstanding)}</td></tr></tfoot></table>}
+            : <table className="credits-detail-table"><thead><tr><th>№</th><th>Кредитор</th><th>Документ</th><th>Назначение и комментарий</th><th>График</th><th>Сумма</th><th>Статус</th><th>Дата утверждения</th><th>Факт. оплата</th><th>Ответственный</th></tr></thead>
+              <tbody>{details.items.map((item, index) => <tr key={item.id}><td>{index + 1}</td><td><strong>{item.counterparty || '—'}</strong></td><td><strong>{item.document_number || '—'}</strong><small>{shortDate(item.document_date)}</small></td><td><strong>{item.source_note || '—'}</strong>{item.comment && <small>{item.comment}</small>}</td><td>{installmentLabel(item)}</td><td className="credits-detail-amount">{money(item.amount)}</td><CreditStatusCell item={item} saving={savingCells.has(`${item.id}:status`)} editable={editable} onCommit={onCommit}/><CreditApprovalDateCell item={item} saving={savingCells.has(`${item.id}:approval_date`)} editable={editable} onCommit={onCommit}/><td>{shortDate(item.actual_payment_date)}</td><td>{item.responsible || '—'}</td></tr>)}</tbody>
+              <tfoot><tr><td colSpan="5">Итого · {summary.count} {paymentWord(summary.count)}</td><td>{money(summary.total)}</td><td colSpan="4">Остаток {money(summary.outstanding)}</td></tr></tfoot></table>}
       </div>
       <footer className="modal-footer"><button type="button" className="primary" onClick={onClose}>Закрыть</button></footer>
     </section>
   </div>
+}
+
+function CreditStatusCell({ item, saving, editable, onCommit }) {
+  const [editing, setEditing] = useState(false)
+  const rootRef = useRef(null)
+  useEffect(() => {
+    if (!editing) return undefined
+    const closeOutside = event => { if (!rootRef.current?.contains(event.target)) setEditing(false) }
+    const closeEscape = event => { if (event.key === 'Escape') setEditing(false) }
+    document.addEventListener('mousedown', closeOutside)
+    document.addEventListener('keydown', closeEscape)
+    return () => {
+      document.removeEventListener('mousedown', closeOutside)
+      document.removeEventListener('keydown', closeEscape)
+    }
+  }, [editing])
+  const choose = async value => {
+    if (value === item.status) {
+      setEditing(false)
+      return
+    }
+    if (await onCommit(item, 'status', value)) setEditing(false)
+  }
+  if (!editable) return <td><span className={`credits-detail-status ${statusTone(item)}`}>{item.status || '—'}</span></td>
+  return <td ref={rootRef} className={`executive-editable-cell ${editing ? 'is-editing' : ''} ${saving ? 'is-saving' : ''}`}>
+    <button type="button" className="executive-cell-trigger" onClick={() => !saving && setEditing(current => !current)} disabled={saving} aria-label={`Статус: ${item.status || 'не указан'}. Изменить`} aria-expanded={editing}>
+      <span className={`credits-detail-status ${statusTone(item)}`}>{item.status || '—'}</span><ChevronDown size={14}/>
+    </button>
+    {editing && <div className="executive-inline-select" role="listbox" aria-label="Выбор статуса платежа">
+      {CREDIT_APPROVAL_STATUSES.map(option => <button type="button" key={option} className={option === item.status ? 'selected' : ''} onClick={() => choose(option)} role="option" aria-selected={option === item.status}><span>{option}</span>{option === item.status && <Check size={14}/>}</button>)}
+    </div>}
+    {saving && <i className="cell-saving-dot"/>}
+  </td>
+}
+
+function CreditApprovalDateCell({ item, saving, editable, onCommit }) {
+  const [editing, setEditing] = useState(false)
+  if (!editable) return <td>{shortDate(item.approval_date)}</td>
+  return <td className={`executive-editable-cell executive-date-cell ${editing ? 'is-editing' : ''} ${saving ? 'is-saving' : ''}`}>
+    {editing
+      ? <DateInput className="executive-date-input" value={item.approval_date || ''} onChange={value => { setEditing(false); onCommit(item, 'approval_date', value) }} onClose={() => setEditing(false)} closeOnScroll={false} aria-label="Дата утверждения платежа" autoFocus/>
+      : <button type="button" className="executive-cell-trigger executive-date-trigger" onClick={() => !saving && setEditing(true)} disabled={saving} aria-label={`Дата утверждения: ${shortDate(item.approval_date)}. Изменить`}>{shortDate(item.approval_date)}</button>}
+    {saving && <i className="cell-saving-dot"/>}
+  </td>
 }
 
 function filterMonths(months = [], asOf, scope) {

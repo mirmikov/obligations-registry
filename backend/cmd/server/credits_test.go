@@ -24,3 +24,27 @@ func TestCreditsLeasingDetailsRequiresLegalEntityBeforeDatabaseQuery(t *testing.
 		t.Fatalf("unexpected response: %d %s", recorder.Code, recorder.Body.String())
 	}
 }
+
+func TestCreditsLeasingApprovalRejectsPaymentFieldsBeforeDatabaseQuery(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/reports/credits-leasing/obligations/bulk", strings.NewReader(`{"ids":[1],"actual_payment_date":"2026-08-11"}`))
+	(&app{}).creditsLeasingBulkUpdate(recorder, request)
+	if recorder.Code != http.StatusForbidden || !strings.Contains(recorder.Body.String(), "только статус согласования и дату утверждения") {
+		t.Fatalf("unexpected response: %d %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestCreditsLeasingApprovalRejectsUnsupportedStatusBeforeDatabaseQuery(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/reports/credits-leasing/obligations/bulk", strings.NewReader(`{"ids":[1],"status":"Оплачено"}`))
+	(&app{}).creditsLeasingBulkUpdate(recorder, request)
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("expected forbidden, got %d: %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestUniqueIDCountIgnoresDuplicates(t *testing.T) {
+	if count := uniqueIDCount([]int64{1, 2, 1, 3, 2}); count != 3 {
+		t.Fatalf("unique ID count = %d, want 3", count)
+	}
+}
