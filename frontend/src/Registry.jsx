@@ -11,6 +11,8 @@ import { canContinueRegistryDrag, canStartRegistryDrag, getRegistryDragScroll, h
 import { can } from './permissions'
 import { referenceOptionSearchText } from './counterpartyTaxId'
 import { buildCostCategoryResponsibleMap, withDefaultResponsible } from './referenceDefaults'
+import { buildAdvancedSplitPayload, buildAdvancedSplitPreview, createAdvancedSplitFields, isAdvancedSplitMode } from './advancedPaymentSplit'
+import AdvancedSplitEditor, { AdvancedSplitModePicker } from './AdvancedSplitEditor'
 import usePresence from './usePresence'
 import AIScanModal from './AIScanModal'
 
@@ -760,10 +762,15 @@ function SplitPaymentModal({ item, refs, onClose, onSave }) {
   const accountTypes = refs.account_types || []
   const fixedAmountAccountTypes = ['ОМС', 'Коммерция']
   const defaultPaymentDate = item.planned_payment_date || isoDate(new Date())
-  const [form, setForm] = useState({ mode: 'count', count: '', payment_dates: [], amount_parts: [{ amount: '', account_type: '', planned_date: '' }], percentage_parts: [{ percent: '', account_type: '', planned_date: '' }, { percent: '', account_type: '', planned_date: '' }] })
+  const [form, setForm] = useState({ mode: 'count', count: '', payment_dates: [], amount_parts: [{ amount: '', account_type: '', planned_date: '' }], percentage_parts: [{ percent: '', account_type: '', planned_date: '' }, { percent: '', account_type: '', planned_date: '' }], ...createAdvancedSplitFields(defaultPaymentDate, item.account_type || '') })
   const [saving, setSaving] = useState(false)
-  const preview = useMemo(() => buildSplitPreview(Number(item.amount), form), [item.amount, form])
+  const advancedMode = isAdvancedSplitMode(form.mode)
+  const preview = useMemo(() => advancedMode ? buildAdvancedSplitPreview(Number(item.amount), form) : buildSplitPreview(Number(item.amount), form), [item.amount, form, advancedMode])
   const splitCount = form.mode === 'amount' ? form.amount_parts.length : preview.items.length
+  const showShare = form.mode === 'percentage' || form.mode === 'advance' || form.mode === 'weights'
+  const showWeight = form.mode === 'weights'
+  const showLabel = form.mode === 'advance'
+  const showAccountType = ['percentage', 'amount', 'advance', 'recurring', 'weights'].includes(form.mode)
   const update = (key, value) => setForm(current => ({ ...current, [key]: value }))
   const updateCount = value => setForm(current => {
     const count = Number(value)
@@ -786,15 +793,21 @@ function SplitPaymentModal({ item, refs, onClose, onSave }) {
     if (preview.error || saving) return
     setSaving(true)
     try {
-      await onSave({ ...form, count: Number(form.count), payment_dates: form.mode === 'count' ? form.payment_dates : null, amount_parts: form.mode === 'amount' ? form.amount_parts.map(part => ({ ...part, amount: Number(part.amount) })) : null, percentage_parts: form.mode === 'percentage' ? form.percentage_parts.map(part => ({ ...part, percent: Number(part.percent) })) : null })
+      const values = advancedMode
+        ? buildAdvancedSplitPayload(form, preview)
+        : { ...form, count: Number(form.count), payment_dates: form.mode === 'count' ? form.payment_dates : null, amount_parts: form.mode === 'amount' ? form.amount_parts.map(part => ({ ...part, amount: Number(part.amount) })) : null, percentage_parts: form.mode === 'percentage' ? form.percentage_parts.map(part => ({ ...part, percent: Number(part.percent) })) : null }
+      await onSave(values)
     } finally { setSaving(false) }
   }
   return <div className="modal-backdrop"><div className="modal split-payment-modal">
     <div className="modal-head"><div><p className="eyebrow">График оплаты</p><h2>Разбить платёж</h2></div><button onClick={onClose} aria-label="Закрыть"><X/></button></div>
     <div className="modal-body split-payment-body">
       <div className="split-source-card"><div><span>Контрагент</span><strong>{item.counterparty || 'Не указан'}</strong><small>{item.document_number ? `Документ ${item.document_number}` : 'Без номера документа'}</small></div><div><span>Общая сумма</span><strong>{money(item.amount)}</strong><small>Сумма графика останется неизменной</small></div></div>
-      <div className="split-mode-tabs" role="tablist"><button type="button" className={form.mode === 'count' ? 'active' : ''} onClick={() => update('mode', 'count')}>Равными частями</button><button type="button" className={form.mode === 'amount' ? 'active' : ''} onClick={() => update('mode', 'amount')}>Заданная сумма</button><button type="button" className={form.mode === 'percentage' ? 'active' : ''} onClick={() => update('mode', 'percentage')}>По процентам</button></div>
-      {form.mode === 'percentage' ? <div className="split-percentage-editor">
+      <div className="split-mode-groups">
+        <div><span className="split-mode-label">Основные способы</span><div className="split-mode-tabs" role="tablist"><button type="button" className={form.mode === 'count' ? 'active' : ''} onClick={() => update('mode', 'count')}>Равными частями</button><button type="button" className={form.mode === 'amount' ? 'active' : ''} onClick={() => update('mode', 'amount')}>Заданная сумма</button><button type="button" className={form.mode === 'percentage' ? 'active' : ''} onClick={() => update('mode', 'percentage')}>По процентам</button></div></div>
+        <AdvancedSplitModePicker value={form.mode} onChange={mode => update('mode', mode)}/>
+      </div>
+      {advancedMode ? <AdvancedSplitEditor form={form} setForm={setForm} preview={preview} accountTypes={accountTypes} fixedAmountAccountTypes={fixedAmountAccountTypes} defaultDate={defaultPaymentDate}/> : form.mode === 'percentage' ? <div className="split-percentage-editor">
         <div className="split-percentage-head"><div><strong>Распределение платежа</strong><span>Для каждой доли укажите процент, признак учёта и дату</span></div><b className={preview.percentageTotal === 100 ? 'valid' : ''}>{formatPercent(preview.percentageTotal)} из 100%</b></div>
         <div className="split-percentage-list">{form.percentage_parts.map((part, index) => <div className="split-percentage-row" key={index}>
           <span className="split-percentage-number">{index + 1}</span>
@@ -820,8 +833,8 @@ function SplitPaymentModal({ item, refs, onClose, onSave }) {
       </div>}
       {preview.error ? <div className="split-error">{preview.error}</div> : <div className="split-preview">
         <div className="split-preview-head"><div><strong>Предварительный график</strong><span>{preview.items.length} {paymentWord(preview.items.length)}</span></div><div><span>Итого</span><strong>{money(preview.total)}</strong></div></div>
-        <div className="split-preview-scroll"><table><thead><tr><th>№</th>{form.mode === 'percentage' && <th>Доля</th>}{(form.mode === 'percentage' || form.mode === 'amount') && <th>Признак учёта</th>}<th>Плановая дата</th><th>Сумма</th></tr></thead><tbody>{preview.items.map(part => <tr key={part.number}><td>{part.number}</td>{form.mode === 'percentage' && <td>{formatPercent(part.percent)}</td>}{(form.mode === 'percentage' || form.mode === 'amount') && <td>{part.account_type}</td>}<td className={form.mode === 'count' ? 'split-preview-date' : ''}>{form.mode === 'count' ? <DateInput value={part.date} onChange={value => updatePaymentDate(part.number - 1, value)} aria-label={`Плановая дата платежа ${part.number}`}/> : shortDate(part.date)}</td><td>{money(part.amount)}</td></tr>)}</tbody></table></div>
-        {preview.hasRemainder && <p>Последний платёж скорректирован на остаток, поэтому общая сумма совпадает до копейки.</p>}
+        <div className="split-preview-scroll"><table><thead><tr><th>№</th>{showLabel && <th>Этап</th>}{showWeight && <th>Вес</th>}{showShare && <th>Доля</th>}{showAccountType && <th>Признак учёта</th>}<th>Плановая дата</th><th>Сумма</th></tr></thead><tbody>{preview.items.map(part => <tr key={part.number}><td>{part.number}</td>{showLabel && <td>{part.label}</td>}{showWeight && <td>{part.weight}</td>}{showShare && <td>{formatPercent(part.percent)}</td>}{showAccountType && <td>{part.account_type}</td>}<td className={form.mode === 'count' ? 'split-preview-date' : ''}>{form.mode === 'count' ? <DateInput value={part.date} onChange={value => updatePaymentDate(part.number - 1, value)} aria-label={`Плановая дата платежа ${part.number}`}/> : shortDate(part.date)}</td><td>{money(part.amount)}</td></tr>)}</tbody></table></div>
+        {preview.hasRemainder && <p>{advancedMode ? 'Копейки распределены автоматически, поэтому общая сумма графика точно совпадает с исходной.' : 'Последний платёж скорректирован на остаток, поэтому общая сумма совпадает до копейки.'}</p>}
       </div>}
     </div>
     <div className="modal-footer"><button className="secondary" onClick={onClose} disabled={saving}>Отмена</button><button className="primary" onClick={submit} disabled={Boolean(preview.error) || saving}>{saving ? 'Создаём график…' : `Разбить на ${splitCount || 0} ${paymentWord(splitCount || 0)}`}</button></div>
