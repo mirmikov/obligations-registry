@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { CalendarDays, Download, Printer, RefreshCw } from 'lucide-react'
+import { CalendarDays, ChevronDown, Download, ExternalLink, Printer, RefreshCw } from 'lucide-react'
 import { download, request } from './api'
 import { DateInput, money, PageHeader, shortDate } from './App'
-import { DuplicateObligationModal, normalizeCellValue, ObligationHistoryModal, RegistryRow, sameCellValue, stripObligation } from './Registry'
-import { localTodayISO, paymentColumns, paymentEditableColumns } from './paymentsView'
+import { DuplicateObligationModal, InlineCellSelect, normalizeCellValue, ObligationHistoryModal, ObligationScanControl, sameCellValue, stripObligation } from './Registry'
+import { localTodayISO, paymentColumns, paymentScreenColumns } from './paymentsView'
 import { can } from './permissions'
 import { withDerivedObligationValues } from './obligationValues'
 import { buildCostCategoryResponsibleMap, withDefaultResponsible } from './referenceDefaults'
@@ -59,7 +59,7 @@ export default function Payments({ user, notify }) {
     saveQueues.current.set(item.id, operation)
     try {
       await operation
-      notify(`${paymentEditableColumns.find(column => column.key === field)?.label || 'Поле'} обновлено`)
+      notify(`${paymentScreenColumns.find(column => column.key === field)?.label || 'Поле'} обновлено`)
       if (next.status !== current.status || ['approval_date', 'legal_entity', 'account_type'].includes(field)) await load()
       return true
     } catch (error) {
@@ -79,20 +79,63 @@ export default function Payments({ user, notify }) {
   }
   useEffect(() => { request('/api/references').then(setRefs).catch(e => notify(e.message,'error')) }, [])
   useEffect(() => { load() }, [query])
-  const tableWidth = 58 + paymentEditableColumns.reduce((sum, column) => sum + column.width, 0) + 118
   return <div className="page payments-page">
     <PageHeader eyebrow="Платёжный реестр" title="Обязательства к оплате" subtitle="Согласованные платежи по выбранным условиям" actions={<><button className="secondary" onClick={load}><RefreshCw size={17}/>Обновить</button>{can(user, 'payments.print') && <button className="secondary" onClick={() => window.print()} disabled={loading}><Printer size={17}/>Печать</button>}{can(user, 'registry.export') && <button className="primary" onClick={() => download(`/api/obligations/export.xlsx?status=${encodeURIComponent('К оплате')}&${query}`, 'К оплате.xlsx')}><Download size={17}/>Выгрузить</button>}</>}/>
     <section className="payment-toolbar"><label><span>Дата утверждения</span><DateInput value={filters.approval_date} onChange={value => setFilters({...filters,approval_date:value})} aria-label="Дата утверждения"/></label><label><span>Юридическое лицо</span><select value={filters.legal_entity} onChange={e => setFilters({...filters,legal_entity:e.target.value})}><option value="">Все юрлица</option>{(refs.legal_entities||[]).map(x=><option key={x.id} value={x.value}>{x.value}</option>)}</select></label><label><span>Признак учёта</span><select value={filters.account_type} onChange={e => setFilters({...filters,account_type:e.target.value})}><option value="">Все</option>{(refs.account_types||[]).map(x=><option key={x.id} value={x.value}>{x.value}</option>)}</select></label></section>
     <section className="payment-summary"><div><CalendarDays/><span>Количество платежей<strong>{data.count}</strong></span></div><div><span>Общая сумма<strong>{money(data.amount)}</strong></span></div></section>
-    <section className="payment-list panel payment-editable-list"><div className="payment-edit-table-wrap"><table className="registry-table inline-registry payment-edit-table" style={{ '--registry-table-width': `${tableWidth}px`, '--registry-counterparty-left': '58px', '--registry-entry-date-left': '278px' }}><colgroup><col style={{ width: 58 }}/>{paymentEditableColumns.map(column => <col key={column.key} style={{ width: column.width }}/>)}<col style={{ width: 118 }}/></colgroup><thead><tr><th className="check-col" aria-label="Документ"/>{paymentEditableColumns.map(column => <th key={column.key} className={column.key === 'counterparty' ? 'counterparty-head' : column.key === 'entry_date' ? 'entry-date-head' : ''}><span className="column-label">{column.label}</span></th>)}<th className="action-col"/></tr></thead><tbody>{loading ? <PaymentSkeletonRows/> : data.items.length === 0 ? <tr><td colSpan={paymentEditableColumns.length + 2}><div className="empty-state"><CalendarDays size={28}/><strong>По выбранным условиям платежей нет</strong><span>Выберите другую дату или юридическое лицо</span></div></td></tr> : data.items.map(item => <RegistryRow key={item.id} item={item} refs={refs} editable={can(user, 'payments.edit')} savingCells={savingCells} onCommit={saveField} onStartEdit={() => {}} onFinishEdit={() => {}} showSelection={false} scanEditable={false} scanURL={`/api/payment-register/${item.id}/scan`} onScanChanged={() => {}} notify={notify} onInfo={() => setDetailItem(item)}/>)}</tbody></table></div></section>
+    <section className="payment-list panel"><div className="payment-head">{paymentScreenColumns.map(column => <span key={column.key}>{column.label}</span>)}</div>{loading ? <div className="loading-line"/> : data.items.length === 0 ? <div className="empty-state"><CalendarDays size={28}/><strong>По выбранным условиям платежей нет</strong><span>Выберите другую дату или юридическое лицо</span></div> : data.items.map(item => <PaymentRow key={item.id} item={item} refs={refs} editable={can(user, 'payments.edit')} savingCells={savingCells} onSave={saveField} onOpenDetails={() => setDetailItem(item)} notify={notify}/>)}</section>
     <PaymentPrintReport data={data} filters={filters}/>
     {detailItem && <ObligationHistoryModal item={detailItem} notify={notify} onClose={() => setDetailItem(null)}/>}
     {duplicatePrompt && <DuplicateObligationModal conflict={duplicatePrompt} onCancel={() => finishDuplicatePrompt(false)} onConfirm={() => finishDuplicatePrompt(true)}/>}
   </div>
 }
 
-function PaymentSkeletonRows() {
-  return <>{Array.from({ length: 6 }).map((_, row) => <tr className="skeleton-row" key={row}>{Array.from({ length: paymentEditableColumns.length + 2 }).map((__, column) => <td key={column}><i/></td>)}</tr>)}</>
+function PaymentRow({ item, refs, editable, savingCells, onSave, onOpenDetails, notify }) {
+  return <div className={`payment-row ${item.urgency === 'Критическая' ? 'critical' : ''}`}>
+    {paymentScreenColumns.map(column => <span key={column.key} className="payment-interactive-cell">
+      <PaymentEditableCell item={item} column={column} refs={refs} editable={editable} saving={savingCells.has(`${item.id}:${column.key}`)} onSave={onSave}/>
+    </span>)}
+    <div className="payment-row-actions">
+      {item.has_scan && <span className="payment-scan-control"><ObligationScanControl item={item} editable={false} notify={notify} onChanged={() => {}} scanURL={`/api/payment-register/${item.id}/scan`}/></span>}
+      <button type="button" className="payment-details-button" onClick={onOpenDetails} title="Подробнее о платеже" aria-label={`Подробнее о платеже №${item.id}`}><ExternalLink size={17}/></button>
+    </div>
+  </div>
+}
+
+function PaymentEditableCell({ item, column, refs, editable, saving, onSave }) {
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState('')
+  const options = paymentCellOptions(refs, column.key)
+  const type = paymentCellType(column.key)
+  const begin = () => {
+    if (!editable || saving) return
+    setDraft(item[column.key] == null ? '' : String(item[column.key]))
+    setEditing(true)
+  }
+  const commit = async rawValue => {
+    const ok = await onSave(item, column.key, rawValue)
+    if (ok) setEditing(false)
+  }
+  const keyDown = event => {
+    if (event.key === 'Enter') { event.preventDefault(); event.currentTarget.blur() }
+    if (event.key === 'Escape') { event.preventDefault(); setEditing(false) }
+  }
+  if (editing && options) return <InlineCellSelect label={column.label} value={item[column.key] || ''} options={options} allowCustom={column.key === 'counterparty'} onChoose={commit} onCancel={() => setEditing(false)}/>
+  if (editing && type === 'date') return <div className={`payment-cell-date ${saving ? 'is-saving' : ''}`}><DateInput value={item[column.key] || ''} onChange={commit} onClose={() => setEditing(false)} aria-label={`${column.label}, запись №${item.id}`} autoFocus/></div>
+  if (editing) return <input className={`payment-cell-input ${column.key === 'amount' ? 'is-money' : ''}`} type={type} value={draft} onChange={event => setDraft(event.target.value)} onBlur={event => commit(event.target.value)} onKeyDown={keyDown} autoFocus/>
+  return <button type="button" className={`payment-cell-control ${column.key === 'amount' ? 'is-money' : ''}`} onClick={begin} disabled={!editable || saving} aria-label={`${column.label}: ${paymentValue(item, column.key)}`}>
+    <span>{saving ? 'Сохраняем…' : paymentValue(item, column.key)}</span>{editable && options && <ChevronDown size={14}/>}
+  </button>
+}
+
+function paymentCellType(key) {
+  if (key === 'document_date' || key === 'actual_payment_date') return 'date'
+  if (key === 'amount') return 'number'
+  return 'text'
+}
+
+function paymentCellOptions(refs, key) {
+  return ({ account_type: refs.account_types, legal_entity: refs.legal_entities, counterparty: refs.counterparties, status: refs.statuses }[key] || null)
 }
 
 function PaymentPrintReport({ data, filters }) {
@@ -111,7 +154,7 @@ function PaymentPrintReport({ data, filters }) {
 }
 
 function paymentValue(item, key) {
-  if (key === 'planned_payment_date' || key === 'document_date') return shortDate(item[key])
+  if (key === 'planned_payment_date' || key === 'document_date' || key === 'actual_payment_date') return shortDate(item[key])
   if (key === 'amount') return money(item[key])
   return item[key] || '—'
 }
