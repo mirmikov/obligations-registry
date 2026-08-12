@@ -286,6 +286,9 @@ func (a *app) processAIScanBatch(token, directory string, pages []string) {
 		}
 		if recoveryErrors[index] != nil {
 			log.Printf("AI scan recovery page %d: %v", index+1, recoveryErrors[index])
+			if needsAIScanRecovery(suggestion) {
+				suggestion.Warnings = append(suggestion.Warnings, "Дополнительное распознавание не завершено — проверьте значения вручную")
+			}
 		}
 		suggestion.Page = index + 1
 		suggestion.DuplicateMatches = a.aiScanDuplicates(ctx, suggestion)
@@ -929,6 +932,11 @@ func parseAIScanTextWithReferences(text string, counterparties []aiScanCounterpa
 		if result.Counterparty != "" {
 			result.Confidence["counterparty"] = "low"
 		}
+	} else if result.CounterpartyTaxID == "" && result.Confidence["counterparty"] == "high" {
+		// Exact canonical-name matches are sufficient to reuse the directory row.
+		// Return its known INN as well so duplicate prevention stays deterministic
+		// when this OCR pass did not repeat the digits.
+		result.CounterpartyTaxID = aiScanReferenceTaxID(result.Counterparty, counterparties)
 	}
 	result.LegalEntity, result.Confidence["legal_entity"] = bestAIScanReference(buyerName, legalEntities)
 	if result.LegalEntity == "" {
@@ -1293,6 +1301,19 @@ func bestAIScanCounterpartyReference(text, taxID string, references []aiScanCoun
 		values = append(values, reference.Value)
 	}
 	return bestAIScanReference(text, values)
+}
+
+func aiScanReferenceTaxID(value string, references []aiScanCounterpartyReference) string {
+	key := normalizedPartyName(value)
+	if key == "" {
+		return ""
+	}
+	for _, reference := range references {
+		if normalizedPartyName(reference.Value) == key {
+			return normalizeAIScanTaxID(reference.TaxID)
+		}
+	}
+	return ""
 }
 
 func bestAIScanReference(text string, values []string) (string, string) {

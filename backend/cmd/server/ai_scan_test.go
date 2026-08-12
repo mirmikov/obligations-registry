@@ -357,6 +357,18 @@ func TestBestAIScanCounterpartyReferencePrefersTaxIDAndAvoidsBrokenDuplicate(t *
 	}
 }
 
+func TestParseAIScanTextEnrichesCanonicalCounterpartyWithDirectoryTaxID(t *testing.T) {
+	result := parseAIScanTextWithReferences(`
+Счет на оплату № 800856 от 10 августа 2026 г.
+Поставщик: АО "ДЕАЛМЕД"
+Покупатель: ООО "МЦ МИРТ"
+ИТОГО: 12 000,00
+`, []aiScanCounterpartyReference{{Value: `АО "ДЕАЛМЕД"`, TaxID: "7728820940"}}, []string{`ООО "МЦ МИРТ"`})
+	if result.Counterparty != `АО "ДЕАЛМЕД"` || result.CounterpartyTaxID != "7728820940" || result.Confidence["counterparty"] != "high" {
+		t.Fatalf("canonical counterparty was not enriched with directory INN: %#v", result)
+	}
+}
+
 func TestAIScanCounterpartyCandidateKeyDeduplicatesWritingVariants(t *testing.T) {
 	if aiScanCounterpartyCandidateKey(`ООО «ВсеИнструменты.ру»`, "") != aiScanCounterpartyCandidateKey(`ВсеИнструменты.ру`, "") {
 		t.Fatal("equivalent counterparty names must share one candidate key")
