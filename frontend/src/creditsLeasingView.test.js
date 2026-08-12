@@ -58,6 +58,13 @@ test('credits status update changes only the approval status', () => {
 })
 
 test('credits approval date can be set or explicitly cleared', () => {
+  assert.deepEqual(creditApprovalUpdatePayload(17, 'approval_date', '2026-08-12'), {
+    ids: [17],
+    status: 'К оплате',
+    approval_date: '2026-08-12',
+    actual_payment_date: '',
+    approval_date_set: true,
+  })
   assert.deepEqual(creditApprovalUpdatePayload(17, 'approval_date', ''), {
     ids: [17],
     status: '',
@@ -71,6 +78,8 @@ test('credit day details wire editable status and approval date to the scoped en
   const source = fs.readFileSync(new URL('./CreditsLeasing.jsx', import.meta.url), 'utf8')
   assert.match(source, /credits\.approve/)
   assert.match(source, /\/api\/reports\/credits-leasing\/obligations\/bulk/)
+  assert.match(source, /optimisticItem = withDerivedObligationValues\(\{ \.\.\.item, \[field\]: value \}, field\)/)
+  assert.match(source, /row\.id === item\.id \? optimisticItem : row/)
   assert.match(source, /CreditStatusCell/)
   assert.match(source, /CreditApprovalDateCell/)
 })

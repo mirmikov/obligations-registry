@@ -239,7 +239,6 @@ func (a *app) updateObligation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	input := payload.obligationInput
-	input.normalize()
 	user := currentUser(r)
 	tx, err := a.db.BeginTx(r.Context(), nil)
 	if err != nil {
@@ -256,6 +255,14 @@ func (a *app) updateObligation(w http.ResponseWriter, r *http.Request) {
 		fail(w, 500, "Не удалось подготовить историю отмены")
 		return
 	}
+	var previous struct {
+		ApprovalDate string `json:"approval_date"`
+	}
+	if err = json.Unmarshal(beforeRow, &previous); err != nil {
+		fail(w, 500, "Не удалось прочитать текущее обязательство")
+		return
+	}
+	input.normalizeForUpdate(previous.ApprovalDate)
 	before, _ := snapshotArray([]json.RawMessage{beforeRow})
 	existing, splitGroupID, err := loadDuplicateIdentity(r.Context(), tx, id)
 	if err != nil {
@@ -346,7 +353,11 @@ func (a *app) deleteObligation(w http.ResponseWriter, r *http.Request) {
 }
 
 const bulkUpdateSQL = `UPDATE obligations SET
-	status=CASE WHEN $1='' THEN status ELSE $1 END,
+	status=CASE
+		WHEN actual_payment_date IS NOT NULL OR NULLIF(BTRIM($4),'') IS NOT NULL THEN 'Оплачено'
+		WHEN NULLIF(BTRIM($3),'') IS NOT NULL THEN 'К оплате'
+		WHEN $1='' THEN status ELSE $1
+	END,
 	approval_date=CASE WHEN $2 THEN NULLIF($3,'')::date WHEN $3='' THEN approval_date ELSE $3::date END,
 	actual_payment_date=CASE WHEN $4='' THEN actual_payment_date ELSE $4::date END,
 	updated_by=$5,updated_at=now()
@@ -377,6 +388,10 @@ type bulkUpdateInput struct {
 	ActualPaymentDate string  `json:"actual_payment_date"`
 }
 
+func (input *bulkUpdateInput) normalizeStatus() {
+	input.Status = automaticObligationStatus(input.ApprovalDate, input.ActualPaymentDate, input.Status)
+}
+
 func (a *app) bulkUpdate(w http.ResponseWriter, r *http.Request) {
 	var input bulkUpdateInput
 	if !decodeJSON(w, r, &input) {
@@ -393,7 +408,7 @@ func (a *app) bulkUpdate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	input.Status = automaticPaymentStatus(input.ActualPaymentDate, input.Status)
+	input.normalizeStatus()
 	user := currentUser(r)
 	tx, err := a.db.BeginTx(r.Context(), nil)
 	if err != nil {

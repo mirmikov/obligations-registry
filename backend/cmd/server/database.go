@@ -113,7 +113,7 @@ func (input *obligationInput) normalize() {
 	if input.EntryDate == "" {
 		input.EntryDate = time.Now().Format("2006-01-02")
 	}
-	input.Status = automaticPaymentStatus(input.ActualPaymentDate, input.Status)
+	input.Status = automaticObligationStatus(input.ApprovalDate, input.ActualPaymentDate, input.Status)
 	if input.DocumentDate != "" && input.DefermentDays != nil {
 		if date, err := time.Parse("2006-01-02", input.DocumentDate); err == nil {
 			input.PlannedPaymentDate = date.AddDate(0, 0, *input.DefermentDays).Format("2006-01-02")
@@ -121,11 +121,26 @@ func (input *obligationInput) normalize() {
 	}
 }
 
-func automaticPaymentStatus(actualPaymentDate, status string) string {
+func (input *obligationInput) normalizeForUpdate(previousApprovalDate string) {
+	requestedStatus := input.Status
+	input.normalize()
+	if strings.TrimSpace(input.ActualPaymentDate) == "" && strings.TrimSpace(input.ApprovalDate) == strings.TrimSpace(previousApprovalDate) {
+		input.Status = requestedStatus
+	}
+}
+
+func automaticObligationStatus(approvalDate, actualPaymentDate, status string) string {
 	if strings.TrimSpace(actualPaymentDate) != "" {
 		return "Оплачено"
 	}
+	if strings.TrimSpace(approvalDate) != "" {
+		return "К оплате"
+	}
 	return status
+}
+
+func automaticPaymentStatus(actualPaymentDate, status string) string {
+	return automaticObligationStatus("", actualPaymentDate, status)
 }
 
 func normalizeReferenceKind(kind string) string {

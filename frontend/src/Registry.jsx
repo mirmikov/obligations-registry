@@ -281,6 +281,7 @@ export default function Registry({ user, notify, maintenance, onToggleMaintenanc
       const latest = rowsRef.current.get(item.id)
       if (sameCellValue(latest?.[field], value)) {
         const reverted = { ...latest, [field]: previousValue }
+        if (!sameCellValue(next.status, current.status) && sameCellValue(latest?.status, next.status)) reverted.status = current.status
         if (!sameCellValue(next.planned_payment_date, current.planned_payment_date) && sameCellValue(latest?.planned_payment_date, next.planned_payment_date)) reverted.planned_payment_date = current.planned_payment_date
         rowsRef.current.set(item.id, reverted)
         setData(state => ({ ...state, items: state.items.map(row => row.id === item.id ? reverted : row) }))
@@ -989,6 +990,11 @@ function formatPercent(value) { return `${Number(value || 0).toLocaleString('ru-
 function isoDate(date) { return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-${String(date.getUTCDate()).padStart(2, '0')}` }
 function paymentWord(value) { const lastTwo = value % 100; const last = value % 10; return lastTwo >= 11 && lastTwo <= 14 ? 'платежей' : last === 1 ? 'платёж' : last >= 2 && last <= 4 ? 'платежа' : 'платежей' }
 function partWord(value) { const lastTwo = value % 100; const last = value % 10; return lastTwo >= 11 && lastTwo <= 14 ? 'частей' : last === 1 ? 'часть' : last >= 2 && last <= 4 ? 'части' : 'частей' }
-function BulkModal({ count, refs, onClose, onSave }) { const [form,setForm]=useState({status:'',approval_date:'',actual_payment_date:''});return <div className="modal-backdrop"><div className="modal small-modal"><div className="modal-head"><div><p className="eyebrow">Массовое действие</p><h2>Изменить {count} строк</h2></div><button onClick={onClose}><X/></button></div><div className="modal-body stacked-fields"><SelectField label="Новый статус" value={form.status} options={refs.statuses} onChange={v=>setForm({...form,status:v})}/><Field label="Дата утверждения" type="date" value={form.approval_date} onChange={v=>setForm({...form,approval_date:v})}/><Field label="Фактическая дата оплаты" type="date" value={form.actual_payment_date} onChange={v=>setForm({...form,actual_payment_date:v})}/></div><div className="modal-footer"><button className="secondary" onClick={onClose}>Отмена</button><button className="primary" onClick={()=>onSave(form)}>Применить</button></div></div></div> }
+function BulkModal({ count, refs, onClose, onSave }) {
+  const [form, setForm] = useState({ status: '', approval_date: '', actual_payment_date: '' })
+  const updateApprovalDate = value => setForm(current => withDerivedObligationValues({ ...current, approval_date: value }, 'approval_date'))
+  const updateActualPaymentDate = value => setForm(current => withDerivedObligationValues({ ...current, actual_payment_date: value }, 'actual_payment_date'))
+  return <div className="modal-backdrop"><div className="modal small-modal"><div className="modal-head"><div><p className="eyebrow">Массовое действие</p><h2>Изменить {count} строк</h2></div><button onClick={onClose}><X/></button></div><div className="modal-body stacked-fields"><SelectField label="Новый статус" value={form.status} options={refs.statuses} onChange={v => setForm({ ...form, status: v })}/><Field label="Дата утверждения" type="date" value={form.approval_date} onChange={updateApprovalDate}/><Field label="Фактическая дата оплаты" type="date" value={form.actual_payment_date} onChange={updateActualPaymentDate}/></div><div className="modal-footer"><button className="secondary" onClick={onClose}>Отмена</button><button className="primary" onClick={() => onSave(form)}>Применить</button></div></div></div>
+}
 
 

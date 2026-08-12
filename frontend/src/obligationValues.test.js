@@ -1,6 +1,34 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { withDerivedObligationValues } from './obligationValues.js'
+import { PAYABLE_STATUS, withDerivedObligationValues } from './obligationValues.js'
+
+test('approval date automatically marks obligation as payable', () => {
+  const value = withDerivedObligationValues({
+    approval_date: '2026-08-12',
+    status: 'Зарегистрирован',
+  }, 'approval_date')
+
+  assert.equal(value.status, PAYABLE_STATUS)
+})
+
+test('clearing approval date does not silently change status', () => {
+  const value = withDerivedObligationValues({
+    approval_date: '',
+    status: 'К оплате',
+  }, 'approval_date')
+
+  assert.equal(value.status, 'К оплате')
+})
+
+test('actual payment date keeps paid status when approval date changes', () => {
+  const value = withDerivedObligationValues({
+    approval_date: '2026-08-12',
+    actual_payment_date: '2026-08-11',
+    status: 'Оплачено',
+  }, 'approval_date')
+
+  assert.equal(value.status, 'Оплачено')
+})
 
 test('actual payment date automatically marks obligation as paid', () => {
   const value = withDerivedObligationValues({

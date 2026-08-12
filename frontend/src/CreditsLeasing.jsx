@@ -4,6 +4,7 @@ import { request } from './api'
 import { DateInput, money, PageHeader, shortDate } from './App'
 import { CREDIT_APPROVAL_STATUSES, creditApprovalUpdatePayload, groupCreditSchedule, summarizeCreditDetails } from './creditsLeasingView'
 import { can } from './permissions'
+import { withDerivedObligationValues } from './obligationValues'
 import './creditsApproval.css'
 
 const emptyData = { entities: [], creditors: [], months: [], payments: [], totals: {} }
@@ -62,7 +63,12 @@ export default function CreditsLeasing({ user, notify }) {
   const saveDetailField = async (item, field, value) => {
     const key = `${item.id}:${field}`
     const currentDetails = details
+    const optimisticItem = withDerivedObligationValues({ ...item, [field]: value }, field)
     setDetailsSaving(current => new Set(current).add(key))
+    setDetails(current => current ? {
+      ...current,
+      items: current.items.map(row => row.id === item.id ? optimisticItem : row),
+    } : current)
     try {
       await request('/api/reports/credits-leasing/obligations/bulk', {
         method: 'POST',
@@ -83,6 +89,15 @@ export default function CreditsLeasing({ user, notify }) {
       notify(field === 'status' ? 'Статус обновлён' : value ? 'Дата утверждения обновлена' : 'Дата утверждения очищена')
       return true
     } catch (error) {
+      setDetails(current => current ? {
+        ...current,
+        items: current.items.map(row => {
+          if (row.id !== item.id || row[field] !== value) return row
+          const reverted = { ...row, [field]: item[field] }
+          if (row.status === optimisticItem.status) reverted.status = item.status
+          return reverted
+        }),
+      } : current)
       notify(error.message, 'error')
       return false
     } finally {

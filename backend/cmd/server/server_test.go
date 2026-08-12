@@ -241,6 +241,14 @@ func TestBulkUpdateCanExplicitlyClearApprovalDate(t *testing.T) {
 	}
 }
 
+func TestBulkUpdateStatusPrioritizesActualPaymentOverApproval(t *testing.T) {
+	actualPaymentGuard := strings.Index(bulkUpdateSQL, "actual_payment_date IS NOT NULL")
+	approvalRule := strings.Index(bulkUpdateSQL, "WHEN NULLIF(BTRIM($3),'') IS NOT NULL THEN 'К оплате'")
+	if actualPaymentGuard < 0 || approvalRule < 0 || actualPaymentGuard > approvalRule {
+		t.Fatalf("bulk update must keep an actually paid row paid before applying approval status: %s", bulkUpdateSQL)
+	}
+}
+
 func TestDatabaseMigrationsCanBeDisabledForProductionCodeDeploy(t *testing.T) {
 	t.Setenv("RUN_DATABASE_MIGRATIONS", "false")
 	if databaseMigrationsEnabled() {
@@ -686,11 +694,74 @@ func TestAutomaticPaymentStatus(t *testing.T) {
 	}
 }
 
+func TestAutomaticObligationStatus(t *testing.T) {
+	for _, test := range []struct {
+		name         string
+		approvalDate string
+		actualDate   string
+		status       string
+		want         string
+	}{
+		{name: "approval date marks payable", approvalDate: "2026-07-28", status: "Зарегистрирован", want: "К оплате"},
+		{name: "spaces around approval date mark payable", approvalDate: " 2026-07-28 ", status: "Отменено", want: "К оплате"},
+		{name: "actual payment has priority", approvalDate: "2026-07-28", actualDate: "2026-07-29", status: "Зарегистрирован", want: "Оплачено"},
+		{name: "empty dates preserve status", status: "Отменено", want: "Отменено"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := automaticObligationStatus(test.approvalDate, test.actualDate, test.status); got != test.want {
+				t.Fatalf("automaticObligationStatus(%q, %q, %q)=%q, want %q", test.approvalDate, test.actualDate, test.status, got, test.want)
+			}
+		})
+	}
+}
+
 func TestObligationNormalizeMarksActualPaymentAsPaid(t *testing.T) {
 	input := obligationInput{EntryDate: "2026-07-20", ActualPaymentDate: "2026-07-29", Status: "К оплате"}
 	input.normalize()
 	if input.Status != "Оплачено" {
 		t.Fatalf("normalized status=%q, want Оплачено", input.Status)
+	}
+}
+
+func TestObligationNormalizeMarksApprovalAsPayable(t *testing.T) {
+	input := obligationInput{EntryDate: "2026-07-20", ApprovalDate: "2026-07-28", Status: "Зарегистрирован"}
+	input.normalize()
+	if input.Status != "К оплате" {
+		t.Fatalf("normalized status=%q, want К оплате", input.Status)
+	}
+}
+
+func TestObligationNormalizeForUpdateUsesApprovalOnlyWhenItChanges(t *testing.T) {
+	newApproval := obligationInput{EntryDate: "2026-07-20", ApprovalDate: "2026-07-28", Status: "Зарегистрирован"}
+	newApproval.normalizeForUpdate("")
+	if newApproval.Status != "К оплате" {
+		t.Fatalf("new approval status=%q, want К оплате", newApproval.Status)
+	}
+
+	changedApproval := obligationInput{EntryDate: "2026-07-20", ApprovalDate: "2026-07-29", Status: "Отменено"}
+	changedApproval.normalizeForUpdate("2026-07-28")
+	if changedApproval.Status != "К оплате" {
+		t.Fatalf("changed approval status=%q, want К оплате", changedApproval.Status)
+	}
+
+	manualStatus := obligationInput{EntryDate: "2026-07-20", ApprovalDate: "2026-07-28", Status: "Отменено"}
+	manualStatus.normalizeForUpdate("2026-07-28")
+	if manualStatus.Status != "Отменено" {
+		t.Fatalf("unchanged approval status=%q, want explicit Отменено", manualStatus.Status)
+	}
+
+	paid := obligationInput{EntryDate: "2026-07-20", ApprovalDate: "2026-07-29", ActualPaymentDate: "2026-07-30", Status: "Зарегистрирован"}
+	paid.normalizeForUpdate("2026-07-28")
+	if paid.Status != "Оплачено" {
+		t.Fatalf("actual payment status=%q, want Оплачено", paid.Status)
+	}
+}
+
+func TestBulkUpdateNormalizeStatusMarksApprovalAsPayable(t *testing.T) {
+	input := bulkUpdateInput{ApprovalDateSet: true, ApprovalDate: "2026-07-28", Status: "Зарегистрирован"}
+	input.normalizeStatus()
+	if input.Status != "К оплате" {
+		t.Fatalf("bulk status=%q, want К оплате", input.Status)
 	}
 }
 
