@@ -1,18 +1,21 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
-import { paymentColumns, paymentScreenColumns, paymentUpdatePayload } from './paymentsView.js'
+import { paymentColumns, paymentEditableColumns, paymentUpdatePayload } from './paymentsView.js'
 
-test('screen places actual payment date before status without approval date', () => {
-  assert.deepEqual(paymentScreenColumns.slice(-2).map(column => column.key), ['actual_payment_date', 'status'])
-  assert.ok(paymentScreenColumns.findIndex(column => column.key === 'actual_payment_date') < paymentScreenColumns.findIndex(column => column.key === 'status'))
-  assert.equal(paymentScreenColumns.some(column => column.key === 'approval_date'), false)
+test('payment register exposes every business field from the main registry for editing', () => {
+  assert.deepEqual(paymentEditableColumns.map(column => column.key), [
+    'counterparty', 'entry_date', 'account_type', 'legal_entity', 'amount', 'document_number', 'document_date',
+    'cost_category', 'deferment_days', 'planned_payment_date', 'approval_date', 'actual_payment_date', 'status',
+    'urgency', 'responsible', 'priority', 'comment', 'source_note',
+  ])
+  assert.ok(paymentEditableColumns.findIndex(column => column.key === 'actual_payment_date') < paymentEditableColumns.findIndex(column => column.key === 'status'))
   assert.equal(paymentColumns.some(column => ['status', 'actual_payment_date', 'approval_date'].includes(column.key)), false)
 })
 
-test('screen shows document date instead of payment due date without changing print columns', () => {
-  assert.equal(paymentScreenColumns.some(column => column.key === 'planned_payment_date'), false)
-  assert.equal(paymentScreenColumns.find(column => column.key === 'document_date')?.label, 'Дата документа')
+test('screen includes document and planned dates without changing print columns', () => {
+  assert.equal(paymentEditableColumns.find(column => column.key === 'document_date')?.label, 'Дата документа')
+  assert.equal(paymentEditableColumns.find(column => column.key === 'planned_payment_date')?.label, 'Плановая оплата')
   assert.equal(paymentColumns.some(column => column.key === 'document_date'), false)
   assert.equal(paymentColumns.find(column => column.key === 'planned_payment_date')?.label, 'Срок оплаты')
 })
@@ -52,4 +55,12 @@ test('print report remains bound only to original paymentColumns', () => {
   assert.match(printReport, /paymentColumns\.map\(column => <th/)
   assert.match(printReport, /paymentColumns\.map\(column => <td/)
   assert.doesNotMatch(printReport, /paymentScreenColumns/)
+})
+
+test('payment screen uses the shared editable registry row and submits a complete obligation', () => {
+  const source = fs.readFileSync(new URL('./Payments.jsx', import.meta.url), 'utf8')
+  assert.match(source, /<RegistryRow[^>]+editable=\{can\(user, 'payments\.edit'\)\}/)
+  assert.match(source, /stripObligation\(rowsRef\.current\.get\(item\.id\)\)/)
+  assert.match(source, /saveWithDuplicateConfirmation/)
+  assert.match(source, /withDerivedObligationValues/)
 })

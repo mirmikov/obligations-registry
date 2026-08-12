@@ -7,8 +7,8 @@ const payments = fs.readFileSync(new URL('./Payments.jsx', import.meta.url), 'ut
 const registry = fs.readFileSync(new URL('./Registry.jsx', import.meta.url), 'utf8')
 
 test('each payment row opens the source registry record details', () => {
-  assert.match(payments, /aria-label={`Подробнее о платеже №\$\{item\.id\}`}/)
-  assert.match(payments, /onOpenDetails=\{\(\) => setDetailItem\(item\)\}/)
+  assert.match(payments, /onInfo=\{\(\) => setDetailItem\(item\)\}/)
+  assert.match(payments, /<RegistryRow key=\{item\.id\}/)
   assert.match(payments, /detailItem && <ObligationHistoryModal item=\{detailItem\}/)
 })
 
@@ -29,7 +29,9 @@ test('payment drilldown does not change print report columns', () => {
 })
 
 test('payment rows show a read-only scan control only when a scan exists', () => {
-  assert.match(payments, /item\.has_scan && <span className="payment-scan-control"><ObligationScanControl item=\{item\} editable=\{false\}.*scanURL=\{`\/api\/payment-register\/\$\{item\.id\}\/scan`\}/)
+  assert.match(payments, /scanEditable=\{false\}/)
+  assert.match(payments, /scanURL=\{`\/api\/payment-register\/\$\{item\.id\}\/scan`\}/)
+  assert.match(registry, /\(scanEditable \|\| item\.has_scan\) && <ObligationScanControl/)
 })
 
 test('payment drilldown keeps current payment values while preserving audit authors', () => {

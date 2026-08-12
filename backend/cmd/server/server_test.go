@@ -105,6 +105,25 @@ func TestBuildFiltersSupportsMultipleCounterparties(t *testing.T) {
 	}
 }
 
+func TestBuildFiltersSupportsFormattedExactAmount(t *testing.T) {
+	r := httptest.NewRequest("GET", "/?amount=17%C2%A0986%2C25", nil)
+	where, args := buildFilters(r, 1)
+	if !strings.Contains(where, "amount=$1::numeric") {
+		t.Fatalf("filter SQL %q does not use an exact numeric amount", where)
+	}
+	if len(args) != 1 || args[0] != "17986.25" {
+		t.Fatalf("amount args = %#v, want [17986.25]", args)
+	}
+}
+
+func TestBuildFiltersRejectsInvalidAmountWithoutSQLCastError(t *testing.T) {
+	r := httptest.NewRequest("GET", "/?amount=not-a-number", nil)
+	where, args := buildFilters(r, 1)
+	if !strings.Contains(where, "false") || len(args) != 0 {
+		t.Fatalf("invalid amount filter = %q %#v, want false without arguments", where, args)
+	}
+}
+
 func TestNormalizeWorkspaceStateRejectsUnknownPage(t *testing.T) {
 	value := normalizeWorkspaceState(workspaceState{Page: "users<script>", SidebarCollapsed: true})
 	if value.Page != "dashboard" || !value.SidebarCollapsed {

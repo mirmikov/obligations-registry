@@ -115,6 +115,14 @@ func buildFilters(r *http.Request, start int) (string, []any) {
 	if q := strings.TrimSpace(query.Get("q")); q != "" {
 		add(`concat_ws(' ',counterparty,document_number,comment,responsible,legal_entity,cost_category) ILIKE '%%'||$%d||'%%'`, q)
 	}
+	if rawAmount := strings.TrimSpace(query.Get("amount")); rawAmount != "" {
+		normalized := strings.NewReplacer(" ", "", "\u00a0", "", "\u202f", "", ",", ".").Replace(rawAmount)
+		if amount, err := strconv.ParseFloat(normalized, 64); err == nil {
+			add("amount=$%d::numeric", strconv.FormatFloat(amount, 'f', -1, 64))
+		} else {
+			clauses = append(clauses, "false")
+		}
+	}
 	if value := query.Get("planned_from"); value != "" {
 		add("planned_payment_date >= $%d::date", value)
 	}
@@ -229,6 +237,10 @@ func (a *app) createObligation(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *app) updateObligation(w http.ResponseWriter, r *http.Request) {
+	a.updateObligationRecord(w, r, "Изменение обязательства")
+}
+
+func (a *app) updateObligationRecord(w http.ResponseWriter, r *http.Request, auditDescription string) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
 		fail(w, 400, "Некорректный ID")
@@ -295,7 +307,7 @@ func (a *app) updateObligation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	after, err := snapshotRows(r.Context(), tx, "obligations", []int64{id})
-	if err != nil || a.recordUndo(r.Context(), tx, user.ID, "update", fmt.Sprintf("Изменение обязательства №%d", id), undoPayload{Obligations: &undoChange{Before: before, After: after}}) != nil {
+	if err != nil || a.recordUndo(r.Context(), tx, user.ID, "update", fmt.Sprintf("%s №%d", auditDescription, id), undoPayload{Obligations: &undoChange{Before: before, After: after}}) != nil {
 		fail(w, 500, "Не удалось записать историю отмены")
 		return
 	}
@@ -464,58 +476,7 @@ func uniqueIDCount(ids []int64) int {
 }
 
 func (a *app) updatePaymentFields(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-	if err != nil {
-		fail(w, 400, "Некорректный ID")
-		return
-	}
-	var input struct {
-		Status            string `json:"status"`
-		ActualPaymentDate string `json:"actual_payment_date"`
-	}
-	if !decodeJSON(w, r, &input) {
-		return
-	}
-	input.Status = automaticPaymentStatus(input.ActualPaymentDate, input.Status)
-	user := currentUser(r)
-	tx, err := a.db.BeginTx(r.Context(), nil)
-	if err != nil {
-		fail(w, 500, "Не удалось начать сохранение")
-		return
-	}
-	defer tx.Rollback()
-	beforeRow, err := snapshotOneObligation(r.Context(), tx, id)
-	if errors.Is(err, sql.ErrNoRows) {
-		fail(w, 404, "Запись не найдена")
-		return
-	}
-	if err != nil {
-		fail(w, 500, "Не удалось подготовить историю отмены")
-		return
-	}
-	before, _ := snapshotArray([]json.RawMessage{beforeRow})
-	result, err := tx.ExecContext(r.Context(), `
-		UPDATE obligations SET status=NULLIF($1,''),actual_payment_date=NULLIF($2,'')::date,updated_by=$3,updated_at=now()
-		WHERE id=$4`, input.Status, input.ActualPaymentDate, user.ID, id)
-	if err != nil {
-		fail(w, 400, "Не удалось сохранить платёж: "+err.Error())
-		return
-	}
-	if affected, _ := result.RowsAffected(); affected == 0 {
-		fail(w, 404, "Запись не найдена")
-		return
-	}
-	after, err := snapshotRows(r.Context(), tx, "obligations", []int64{id})
-	if err != nil || a.recordUndo(r.Context(), tx, user.ID, "update", fmt.Sprintf("Изменение оплаты обязательства №%d", id), undoPayload{Obligations: &undoChange{Before: before, After: after}}) != nil {
-		fail(w, 500, "Не удалось записать историю отмены")
-		return
-	}
-	if err = tx.Commit(); err != nil {
-		fail(w, 500, "Не удалось завершить сохранение")
-		return
-	}
-	a.audit(r.Context(), user.ID, "update", "obligation", &id, input)
-	writeJSON(w, 200, map[string]any{"id": id})
+	a.updateObligationRecord(w, r, "Изменение обязательства в реестре к оплате")
 }
 
 func (a *app) getObligation(ctxQuery string, args ...any) (obligation, error) {
