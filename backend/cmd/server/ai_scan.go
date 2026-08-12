@@ -19,6 +19,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -28,10 +29,65 @@ import (
 )
 
 const (
-	maxAIScanPages = 30
-	aiScanLifetime = 24 * time.Hour
-	aiScanDPI      = 140
+	maxAIScanPages  = 30
+	aiScanLifetime  = 24 * time.Hour
+	aiScanDPI       = 140
+	aiScanRescueDPI = 220
+
+	maxAIScanOCRWorkers = 6
+	aiScanRenderWorkers = 2
 )
+
+// Tesseract is CPU intensive and every document is processed in a background
+// goroutine. The process-wide limit prevents several simultaneous batches from
+// multiplying their worker count, while still using the larger production VM.
+var (
+	aiScanOCRLimiter    = newAIScanLimiter(aiScanOCRWorkerLimit(runtime.GOMAXPROCS(0), os.Getenv("AI_SCAN_OCR_WORKERS")))
+	aiScanRenderLimiter = newAIScanLimiter(aiScanRenderWorkers)
+)
+
+type aiScanLimiter struct {
+	slots chan struct{}
+}
+
+func newAIScanLimiter(limit int) *aiScanLimiter {
+	if limit < 1 {
+		limit = 1
+	}
+	return &aiScanLimiter{slots: make(chan struct{}, limit)}
+}
+
+func (limiter *aiScanLimiter) run(ctx context.Context, operation func() error) error {
+	select {
+	case limiter.slots <- struct{}{}:
+		defer func() { <-limiter.slots }()
+		return operation()
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func runAIScanRender(ctx context.Context, operation func() error) error {
+	// Rendering and OCR share the same four-slot CPU budget. The narrower render
+	// limiter also prevents two large PDFs from filling memory with page images at
+	// once. No operation acquires these limiters in the reverse order.
+	return aiScanRenderLimiter.run(ctx, func() error {
+		return aiScanOCRLimiter.run(ctx, operation)
+	})
+}
+
+func aiScanOCRWorkerLimit(cpuCount int, configured string) int {
+	if cpuCount < 1 {
+		cpuCount = 1
+	}
+	maximum := min(cpuCount, maxAIScanOCRWorkers)
+	if value, err := strconv.Atoi(strings.TrimSpace(configured)); err == nil && strings.TrimSpace(configured) != "" {
+		return max(1, min(value, maximum))
+	}
+	// Keep two logical CPUs free for HTTP, PostgreSQL and the frontend proxy.
+	// The default is therefore four workers on the production VM with 6 vCPU.
+	return max(1, min(cpuCount-2, min(4, maximum)))
+}
 
 type aiScanBatchMeta struct {
 	OriginalName string             `json:"original_name"`
@@ -212,45 +268,24 @@ func (a *app) processAIScanBatch(token, directory string, pages []string) {
 		log.Printf("AI scan text layer %s: %v", token, textLayerErr)
 	}
 	ocrTexts, ocrErrors := recognizeAIScanPages(ctx, pages, directory, textLayer)
-	suggestions := make([]aiScanSuggestion, 0, len(pages))
+	suggestions := make([]aiScanSuggestion, len(pages))
 	for index, text := range ocrTexts {
+		suggestions[index] = parseAIScanTextWithReferences(text, counterparties, legalEntities)
+		// Even a sparse PDF text layer can contain a precise invoice header or INN.
+		// Parse it independently before deciding whether raster recovery is needed;
+		// never concatenate it with OCR output.
+		if embedded := valueAt(textLayer, index); strings.TrimSpace(embedded) != "" && strings.TrimSpace(embedded) != strings.TrimSpace(text) {
+			suggestions[index] = mergeAIScanSuggestions(suggestions[index], parseAIScanTextWithReferences(embedded, counterparties, legalEntities))
+		}
+	}
+	recoveryErrors := recoverAIScanPages(ctx, pages, directory, textLayer, suggestions, counterparties, legalEntities)
+	for index, suggestion := range suggestions {
 		ocrErr := ocrErrors[index]
 		if ocrErr != nil {
 			log.Printf("AI scan OCR page %d: %v", index+1, ocrErr)
 		}
-		suggestion := parseAIScanTextWithReferences(text, counterparties, legalEntities)
-		// Dense tables and low-contrast invoice headers occasionally confuse the
-		// automatic layout detector. Retry only pages whose document header is
-		// missing, using a single-block layout, so normal multi-page batches stay
-		// fast while weak scans get one focused recovery attempt.
-		if suggestion.DocumentNumber == "" || suggestion.DocumentDate == "" {
-			if fallback, fallbackErr := runTesseractWithPSM(ctx, pages[index], "6"); fallbackErr == nil && strings.TrimSpace(fallback) != "" {
-				candidate := parseAIScanTextWithReferences(text+"\n"+fallback, counterparties, legalEntities)
-				// The fallback exists only to recover missing values. Never let its
-				// denser layout replace a field the primary pass already recognized.
-				if suggestion.Counterparty != "" {
-					candidate.Counterparty = suggestion.Counterparty
-					candidate.CounterpartyTaxID = suggestion.CounterpartyTaxID
-					candidate.Confidence["counterparty"] = suggestion.Confidence["counterparty"]
-				}
-				if suggestion.LegalEntity != "" {
-					candidate.LegalEntity = suggestion.LegalEntity
-					candidate.Confidence["legal_entity"] = suggestion.Confidence["legal_entity"]
-				}
-				if suggestion.DocumentNumber != "" {
-					candidate.DocumentNumber = suggestion.DocumentNumber
-					candidate.Confidence["document_number"] = suggestion.Confidence["document_number"]
-				}
-				if suggestion.DocumentDate != "" {
-					candidate.DocumentDate = suggestion.DocumentDate
-					candidate.Confidence["document_date"] = suggestion.Confidence["document_date"]
-				}
-				if suggestion.Amount != nil {
-					candidate.Amount = suggestion.Amount
-					candidate.Confidence["amount"] = suggestion.Confidence["amount"]
-				}
-				suggestion = candidate
-			}
+		if recoveryErrors[index] != nil {
+			log.Printf("AI scan recovery page %d: %v", index+1, recoveryErrors[index])
 		}
 		suggestion.Page = index + 1
 		suggestion.DuplicateMatches = a.aiScanDuplicates(ctx, suggestion)
@@ -258,7 +293,7 @@ func (a *app) processAIScanBatch(token, directory string, pages []string) {
 		if ocrErr != nil {
 			suggestion.Warnings = append(suggestion.Warnings, "Страница распознана не полностью — проверьте значения вручную")
 		}
-		suggestions = append(suggestions, suggestion)
+		suggestions[index] = suggestion
 	}
 	if ctx.Err() != nil {
 		failBatch("Распознавание заняло слишком много времени. Попробуйте разделить PDF", ctx.Err())
@@ -285,7 +320,7 @@ func recognizeAIScanPages(ctx context.Context, pages []string, directory string,
 	texts := make([]string, len(pages))
 	errorsByPage := make([]error, len(pages))
 	jobs := make(chan int)
-	workerCount := 2
+	workerCount := aiScanOCRWorkerLimit(runtime.GOMAXPROCS(0), os.Getenv("AI_SCAN_OCR_WORKERS"))
 	if len(pages) < workerCount {
 		workerCount = len(pages)
 	}
@@ -309,6 +344,117 @@ func recognizeAIScanPages(ctx context.Context, pages []string, directory string,
 	close(jobs)
 	workers.Wait()
 	return texts, errorsByPage
+}
+
+func recoverAIScanPages(ctx context.Context, pages []string, directory string, textLayer []string, suggestions []aiScanSuggestion, counterparties []aiScanCounterpartyReference, legalEntities []string) []error {
+	errorsByPage := make([]error, len(pages))
+	jobs := make(chan int)
+	workerCount := aiScanOCRWorkerLimit(runtime.GOMAXPROCS(0), os.Getenv("AI_SCAN_OCR_WORKERS"))
+	if len(pages) < workerCount {
+		workerCount = len(pages)
+	}
+	var workers sync.WaitGroup
+	workers.Add(workerCount)
+	for worker := 0; worker < workerCount; worker++ {
+		go func() {
+			defer workers.Done()
+			for index := range jobs {
+				if !needsAIScanRecovery(suggestions[index]) {
+					continue
+				}
+				recovered, recoveryErr := recoverAIScanPage(ctx, pages[index], directory, index+1, valueAt(textLayer, index), suggestions[index], counterparties, legalEntities)
+				suggestions[index] = recovered
+				errorsByPage[index] = recoveryErr
+			}
+		}()
+	}
+	for index := range pages {
+		jobs <- index
+	}
+	close(jobs)
+	workers.Wait()
+	return errorsByPage
+}
+
+func valueAt(values []string, index int) string {
+	if index < 0 || index >= len(values) {
+		return ""
+	}
+	return values[index]
+}
+
+func recoverAIScanPage(ctx context.Context, pagePath, directory string, page int, textLayer string, primary aiScanSuggestion, counterparties []aiScanCounterpartyReference, legalEntities []string) (aiScanSuggestion, error) {
+	imagePath, cleanup, err := prepareAIScanRecoveryPage(ctx, pagePath, directory, page)
+	if err != nil {
+		return primary, err
+	}
+	defer cleanup()
+
+	type result struct {
+		index int
+		text  string
+		err   error
+	}
+	modes := []string{"6", "11"}
+	results := make(chan result, len(modes))
+	for index, mode := range modes {
+		go func(index int, mode string) {
+			text, ocrErr := runTesseractAtDPI(ctx, imagePath, mode, aiScanRescueDPI)
+			results <- result{index: index, text: text, err: ocrErr}
+		}(index, mode)
+	}
+	texts := make([]string, len(modes))
+	errorsByMode := make([]error, len(modes))
+	for range modes {
+		item := <-results
+		texts[item.index] = item.text
+		errorsByMode[item.index] = item.err
+	}
+
+	candidates := make([]aiScanSuggestion, 0, len(texts)+1)
+	if strings.TrimSpace(textLayer) != "" {
+		candidates = append(candidates, parseAIScanTextWithReferences(textLayer, counterparties, legalEntities))
+	}
+	for _, text := range texts {
+		if strings.TrimSpace(text) != "" {
+			// Each OCR layout is parsed independently. Concatenating PSM outputs can
+			// make section regexes cross layout boundaries and invent party fields.
+			candidates = append(candidates, parseAIScanTextWithReferences(text, counterparties, legalEntities))
+		}
+	}
+	merged := mergeAIScanSuggestions(primary, candidates...)
+	for _, recoveryErr := range errorsByMode {
+		if recoveryErr != nil {
+			return merged, recoveryErr
+		}
+	}
+	return merged, nil
+}
+
+func prepareAIScanRecoveryPage(ctx context.Context, pagePath, directory string, page int) (string, func(), error) {
+	source := filepath.Join(directory, "source.pdf")
+	if _, err := os.Stat(source); err != nil {
+		if os.IsNotExist(err) {
+			return pagePath, func() {}, nil
+		}
+		return "", func() {}, err
+	}
+	prefix := filepath.Join(directory, fmt.Sprintf("recovery-%03d", page))
+	target := prefix + ".png"
+	err := runAIScanRender(ctx, func() error {
+		cmd := exec.CommandContext(ctx, "pdftoppm", "-gray", "-png", "-r", strconv.Itoa(aiScanRescueDPI), "-f", strconv.Itoa(page), "-l", strconv.Itoa(page), "-singlefile", source, prefix)
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
+		if runErr := cmd.Run(); runErr != nil {
+			return fmt.Errorf("pdftoppm recovery: %w: %s", runErr, strings.TrimSpace(stderr.String()))
+		}
+		return nil
+	})
+	if err != nil {
+		_ = os.Remove(target)
+		return "", func() {}, err
+	}
+	return target, func() { _ = os.Remove(target) }, nil
 }
 
 func extractAIScanPDFTextLayer(ctx context.Context, directory string, pageCount int) ([]string, error) {
@@ -349,11 +495,16 @@ func prepareAIScanPages(ctx context.Context, inputPath, contentType, directory s
 		return []string{pagePath}, nil
 	}
 	prefix := filepath.Join(directory, "rendered")
-	cmd := exec.CommandContext(ctx, "pdftoppm", "-png", "-r", strconv.Itoa(aiScanDPI), "-f", "1", "-l", strconv.Itoa(maxAIScanPages+1), inputPath, prefix)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("pdftoppm: %w: %s", err, strings.TrimSpace(stderr.String()))
+	if err := runAIScanRender(ctx, func() error {
+		cmd := exec.CommandContext(ctx, "pdftoppm", "-png", "-r", strconv.Itoa(aiScanDPI), "-f", "1", "-l", strconv.Itoa(maxAIScanPages+1), inputPath, prefix)
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
+		if runErr := cmd.Run(); runErr != nil {
+			return fmt.Errorf("pdftoppm: %w: %s", runErr, strings.TrimSpace(stderr.String()))
+		}
+		return nil
+	}); err != nil {
+		return nil, err
 	}
 	rendered, err := filepath.Glob(prefix + "-*.png")
 	if err != nil {
@@ -410,17 +561,26 @@ func runTesseract(ctx context.Context, imagePath string) (string, error) {
 }
 
 func runTesseractWithPSM(ctx context.Context, imagePath, pageSegmentationMode string) (string, error) {
-	pageCtx, cancel := context.WithTimeout(ctx, 50*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(pageCtx, "tesseract", imagePath, "stdout", "-l", "rus+eng", "--psm", pageSegmentationMode, "--dpi", strconv.Itoa(aiScanDPI))
+	return runTesseractAtDPI(ctx, imagePath, pageSegmentationMode, aiScanDPI)
+}
+
+func runTesseractAtDPI(ctx context.Context, imagePath, pageSegmentationMode string, dpi int) (string, error) {
 	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	err := cmd.Run()
-	if err != nil {
-		return stdout.String(), fmt.Errorf("tesseract: %w: %s", err, strings.TrimSpace(stderr.String()))
-	}
-	return stdout.String(), nil
+	err := aiScanOCRLimiter.run(ctx, func() error {
+		pageCtx, cancel := context.WithTimeout(ctx, 50*time.Second)
+		defer cancel()
+		cmd := exec.CommandContext(pageCtx, "tesseract", imagePath, "stdout", "-l", "rus+eng", "--psm", pageSegmentationMode, "--dpi", strconv.Itoa(dpi))
+		// One Tesseract process per global slot is faster and more predictable than
+		// allowing every process to create its own OpenMP worker team.
+		cmd.Env = append(os.Environ(), "OMP_THREAD_LIMIT=1", "OMP_NUM_THREADS=1")
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+		if runErr := cmd.Run(); runErr != nil {
+			return fmt.Errorf("tesseract: %w: %s", runErr, strings.TrimSpace(stderr.String()))
+		}
+		return nil
+	})
+	return stdout.String(), err
 }
 
 func convertImageToPNG(source, target string, angle int) error {
@@ -497,6 +657,193 @@ func parseAIScanText(text string, counterparties, legalEntities []string) aiScan
 		references = append(references, aiScanCounterpartyReference{Value: value})
 	}
 	return parseAIScanTextWithReferences(text, references, legalEntities)
+}
+
+func aiScanConfidenceRank(value string) int {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "high":
+		return 3
+	case "medium":
+		return 2
+	case "low":
+		return 1
+	default:
+		return 0
+	}
+}
+
+func needsAIScanRecovery(value aiScanSuggestion) bool {
+	if strings.TrimSpace(value.Counterparty) == "" || strings.TrimSpace(value.LegalEntity) == "" || strings.TrimSpace(value.DocumentNumber) == "" || strings.TrimSpace(value.DocumentDate) == "" || value.Amount == nil {
+		return true
+	}
+	for _, field := range []string{"counterparty", "legal_entity", "document_number", "document_date", "amount"} {
+		if aiScanConfidenceRank(value.Confidence[field]) < aiScanConfidenceRank("medium") {
+			return true
+		}
+	}
+	return false
+}
+
+func shouldReplaceAIScanField(current, currentConfidence, candidate, candidateConfidence string) bool {
+	if strings.TrimSpace(candidate) == "" {
+		return false
+	}
+	if strings.TrimSpace(current) == "" {
+		return true
+	}
+	if aiScanConfidenceRank(currentConfidence) >= aiScanConfidenceRank("high") {
+		return false
+	}
+	return aiScanConfidenceRank(candidateConfidence) > aiScanConfidenceRank(currentConfidence)
+}
+
+func looksLikeAIScanBankParty(value string) bool {
+	for _, token := range strings.Fields(foldAIScanText(value)) {
+		if token == "банк" || strings.HasSuffix(token, "банк") {
+			return true
+		}
+	}
+	return false
+}
+
+func shouldReplaceAIScanCounterparty(primary, candidate aiScanSuggestion) bool {
+	if strings.TrimSpace(candidate.Counterparty) == "" {
+		return false
+	}
+	if looksLikeAIScanBankParty(candidate.Counterparty) {
+		return false
+	}
+	if strings.TrimSpace(primary.Counterparty) == "" {
+		return true
+	}
+	if aiScanConfidenceRank(primary.Confidence["counterparty"]) >= aiScanConfidenceRank("high") {
+		return false
+	}
+	// Parser confidence "high" is assigned only after the supplier is matched to
+	// a canonical directory entry (by INN, exact normalized name or an
+	// unambiguous near-exact match). It can therefore repair a low raw OCR value
+	// even when the recovery pass did not repeat the INN. Banks remain forbidden.
+	return aiScanConfidenceRank(candidate.Confidence["counterparty"]) >= aiScanConfidenceRank("high")
+}
+
+func sameAIScanDocumentNumber(left, right string) bool {
+	return foldAIScanText(left) != "" && foldAIScanText(left) == foldAIScanText(right)
+}
+
+func mergeAIScanDocumentPair(primary *aiScanSuggestion, candidate aiScanSuggestion) {
+	if strings.TrimSpace(candidate.DocumentNumber) == "" || strings.TrimSpace(candidate.DocumentDate) == "" {
+		return
+	}
+	numberHigh := aiScanConfidenceRank(primary.Confidence["document_number"]) >= aiScanConfidenceRank("high")
+	dateHigh := aiScanConfidenceRank(primary.Confidence["document_date"]) >= aiScanConfidenceRank("high")
+	if numberHigh && strings.TrimSpace(primary.DocumentNumber) != "" && !sameAIScanDocumentNumber(primary.DocumentNumber, candidate.DocumentNumber) {
+		return
+	}
+	if dateHigh && strings.TrimSpace(primary.DocumentDate) != "" && primary.DocumentDate != candidate.DocumentDate {
+		return
+	}
+
+	candidateNumberRank := aiScanConfidenceRank(candidate.Confidence["document_number"])
+	candidateDateRank := aiScanConfidenceRank(candidate.Confidence["document_date"])
+	currentNumberRank := aiScanConfidenceRank(primary.Confidence["document_number"])
+	currentDateRank := aiScanConfidenceRank(primary.Confidence["document_date"])
+	mediumRank := aiScanConfidenceRank("medium")
+	if candidateNumberRank < mediumRank || candidateDateRank < mediumRank {
+		return
+	}
+
+	numberMissing := strings.TrimSpace(primary.DocumentNumber) == ""
+	dateMissing := strings.TrimSpace(primary.DocumentDate) == ""
+	numberMatches := !numberMissing && sameAIScanDocumentNumber(primary.DocumentNumber, candidate.DocumentNumber)
+	dateMatches := !dateMissing && primary.DocumentDate == candidate.DocumentDate
+
+	switch {
+	case numberMissing && dateMissing:
+		primary.DocumentNumber = candidate.DocumentNumber
+		primary.DocumentDate = candidate.DocumentDate
+		primary.Confidence["document_number"] = candidate.Confidence["document_number"]
+		primary.Confidence["document_date"] = candidate.Confidence["document_date"]
+	case dateMissing && numberMatches:
+		primary.DocumentDate = candidate.DocumentDate
+		primary.Confidence["document_date"] = candidate.Confidence["document_date"]
+		if candidateNumberRank > currentNumberRank {
+			primary.Confidence["document_number"] = candidate.Confidence["document_number"]
+		}
+	case numberMissing && dateMatches:
+		primary.DocumentNumber = candidate.DocumentNumber
+		primary.Confidence["document_number"] = candidate.Confidence["document_number"]
+		if candidateDateRank > currentDateRank {
+			primary.Confidence["document_date"] = candidate.Confidence["document_date"]
+		}
+	case numberMatches && dateMatches:
+		if candidateNumberRank > currentNumberRank {
+			primary.Confidence["document_number"] = candidate.Confidence["document_number"]
+		}
+		if candidateDateRank > currentDateRank {
+			primary.Confidence["document_date"] = candidate.Confidence["document_date"]
+		}
+	case numberMatches && !dateHigh && candidateDateRank > currentDateRank:
+		primary.DocumentDate = candidate.DocumentDate
+		primary.Confidence["document_date"] = candidate.Confidence["document_date"]
+	case dateMatches && !numberHigh && candidateNumberRank > currentNumberRank:
+		primary.DocumentNumber = candidate.DocumentNumber
+		primary.Confidence["document_number"] = candidate.Confidence["document_number"]
+	case !numberHigh && !dateHigh && candidateNumberRank > currentNumberRank && candidateDateRank > currentDateRank:
+		// Both weak primary values may be replaced, but only as one stronger pair
+		// produced by the same OCR pass.
+		primary.DocumentNumber = candidate.DocumentNumber
+		primary.DocumentDate = candidate.DocumentDate
+		primary.Confidence["document_number"] = candidate.Confidence["document_number"]
+		primary.Confidence["document_date"] = candidate.Confidence["document_date"]
+	}
+}
+
+func mergeAIScanSuggestions(primary aiScanSuggestion, candidates ...aiScanSuggestion) aiScanSuggestion {
+	if primary.Confidence == nil {
+		primary.Confidence = map[string]string{}
+	}
+	for _, candidate := range candidates {
+		if shouldReplaceAIScanCounterparty(primary, candidate) {
+			primary.Counterparty = candidate.Counterparty
+			primary.CounterpartyTaxID = candidate.CounterpartyTaxID
+			primary.Confidence["counterparty"] = candidate.Confidence["counterparty"]
+		} else if primary.CounterpartyTaxID == "" && candidate.CounterpartyTaxID != "" && normalizedPartyName(primary.Counterparty) == normalizedPartyName(candidate.Counterparty) {
+			// The name stays untouched; an independently observed INN can safely
+			// enrich the same normalized supplier and prevent duplicate references.
+			primary.CounterpartyTaxID = candidate.CounterpartyTaxID
+		}
+		if shouldReplaceAIScanField(primary.LegalEntity, primary.Confidence["legal_entity"], candidate.LegalEntity, candidate.Confidence["legal_entity"]) {
+			primary.LegalEntity = candidate.LegalEntity
+			primary.Confidence["legal_entity"] = candidate.Confidence["legal_entity"]
+		}
+		mergeAIScanDocumentPair(&primary, candidate)
+		if candidate.Amount != nil && (primary.Amount == nil || (aiScanConfidenceRank(primary.Confidence["amount"]) < aiScanConfidenceRank("high") && aiScanConfidenceRank(candidate.Confidence["amount"]) > aiScanConfidenceRank(primary.Confidence["amount"]))) {
+			primary.Amount = candidate.Amount
+			primary.Confidence["amount"] = candidate.Confidence["amount"]
+		}
+	}
+	refreshAIScanWarnings(&primary)
+	return primary
+}
+
+func refreshAIScanWarnings(result *aiScanSuggestion) {
+	result.Warnings = result.Warnings[:0]
+	missing := []struct {
+		field string
+		label string
+	}{
+		{"counterparty", "контрагент"},
+		{"legal_entity", "юридическое лицо"},
+		{"document_number", "номер документа"},
+		{"document_date", "дата документа"},
+		{"amount", "сумма"},
+	}
+	for _, item := range missing {
+		absent := (item.field == "amount" && result.Amount == nil) || (item.field == "counterparty" && result.Counterparty == "") || (item.field == "legal_entity" && result.LegalEntity == "") || (item.field == "document_number" && result.DocumentNumber == "") || (item.field == "document_date" && result.DocumentDate == "")
+		if absent {
+			result.Warnings = append(result.Warnings, "Не распознано поле: "+item.label)
+		}
+	}
 }
 
 func setAIScanDocumentFields(result *aiScanSuggestion, text, kind, number, date string) {
@@ -597,12 +944,7 @@ func parseAIScanTextWithReferences(text string, counterparties []aiScanCounterpa
 			result.Confidence["legal_entity"] = "low"
 		}
 	}
-	for field, label := range map[string]string{"counterparty": "контрагент", "legal_entity": "юридическое лицо", "document_number": "номер документа", "document_date": "дата документа", "amount": "сумма"} {
-		missing := (field == "amount" && result.Amount == nil) || (field == "counterparty" && result.Counterparty == "") || (field == "legal_entity" && result.LegalEntity == "") || (field == "document_number" && result.DocumentNumber == "") || (field == "document_date" && result.DocumentDate == "")
-		if missing {
-			result.Warnings = append(result.Warnings, "Не распознано поле: "+label)
-		}
-	}
+	refreshAIScanWarnings(&result)
 	return result
 }
 

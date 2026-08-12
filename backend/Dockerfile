@@ -6,7 +6,7 @@ COPY cmd ./cmd
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /registry-api ./cmd/server
 
 FROM alpine:3.22
-RUN addgroup -S registry && adduser -S registry -G registry && apk add --no-cache ca-certificates tzdata poppler-utils tesseract-ocr tesseract-ocr-data-eng tesseract-ocr-data-rus
+RUN addgroup -S registry && adduser -S registry -G registry && apk add --no-cache ca-certificates tzdata poppler-utils tesseract-ocr tesseract-ocr-data-eng tesseract-ocr-data-rus tesseract-ocr-data-osd
 RUN mkdir -p /data/chat_uploads && chown registry:registry /data/chat_uploads
 USER registry
 COPY --from=build /registry-api /usr/local/bin/registry-api
