@@ -1,6 +1,12 @@
 package main
 
-import "testing"
+import (
+	"context"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+)
 
 func TestParseAIScanTextExtractsRequiredFields(t *testing.T) {
 	text := `
@@ -351,6 +357,44 @@ func TestBestAIScanCounterpartyReferencePrefersTaxIDAndAvoidsBrokenDuplicate(t *
 	}
 }
 
+func TestParseAIScanTextEnrichesCanonicalCounterpartyWithDirectoryTaxID(t *testing.T) {
+	result := parseAIScanTextWithReferences(`
+Счет на оплату № 800856 от 10 августа 2026 г.
+Поставщик: АО "ДЕАЛМЕД"
+Покупатель: ООО "МЦ МИРТ"
+ИТОГО: 12 000,00
+`, []aiScanCounterpartyReference{{Value: `АО "ДЕАЛМЕД"`, TaxID: "7728820940"}}, []string{`ООО "МЦ МИРТ"`})
+	if result.Counterparty != `АО "ДЕАЛМЕД"` || result.CounterpartyTaxID != "7728820940" || result.Confidence["counterparty"] != "high" {
+		t.Fatalf("canonical counterparty was not enriched with directory INN: %#v", result)
+	}
+}
+
+func TestParseAIScanTextPrefersTaxBearingCanonicalVariant(t *testing.T) {
+	result := parseAIScanTextWithReferences(`
+Счет № НЧ/07/000558 от 1 июля 2026 г.
+Поставщик: НОВАТЭК- Кострома
+Покупатель: ООО "МЦ МИРТ"
+ИТОГО: 74 771,78
+`, []aiScanCounterpartyReference{
+		{Value: `НОВАТЭК- Кострома`},
+		{Value: `ООО "НОВАТЭК-Кострома"`, TaxID: "4401017834"},
+	}, []string{`ООО "МЦ МИРТ"`})
+	if result.Counterparty != `ООО "НОВАТЭК-Кострома"` || result.CounterpartyTaxID != "4401017834" {
+		t.Fatalf("tax-bearing canonical variant was not selected: %#v", result)
+	}
+}
+
+func TestEnrichAIScanCanonicalCounterpartyRepairsLowUnambiguousName(t *testing.T) {
+	value := aiScanSuggestion{Counterparty: `АКЦИОНЕРНОЕ ОБЩЕСТВО "ДЕАЛМЕД"`, Confidence: map[string]string{"counterparty": "low"}}
+	enrichAIScanCanonicalCounterparty(&value, []aiScanCounterpartyReference{
+		{Value: `АО "ДЕАЛМЕД"`, TaxID: "7728820940"},
+		{Value: `ООО "ДРУГАЯ КОМПАНИЯ"`, TaxID: "7700000000"},
+	})
+	if value.Counterparty != `АО "ДЕАЛМЕД"` || value.CounterpartyTaxID != "7728820940" || value.Confidence["counterparty"] != "high" {
+		t.Fatalf("unambiguous canonical counterparty did not repair low OCR: %#v", value)
+	}
+}
+
 func TestAIScanCounterpartyCandidateKeyDeduplicatesWritingVariants(t *testing.T) {
 	if aiScanCounterpartyCandidateKey(`ООО «ВсеИнструменты.ру»`, "") != aiScanCounterpartyCandidateKey(`ВсеИнструменты.ру`, "") {
 		t.Fatal("equivalent counterparty names must share one candidate key")
@@ -398,5 +442,311 @@ func TestParseAIScanTextSupportsStandaloneInvoiceNumberAndLabelledDate(t *testin
 	}
 	if result.Confidence["document_number"] != "high" || result.Confidence["document_date"] != "high" {
 		t.Fatalf("unexpected document confidence: %#v", result.Confidence)
+	}
+}
+
+func TestAIScanOCRWorkerLimitUsesNewVMWithoutOversubscribing(t *testing.T) {
+	tests := []struct {
+		name       string
+		cpus       int
+		configured string
+		want       int
+	}{
+		{name: "production 6 vCPU default", cpus: 6, want: 4},
+		{name: "small VM keeps one CPU worker", cpus: 2, want: 1},
+		{name: "large VM default remains bounded", cpus: 16, want: 4},
+		{name: "configured lower value", cpus: 6, configured: "2", want: 2},
+		{name: "configured value cannot exceed CPU or hard maximum", cpus: 6, configured: "99", want: 6},
+		{name: "configured zero is clamped", cpus: 6, configured: "0", want: 1},
+		{name: "invalid value uses dynamic default", cpus: 6, configured: "invalid", want: 4},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := aiScanOCRWorkerLimit(test.cpus, test.configured); got != test.want {
+				t.Fatalf("aiScanOCRWorkerLimit(%d, %q) = %d, want %d", test.cpus, test.configured, got, test.want)
+			}
+		})
+	}
+}
+
+func TestAIScanLimiterBoundsConcurrentOperations(t *testing.T) {
+	limiter := newAIScanLimiter(3)
+	start := make(chan struct{})
+	var active atomic.Int32
+	var maximum atomic.Int32
+	var workers sync.WaitGroup
+	for index := 0; index < 24; index++ {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			<-start
+			if err := limiter.run(context.Background(), func() error {
+				current := active.Add(1)
+				for {
+					observed := maximum.Load()
+					if current <= observed || maximum.CompareAndSwap(observed, current) {
+						break
+					}
+				}
+				time.Sleep(10 * time.Millisecond)
+				active.Add(-1)
+				return nil
+			}); err != nil {
+				t.Errorf("limiter returned error: %v", err)
+			}
+		}()
+	}
+	close(start)
+	workers.Wait()
+	if got := maximum.Load(); got != 3 {
+		t.Fatalf("maximum concurrent operations = %d, want 3", got)
+	}
+}
+
+func TestNeedsAIScanRecoveryChecksEveryRequiredFieldAndConfidence(t *testing.T) {
+	amount := 1250.0
+	complete := aiScanSuggestion{
+		Counterparty:   `ООО "Поставщик"`,
+		LegalEntity:    `ООО "Покупатель"`,
+		DocumentNumber: "Счет № 17",
+		DocumentDate:   "2026-08-12",
+		Amount:         &amount,
+		Confidence: map[string]string{
+			"counterparty": "high", "legal_entity": "high", "document_number": "high", "document_date": "high", "amount": "high",
+		},
+	}
+	if needsAIScanRecovery(complete) {
+		t.Fatal("complete high-confidence scan must not start recovery")
+	}
+	missingCases := map[string]func(*aiScanSuggestion){
+		"counterparty":    func(value *aiScanSuggestion) { value.Counterparty = "" },
+		"legal entity":    func(value *aiScanSuggestion) { value.LegalEntity = "" },
+		"document number": func(value *aiScanSuggestion) { value.DocumentNumber = "" },
+		"document date":   func(value *aiScanSuggestion) { value.DocumentDate = "" },
+		"amount":          func(value *aiScanSuggestion) { value.Amount = nil },
+	}
+	for name, mutate := range missingCases {
+		t.Run("missing "+name, func(t *testing.T) {
+			value := complete
+			mutate(&value)
+			if !needsAIScanRecovery(value) {
+				t.Fatal("missing required field did not start recovery")
+			}
+		})
+	}
+	low := complete
+	low.Confidence = map[string]string{
+		"counterparty": "low", "legal_entity": "high", "document_number": "high", "document_date": "high", "amount": "high",
+	}
+	if !needsAIScanRecovery(low) {
+		t.Fatal("low-confidence required field did not start recovery")
+	}
+	medium := complete
+	medium.Confidence = map[string]string{
+		"counterparty": "medium", "legal_entity": "high", "document_number": "high", "document_date": "high", "amount": "high",
+	}
+	if needsAIScanRecovery(medium) {
+		t.Fatal("medium-confidence complete result should not spend a recovery pass")
+	}
+}
+
+func TestMergeAIScanSuggestionsNeverOverwritesHighConfidencePrimary(t *testing.T) {
+	primaryAmount, candidateAmount := 17986.25, 999.0
+	primary := aiScanSuggestion{
+		Counterparty:      `ООО "МП"`,
+		CounterpartyTaxID: "4401187917",
+		LegalEntity:       `ООО "МЦ МИРТ"`,
+		DocumentNumber:    "Счет № ЦБ-881",
+		DocumentDate:      "2026-08-10",
+		Amount:            &primaryAmount,
+		Confidence: map[string]string{
+			"counterparty": "high", "legal_entity": "high", "document_number": "high", "document_date": "high", "amount": "high",
+		},
+	}
+	wrong := aiScanSuggestion{
+		Counterparty:      "ПАО СБЕРБАНК",
+		CounterpartyTaxID: "7707083893",
+		LegalEntity:       `ООО "Другой покупатель"`,
+		DocumentNumber:    "Договор № 1",
+		DocumentDate:      "2025-01-01",
+		Amount:            &candidateAmount,
+		Confidence: map[string]string{
+			"counterparty": "high", "legal_entity": "high", "document_number": "high", "document_date": "high", "amount": "high",
+		},
+	}
+	merged := mergeAIScanSuggestions(primary, wrong)
+	if merged.Counterparty != primary.Counterparty || merged.CounterpartyTaxID != primary.CounterpartyTaxID || merged.LegalEntity != primary.LegalEntity || merged.DocumentNumber != primary.DocumentNumber || merged.DocumentDate != primary.DocumentDate || merged.Amount == nil || *merged.Amount != primaryAmount {
+		t.Fatalf("high-confidence primary was overwritten: %#v", merged)
+	}
+}
+
+func TestMergeAIScanSuggestionsFillsMissingAndImprovesLowConfidenceFields(t *testing.T) {
+	amount := 3055.0
+	primary := aiScanSuggestion{
+		Counterparty:   "искаженное название",
+		DocumentNumber: "",
+		Confidence: map[string]string{
+			"counterparty": "low", "document_number": "",
+		},
+		Warnings: []string{"Не распознано поле: номер документа"},
+	}
+	recovered := aiScanSuggestion{
+		Counterparty:      "ВсеИнструменты.ру",
+		CounterpartyTaxID: "7722753969",
+		LegalEntity:       `ООО "МЦ МИРТ"`,
+		DocumentNumber:    "Счет № 2608-430680-18447",
+		DocumentDate:      "2026-08-10",
+		Amount:            &amount,
+		Confidence: map[string]string{
+			"counterparty": "high", "legal_entity": "high", "document_number": "high", "document_date": "high", "amount": "high",
+		},
+	}
+	merged := mergeAIScanSuggestions(primary, recovered)
+	if merged.Counterparty != recovered.Counterparty || merged.CounterpartyTaxID != recovered.CounterpartyTaxID || merged.LegalEntity != recovered.LegalEntity || merged.DocumentNumber != recovered.DocumentNumber || merged.DocumentDate != recovered.DocumentDate || merged.Amount == nil || *merged.Amount != amount {
+		t.Fatalf("recovery fields were not merged: %#v", merged)
+	}
+	if len(merged.Warnings) != 0 {
+		t.Fatalf("stale missing-field warnings remained after merge: %v", merged.Warnings)
+	}
+
+	lowCandidate := recovered
+	lowCandidate.Counterparty = "сомнительный вариант"
+	lowCandidate.CounterpartyTaxID = ""
+	lowCandidate.Confidence = map[string]string{"counterparty": "low"}
+	mediumPrimary := merged
+	mediumPrimary.Counterparty = "Подтвержденный вариант"
+	mediumPrimary.Confidence = map[string]string{"counterparty": "medium"}
+	if got := mergeAIScanSuggestions(mediumPrimary, lowCandidate).Counterparty; got != "Подтвержденный вариант" {
+		t.Fatalf("weaker candidate replaced stronger field: %q", got)
+	}
+}
+
+func TestMergeAIScanSuggestionsDoesNotReplaceSupplierWithBankWithoutTaxID(t *testing.T) {
+	primary := aiScanSuggestion{Counterparty: `ООО "МП"`, Confidence: map[string]string{"counterparty": "low"}}
+	bank := aiScanSuggestion{Counterparty: "ПАО СБЕРБАНК", CounterpartyTaxID: "7707083893", Confidence: map[string]string{"counterparty": "high"}}
+	withoutTaxID := aiScanSuggestion{Counterparty: `ООО "Другой поставщик"`, Confidence: map[string]string{"counterparty": "medium"}}
+	if got := mergeAIScanSuggestions(primary, bank, withoutTaxID).Counterparty; got != primary.Counterparty {
+		t.Fatalf("unsafe recovery replaced nonempty supplier: %q", got)
+	}
+}
+
+func TestMergeAIScanSuggestionsUsesHighCanonicalSupplierWithoutRepeatedTaxID(t *testing.T) {
+	primary := aiScanSuggestion{Counterparty: "искаженное название", Confidence: map[string]string{"counterparty": "low"}}
+	canonical := aiScanSuggestion{Counterparty: `ООО "НОВАТЭК-Кострома"`, Confidence: map[string]string{"counterparty": "high"}}
+	merged := mergeAIScanSuggestions(primary, canonical)
+	if merged.Counterparty != canonical.Counterparty || merged.Confidence["counterparty"] != "high" {
+		t.Fatalf("canonical directory supplier did not repair low OCR value: %#v", merged)
+	}
+}
+
+func TestMergeAIScanSuggestionsKeepsDocumentNumberAndDateFromOnePass(t *testing.T) {
+	primary := aiScanSuggestion{
+		DocumentNumber: "Счет № 17",
+		DocumentDate:   "",
+		Confidence:     map[string]string{"document_number": "high"},
+	}
+	unrelated := aiScanSuggestion{
+		DocumentNumber: "Договор № 2",
+		DocumentDate:   "2025-01-01",
+		Confidence:     map[string]string{"document_number": "high", "document_date": "high"},
+	}
+	matching := aiScanSuggestion{
+		DocumentNumber: "Счет № 17",
+		DocumentDate:   "2026-08-12",
+		Confidence:     map[string]string{"document_number": "high", "document_date": "high"},
+	}
+	merged := mergeAIScanSuggestions(primary, unrelated, matching)
+	if merged.DocumentNumber != "Счет № 17" || merged.DocumentDate != "2026-08-12" {
+		t.Fatalf("document pair mixed independent passes: %#v", merged)
+	}
+}
+
+func TestMergeAIScanSuggestionsRejectsWeakPairWhenOnePrimarySideIsMissing(t *testing.T) {
+	primary := aiScanSuggestion{
+		DocumentNumber: "Счет № 17",
+		Confidence:     map[string]string{"document_number": "medium"},
+	}
+	weak := aiScanSuggestion{
+		DocumentNumber: "Договор № 2",
+		DocumentDate:   "2025-01-01",
+		Confidence:     map[string]string{"document_number": "low", "document_date": "low"},
+	}
+	merged := mergeAIScanSuggestions(primary, weak)
+	if merged.DocumentNumber != primary.DocumentNumber || merged.DocumentDate != "" {
+		t.Fatalf("weak recovery pair replaced a partial primary: %#v", merged)
+	}
+}
+
+func TestMergeAIScanSuggestionsImprovesWeakSideOfAnchoredDocumentPair(t *testing.T) {
+	tests := []struct {
+		name      string
+		primary   aiScanSuggestion
+		candidate aiScanSuggestion
+		wantNum   string
+		wantDate  string
+	}{
+		{
+			name: "high number anchors a stronger date",
+			primary: aiScanSuggestion{
+				DocumentNumber: "Счет № ВХ02-097502",
+				DocumentDate:   "2026-01-01",
+				Confidence:     map[string]string{"document_number": "high", "document_date": "low"},
+			},
+			candidate: aiScanSuggestion{
+				DocumentNumber: "Счет № ВХ02-097502",
+				DocumentDate:   "2026-07-31",
+				Confidence:     map[string]string{"document_number": "high", "document_date": "high"},
+			},
+			wantNum:  "Счет № ВХ02-097502",
+			wantDate: "2026-07-31",
+		},
+		{
+			name: "high date anchors a stronger number",
+			primary: aiScanSuggestion{
+				DocumentNumber: "Счет № 1",
+				DocumentDate:   "2026-08-10",
+				Confidence:     map[string]string{"document_number": "low", "document_date": "high"},
+			},
+			candidate: aiScanSuggestion{
+				DocumentNumber: "Счет № ЦБ-881",
+				DocumentDate:   "2026-08-10",
+				Confidence:     map[string]string{"document_number": "high", "document_date": "high"},
+			},
+			wantNum:  "Счет № ЦБ-881",
+			wantDate: "2026-08-10",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			merged := mergeAIScanSuggestions(test.primary, test.candidate)
+			if merged.DocumentNumber != test.wantNum || merged.DocumentDate != test.wantDate {
+				t.Fatalf("anchored document pair was not improved: %#v", merged)
+			}
+		})
+	}
+}
+
+func TestMergeAIScanSuggestionsRejectsBankWhenSupplierIsEmpty(t *testing.T) {
+	primary := aiScanSuggestion{Confidence: map[string]string{}}
+	bank := aiScanSuggestion{
+		Counterparty:      "ПАО СБЕРБАНК",
+		CounterpartyTaxID: "7707083893",
+		Confidence:        map[string]string{"counterparty": "high"},
+	}
+	merged := mergeAIScanSuggestions(primary, bank)
+	if merged.Counterparty != "" || merged.CounterpartyTaxID != "" {
+		t.Fatalf("bank from payment details became an empty supplier: %#v", merged)
+	}
+}
+
+func TestParseAIScanTextNeverReturnsBankAsSupplier(t *testing.T) {
+	result := parseAIScanTextWithReferences(`
+Счет на оплату № 273 от 26 июня 2026 г.
+Получатель: ПАО СБЕРБАНК
+Покупатель: ООО "МЦ МИРТ"
+ИТОГО: 3 000,00
+`, []aiScanCounterpartyReference{{Value: "Сбербанк"}}, []string{`ООО "МЦ МИРТ"`})
+	if result.Counterparty != "" || result.CounterpartyTaxID != "" {
+		t.Fatalf("payment bank was returned as supplier: %#v", result)
 	}
 }
