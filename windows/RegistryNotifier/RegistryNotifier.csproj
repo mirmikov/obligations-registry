@@ -9,7 +9,7 @@
     <AssemblyName>RegistryNotifier</AssemblyName>
     <RootNamespace>Mirt.RegistryNotifier</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <Version>1.0.0</Version>
+    <Version>1.1.0</Version>
     <Authors>МЦ МИРТ</Authors>
     <Product>Уведомления реестра обязательств</Product>
     <Description>Windows-клиент уведомлений реестра обязательств</Description>

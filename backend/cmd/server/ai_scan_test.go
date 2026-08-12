@@ -2,11 +2,19 @@ package main
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 )
+
+func TestAIScanStatusIncludesOriginalFileNameForDesktopDeepLink(t *testing.T) {
+	payload := aiScanStatusPayload(strings.Repeat("a", 48), aiScanBatchMeta{OriginalName: "Счёт № 17.pdf", PageCount: 2, Status: "processing"})
+	if payload["original_name"] != "Счёт № 17.pdf" || payload["pages"] != 2 || payload["status"] != "processing" {
+		t.Fatalf("unexpected status payload: %#v", payload)
+	}
+}
 
 func TestParseAIScanTextExtractsRequiredFields(t *testing.T) {
 	text := `

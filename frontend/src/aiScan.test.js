@@ -3,6 +3,7 @@ import fs from 'node:fs'
 import test from 'node:test'
 
 const registry = fs.readFileSync(new URL('./Registry.jsx', import.meta.url), 'utf8')
+const app = fs.readFileSync(new URL('./App.jsx', import.meta.url), 'utf8')
 const modal = fs.readFileSync(new URL('./AIScanModal.jsx', import.meta.url), 'utf8')
 const styles = fs.readFileSync(new URL('./styles.css', import.meta.url), 'utf8')
 
@@ -34,4 +35,10 @@ test('multi-page scan supports preview, duplicate protection and confirmed batch
 test('confirmed AI scan refreshes counterparties created in the reference directory', () => {
   assert.match(registry, /created_references/)
   assert.match(registry, /request\('\/api\/references'\)\.then\(setRefs\)/)
+})
+
+test('Windows deep link opens the existing AI batch without uploading the document twice', () => {
+  assert.match(app, /initialAIScanBatch=\{aiScanTarget\}/)
+  assert.match(registry, /initialAIScanBatch.*finishAIScan\(\{ batch: initialAIScanBatch, status: 'processing' \}/s)
+  assert.match(registry, /request\(`\/api\/obligations\/ai-scan\/\$\{result\.batch\}\/status`\)/)
 })

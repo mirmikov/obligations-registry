@@ -26,6 +26,8 @@ internal sealed class NotifierApplicationContext : ApplicationContext
 		_dispatcher.CreateControl();
         _settings = _store.Load();
         _token = _store.ReadToken(_settings);
+        try { ContextMenuManager.Install(); }
+        catch (Exception error) { _store.Log("Не удалось обновить контекстное меню: " + error.Message); }
         _statusItem = new ToolStripMenuItem("Подключение…") { Enabled = false };
         _pauseItem = new ToolStripMenuItem(_settings.Paused ? "Возобновить уведомления" : "Приостановить уведомления");
         _autostartItem = new ToolStripMenuItem("Запускать вместе с Windows") { CheckOnClick = true, Checked = AutostartManager.IsEnabled() };

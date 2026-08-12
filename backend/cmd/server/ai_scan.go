@@ -317,7 +317,11 @@ func (a *app) aiScanStatus(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusNotFound, "Результат анализа не найден")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"batch": r.PathValue("batch"), "pages": meta.PageCount, "engine": "Локальное OCR", "status": meta.Status, "error": meta.Error, "items": meta.Items})
+	writeJSON(w, http.StatusOK, aiScanStatusPayload(r.PathValue("batch"), meta))
+}
+
+func aiScanStatusPayload(batch string, meta aiScanBatchMeta) map[string]any {
+	return map[string]any{"batch": batch, "original_name": meta.OriginalName, "pages": meta.PageCount, "engine": "Локальное OCR", "status": meta.Status, "error": meta.Error, "items": meta.Items}
 }
 
 func recognizeAIScanPages(ctx context.Context, pages []string, directory string, textLayer []string) ([]string, []error) {

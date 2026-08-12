@@ -57,7 +57,7 @@ function saveColumnWidths(widths) {
   try { window.localStorage.setItem(registryColumnWidthsKey, JSON.stringify(widths)) } catch {}
 }
 
-export default function Registry({ user, notify, maintenance, onToggleMaintenance }) {
+export default function Registry({ user, notify, maintenance, onToggleMaintenance, initialAIScanBatch, onInitialAIScanApplied }) {
   const [data, setData] = useState({ items: [], total: 0, filtered_amount: 0, page: 1, page_size: 50 })
   const [refs, setRefs] = useState({})
   const [filters, setFilters] = useState(emptyFilters)
@@ -79,6 +79,7 @@ export default function Registry({ user, notify, maintenance, onToggleMaintenanc
   const [viewReady, setViewReady] = useState(false)
   const importRef = useRef()
   const aiScanRef = useRef()
+  const initialAIScanRef = useRef(null)
   const tableWrapRef = useRef()
   const rowsRef = useRef(new Map())
   const saveQueues = useRef(new Map())
@@ -358,30 +359,43 @@ export default function Registry({ user, notify, maintenance, onToggleMaintenanc
       notify(`База обновлена: ${result.updated} изменено, ${result.created} добавлено`); load(); request('/api/references').then(setRefs).catch(e => notify(e.message, 'error'))
     } catch (e) { notify(e.message, 'error') } finally { event.target.value = '' }
   }
+  const finishAIScan = async (initialResult, fallbackFilename) => {
+    let result = initialResult
+    setAIScan({ ...result, loading: true, filename: result.original_name || fallbackFilename, error: '' })
+    for (let attempt = 0; result.status === 'processing' && attempt < 360; attempt++) {
+      await new Promise(resolve => window.setTimeout(resolve, 2000))
+      result = await request(`/api/obligations/ai-scan/${result.batch}/status`)
+    }
+    if (result.status === 'processing') throw new Error('Распознавание не завершилось за 12 минут. Разделите PDF на части')
+    if (result.status === 'error') throw new Error(result.error || 'Не удалось распознать документ')
+    const items = result.items.map(item => ({
+      page: item.page,
+      include: !item.duplicate,
+      duplicate: item.duplicate,
+      duplicate_matches: item.duplicate_matches || [],
+      warnings: item.warnings || [],
+      confidence: item.confidence || {},
+      values: { ...blankObligation(), status: '', counterparty: item.counterparty || '', legal_entity: item.legal_entity || '', document_number: item.document_number || '', document_date: item.document_date || '', amount: item.amount ?? null },
+    }))
+    setAIScan({ ...result, filename: result.original_name || fallbackFilename, items, loading: false, error: '' })
+  }
+  useEffect(() => {
+    if (!initialAIScanBatch || initialAIScanRef.current === initialAIScanBatch || !can(user, 'registry.ai_scan')) return
+    initialAIScanRef.current = initialAIScanBatch
+    onInitialAIScanApplied?.()
+    setAIScan({ batch: initialAIScanBatch, loading: true, filename: 'Документ из Windows', error: '' })
+    finishAIScan({ batch: initialAIScanBatch, status: 'processing' }, 'Документ из Windows').catch(error => {
+      setAIScan({ batch: initialAIScanBatch, loading: false, filename: 'Документ из Windows', error: error.message })
+    })
+  }, [initialAIScanBatch, user?.id])
   const analyzeScan = async event => {
     const file = event.target.files?.[0]
     if (!file) return
     setAIScan({ loading: true, filename: file.name, error: '' })
     const body = new FormData(); body.append('scan', file)
     try {
-      let result = await request('/api/obligations/ai-scan', { method: 'POST', body })
-      setAIScan({ ...result, loading: true, filename: file.name, error: '' })
-      for (let attempt = 0; result.status === 'processing' && attempt < 360; attempt++) {
-        await new Promise(resolve => window.setTimeout(resolve, 2000))
-        result = await request(`/api/obligations/ai-scan/${result.batch}/status`)
-      }
-      if (result.status === 'processing') throw new Error('Распознавание не завершилось за 12 минут. Разделите PDF на части')
-      if (result.status === 'error') throw new Error(result.error || 'Не удалось распознать документ')
-      const items = result.items.map(item => ({
-        page: item.page,
-        include: !item.duplicate,
-        duplicate: item.duplicate,
-        duplicate_matches: item.duplicate_matches || [],
-        warnings: item.warnings || [],
-        confidence: item.confidence || {},
-        values: { ...blankObligation(), status: '', counterparty: item.counterparty || '', legal_entity: item.legal_entity || '', document_number: item.document_number || '', document_date: item.document_date || '', amount: item.amount ?? null },
-      }))
-      setAIScan({ ...result, filename: file.name, items, loading: false, error: '' })
+      const result = await request('/api/obligations/ai-scan', { method: 'POST', body })
+      await finishAIScan(result, file.name)
     } catch (error) {
       setAIScan({ loading: false, filename: file.name, error: error.message })
     } finally { event.target.value = '' }
