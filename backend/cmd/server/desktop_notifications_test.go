@@ -21,6 +21,12 @@ func TestDesktopTokenAudienceIsSeparatedFromWebSession(t *testing.T) {
 	}
 }
 
+func TestChatDesktopNotificationSourceKeyUsesTextValue(t *testing.T) {
+	if got := chatDesktopNotificationSourceKey(108); got != "chat_message:108" {
+		t.Fatalf("unexpected source key: %q", got)
+	}
+}
+
 func TestDesktopActionURLAcceptsOnlySameSitePaths(t *testing.T) {
 	for _, value := range []string{"", "/", "/?page=chat&conversation=17", "/registry/42"} {
 		if !validDesktopActionURL(value) {

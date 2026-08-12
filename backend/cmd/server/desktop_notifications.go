@@ -221,14 +221,18 @@ func enqueueChatDesktopNotifications(ctx context.Context, tx *sql.Tx, conversati
 	body := chatDesktopNotificationPreview(storedBody)
 	_, err := tx.ExecContext(ctx, `
 		INSERT INTO desktop_notifications(user_id,kind,title,body,action_url,source_key)
-		SELECT cm.user_id,'chat.message',$4,$5,$6,'chat_message:'||$3::text
+		SELECT cm.user_id,'chat.message',$4,$5,$6,$3
 		FROM chat_members cm
 		JOIN users u ON u.id=cm.user_id AND u.active=true
 		WHERE cm.conversation_id=$1 AND cm.user_id<>$2
 		ON CONFLICT (user_id,source_key) WHERE source_key IS NOT NULL DO NOTHING`,
-		conversationID, senderID, messageID, title, body,
+		conversationID, senderID, chatDesktopNotificationSourceKey(messageID), title, body,
 		fmt.Sprintf("/?page=chat&conversation=%d", conversationID))
 	return err
+}
+
+func chatDesktopNotificationSourceKey(messageID int64) string {
+	return "chat_message:" + strconv.FormatInt(messageID, 10)
 }
 
 func (a *app) enqueueChatDesktopNotificationsBestEffort(ctx context.Context, conversationID, messageID, senderID int64, senderName, storedBody string) {
