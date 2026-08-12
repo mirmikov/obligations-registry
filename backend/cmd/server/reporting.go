@@ -209,8 +209,9 @@ func (a *app) addReference(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var input struct {
-		Value string `json:"value"`
-		TaxID string `json:"tax_id"`
+		Value   string `json:"value"`
+		TaxID   string `json:"tax_id"`
+		NewOnly bool   `json:"new_only"`
 	}
 	if !decodeJSON(w, r, &input) {
 		return
@@ -240,6 +241,18 @@ func (a *app) addReference(w http.ResponseWriter, r *http.Request) {
 	var existingID int64
 	before := emptySnapshot()
 	err = tx.QueryRowContext(r.Context(), `SELECT id FROM reference_values WHERE kind=$1 AND value=$2 FOR UPDATE`, kind, input.Value).Scan(&existingID)
+	if kind == counterpartyReferenceKind && input.NewOnly {
+		var existingValue string
+		nameErr := tx.QueryRowContext(r.Context(), `SELECT value FROM reference_values WHERE kind=$1 AND lower(value)=lower($2) ORDER BY active DESC,id LIMIT 1 FOR UPDATE`, kind, input.Value).Scan(&existingValue)
+		if nameErr == nil {
+			fail(w, http.StatusConflict, "Контрагент с таким названием уже существует: "+existingValue+". Существующая запись не изменена")
+			return
+		}
+		if nameErr != sql.ErrNoRows {
+			fail(w, http.StatusInternalServerError, "Не удалось проверить дублирование контрагента")
+			return
+		}
+	}
 	if err == nil {
 		before, err = snapshotRows(r.Context(), tx, "reference_values", []int64{existingID})
 	}
@@ -261,9 +274,17 @@ func (a *app) addReference(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	var id int64
-	err = tx.QueryRowContext(r.Context(), `INSERT INTO reference_values(kind,value,sort_order,tax_id) VALUES($1,$2,(SELECT COALESCE(max(sort_order),-1)+1 FROM reference_values WHERE kind=$1),NULLIF($3,'')) ON CONFLICT(kind,value) DO UPDATE SET active=true,tax_id=COALESCE(excluded.tax_id,reference_values.tax_id) RETURNING id`, kind, input.Value, input.TaxID).Scan(&id)
+	if kind == counterpartyReferenceKind && input.NewOnly {
+		err = tx.QueryRowContext(r.Context(), `INSERT INTO reference_values(kind,value,sort_order,tax_id) VALUES($1,$2,(SELECT COALESCE(max(sort_order),-1)+1 FROM reference_values WHERE kind=$1),NULLIF($3,'')) RETURNING id`, kind, input.Value, input.TaxID).Scan(&id)
+	} else {
+		err = tx.QueryRowContext(r.Context(), `INSERT INTO reference_values(kind,value,sort_order,tax_id) VALUES($1,$2,(SELECT COALESCE(max(sort_order),-1)+1 FROM reference_values WHERE kind=$1),NULLIF($3,'')) ON CONFLICT(kind,value) DO UPDATE SET active=true,tax_id=COALESCE(excluded.tax_id,reference_values.tax_id) RETURNING id`, kind, input.Value, input.TaxID).Scan(&id)
+	}
 	if err != nil {
-		fail(w, 400, "Не удалось добавить значение")
+		if kind == counterpartyReferenceKind && input.NewOnly {
+			fail(w, http.StatusConflict, "Контрагент уже существует. Существующая запись не изменена")
+		} else {
+			fail(w, 400, "Не удалось добавить значение")
+		}
 		return
 	}
 	after, err := snapshotRows(r.Context(), tx, "reference_values", []int64{id})

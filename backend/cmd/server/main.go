@@ -25,6 +25,7 @@ type app struct {
 	db        *sql.DB
 	jwtSecret []byte
 	presence  *presenceHub
+	fns       *fnsCounterpartyClient
 }
 
 func main() {
@@ -48,7 +49,7 @@ func main() {
 		time.Sleep(2 * time.Second)
 	}
 
-	a := &app{db: db, jwtSecret: []byte(getenv("JWT_SECRET", "change-me-in-production")), presence: newPresenceHub()}
+	a := &app{db: db, jwtSecret: []byte(getenv("JWT_SECRET", "change-me-in-production")), presence: newPresenceHub(), fns: newFNSCounterpartyClient()}
 	if databaseMigrationsEnabled() {
 		if err := a.migrateAndSeed(context.Background()); err != nil {
 			log.Fatal(err)
@@ -97,6 +98,8 @@ func main() {
 	mux.Handle("PUT /api/references/cost-categories/{id}/responsible", a.authorize(a.requirePermission("references.edit")(http.HandlerFunc(a.setCostCategoryResponsible))))
 	mux.Handle("PUT /api/references/responsibles/{id}/user", a.authorize(a.requirePermission("references.edit")(http.HandlerFunc(a.setResponsibleUser))))
 	mux.Handle("PUT /api/references/counterparties/{id}/tax-id", a.authorize(a.requirePermission("references.edit")(http.HandlerFunc(a.setCounterpartyTaxID))))
+	mux.Handle("POST /api/references/counterparties/fns/lookup", a.authorize(a.requirePermission("references.edit")(http.HandlerFunc(a.lookupNewCounterpartyFNS))))
+	mux.Handle("GET /api/references/counterparties/{id}/fns", a.authorize(a.requirePermission("references.view")(http.HandlerFunc(a.counterpartyFNSDetails))))
 	mux.Handle("POST /api/references/counterparties/merge", a.authorize(a.requirePermission("references.edit")(http.HandlerFunc(a.mergeCounterparties))))
 	mux.Handle("POST /api/references/{kind}", a.authorize(a.requirePermission("references.edit")(http.HandlerFunc(a.addReference))))
 	mux.Handle("DELETE /api/references/{kind}/{id}", a.authorize(a.requirePermission("references.edit")(http.HandlerFunc(a.deleteReference))))
