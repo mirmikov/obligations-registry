@@ -189,17 +189,13 @@ func (a *app) createAccountingMail(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusInternalServerError, "Не удалось отправить счёт в бухгалтерию")
 		return
 	}
-	if err = enqueueChatDesktopNotifications(r.Context(), tx, conversationID, message.ID, sender.ID, sender.Name, storedBody); err != nil {
-		removeStoredFile()
-		fail(w, http.StatusInternalServerError, "Не удалось подготовить уведомления получателям")
-		return
-	}
 	if err = tx.Commit(); err != nil {
 		removeStoredFile()
 		fail(w, http.StatusInternalServerError, "Не удалось завершить отправку счёта")
 		return
 	}
 
+	a.enqueueChatDesktopNotificationsBestEffort(r.Context(), conversationID, message.ID, sender.ID, sender.Name, storedBody)
 	applyChatMessagePresentation(&message, conversationID)
 	a.audit(r.Context(), sender.ID, "create", "accounting_invoice", &conversationID, map[string]any{"subject": subject, "recipients": len(recipients), "attachment": attachment.OriginalName})
 	writeJSON(w, http.StatusCreated, map[string]any{"id": conversationID, "subject": subject, "message": message})

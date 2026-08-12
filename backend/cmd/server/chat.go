@@ -315,17 +315,8 @@ func (a *app) sendChatMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	user := currentUser(r)
-	tx, err := a.db.BeginTx(r.Context(), nil)
-	if err != nil {
-		if attachment != nil {
-			_ = os.Remove(filepath.Join(chatImageDirectory(), strconv.FormatInt(conversationID, 10), attachment.StoredName))
-		}
-		fail(w, http.StatusInternalServerError, "Не удалось начать отправку сообщения")
-		return
-	}
-	defer tx.Rollback()
 	var item chatMessage
-	err = tx.QueryRowContext(r.Context(), `
+	err := a.db.QueryRowContext(r.Context(), `
 		WITH inserted AS (
 			INSERT INTO chat_messages(conversation_id,sender_id,body) VALUES($1,$2,$3)
 			RETURNING id,conversation_id,sender_id,body,created_at
@@ -340,22 +331,9 @@ func (a *app) sendChatMessage(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusInternalServerError, "Не удалось отправить сообщение")
 		return
 	}
-	if _, err = tx.ExecContext(r.Context(), `UPDATE chat_conversations SET updated_at=now() WHERE id=$1`, conversationID); err == nil {
-		_, err = tx.ExecContext(r.Context(), `UPDATE chat_members SET last_read_at=now() WHERE conversation_id=$1 AND user_id=$2`, conversationID, user.ID)
-	}
-	if err == nil {
-		err = enqueueChatDesktopNotifications(r.Context(), tx, conversationID, item.ID, user.ID, user.Name, storedBody)
-	}
-	if err == nil {
-		err = tx.Commit()
-	}
-	if err != nil {
-		if attachment != nil {
-			_ = os.Remove(filepath.Join(chatImageDirectory(), strconv.FormatInt(conversationID, 10), attachment.StoredName))
-		}
-		fail(w, http.StatusInternalServerError, "Не удалось завершить отправку сообщения")
-		return
-	}
+	_, _ = a.db.ExecContext(r.Context(), `UPDATE chat_conversations SET updated_at=now() WHERE id=$1`, conversationID)
+	_, _ = a.db.ExecContext(r.Context(), `UPDATE chat_members SET last_read_at=now() WHERE conversation_id=$1 AND user_id=$2`, conversationID, user.ID)
+	a.enqueueChatDesktopNotificationsBestEffort(r.Context(), conversationID, item.ID, user.ID, user.Name, storedBody)
 	applyChatMessagePresentation(&item, conversationID)
 	writeJSON(w, http.StatusCreated, item)
 }
