@@ -58,6 +58,24 @@ internal sealed class AIScanStartResponse
     public string Status { get; set; } = "processing";
 }
 
+internal sealed class DesktopAppUpdate
+{
+    [JsonPropertyName("version")]
+    public string Version { get; set; } = "";
+
+    [JsonPropertyName("download_url")]
+    public string DownloadUrl { get; set; } = "";
+
+    [JsonPropertyName("sha256")]
+    public string Sha256 { get; set; } = "";
+
+    [JsonPropertyName("size")]
+    public long Size { get; set; }
+
+    [JsonPropertyName("release_notes")]
+    public string ReleaseNotes { get; set; } = "";
+}
+
 internal sealed class DesktopNotification
 {
     [JsonPropertyName("id")]

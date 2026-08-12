@@ -64,6 +64,7 @@ func main() {
 	mux.HandleFunc("POST /api/desktop/auth/login", a.desktopLogin)
 	mux.Handle("GET /api/auth/me", a.authorize(http.HandlerFunc(a.me)))
 	mux.Handle("GET /api/desktop/notifications", a.authorizeDesktop(http.HandlerFunc(a.listDesktopNotifications)))
+	mux.Handle("GET /api/desktop/app/update", a.authorizeDesktop(http.HandlerFunc(a.desktopAppUpdateManifest)))
 	mux.Handle("POST /api/desktop/notifications", a.authorize(a.requireDeveloper(http.HandlerFunc(a.createDesktopNotification))))
 	mux.Handle("POST /api/desktop/obligations/ai-scan", a.authorizeDesktop(a.requirePermission("registry.ai_scan")(http.HandlerFunc(a.analyzeObligationScan))))
 	mux.Handle("GET /api/desktop/obligations/ai-scan/{batch}/status", a.authorizeDesktop(a.requirePermission("registry.ai_scan")(http.HandlerFunc(a.aiScanStatus))))
