@@ -126,3 +126,21 @@ CREATE TABLE IF NOT EXISTS chat_messages (
 
 CREATE INDEX IF NOT EXISTS chat_members_user_idx ON chat_members(user_id,conversation_id);
 CREATE INDEX IF NOT EXISTS chat_messages_conversation_idx ON chat_messages(conversation_id,id DESC);
+
+CREATE TABLE IF NOT EXISTS desktop_notifications (
+  id BIGSERIAL PRIMARY KEY,
+  user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL CHECK (char_length(kind) BETWEEN 1 AND 50),
+  title TEXT NOT NULL CHECK (char_length(title) BETWEEN 1 AND 160),
+  body TEXT NOT NULL CHECK (char_length(body) BETWEEN 1 AND 1000),
+  action_url TEXT NOT NULL DEFAULT '' CHECK (char_length(action_url) <= 1000),
+  source_key TEXT CHECK (source_key IS NULL OR char_length(source_key) BETWEEN 1 AND 200),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS desktop_notifications_source_unique
+  ON desktop_notifications(user_id,source_key)
+  WHERE source_key IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS desktop_notifications_user_idx
+  ON desktop_notifications(user_id,id);

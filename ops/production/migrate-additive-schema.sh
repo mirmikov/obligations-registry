@@ -41,7 +41,7 @@ tax_id_count_before="$(tax_id_count)"
 relation_count() {
   local relation="$1"
   case "$relation" in
-    undo_operations|chat_conversations|chat_members|chat_messages) ;;
+    undo_operations|chat_conversations|chat_members|chat_messages|desktop_notifications) ;;
     *) fail "неожиданное имя таблицы: $relation" ;;
   esac
   if [[ "$(docker compose exec -T db psql -U registry -d registry -At -c "SELECT to_regclass('public.$relation') IS NOT NULL")" == "t" ]]; then
@@ -52,7 +52,7 @@ relation_count() {
 }
 
 declare -A relation_counts_before
-for relation in undo_operations chat_conversations chat_members chat_messages; do
+for relation in undo_operations chat_conversations chat_members chat_messages desktop_notifications; do
   relation_counts_before["$relation"]="$(relation_count "$relation")"
 done
 
@@ -60,16 +60,16 @@ echo "Создаю и проверяю резервную копию перед 
 backup_path="$(./ops/production/backup.sh)"
 echo "Резервная копия: $backup_path"
 
-echo "Создаю только отсутствующие таблицы чата, истории отмены и индексы..."
+echo "Создаю только отсутствующие таблицы чата, desktop-уведомлений, истории отмены и индексы..."
 docker compose exec -T db psql -v ON_ERROR_STOP=1 -U registry -d registry < ./ops/production/additive-schema.sql
 
-missing_relations="$(docker compose exec -T db psql -U registry -d registry -At -c "SELECT name FROM unnest(ARRAY['undo_operations','chat_conversations','chat_members','chat_messages','undo_operations_user_idx','chat_members_user_idx','chat_messages_conversation_idx','reference_values_counterparty_tax_id_unique']) AS name WHERE to_regclass('public.'||name) IS NULL ORDER BY name")"
+missing_relations="$(docker compose exec -T db psql -U registry -d registry -At -c "SELECT name FROM unnest(ARRAY['undo_operations','chat_conversations','chat_members','chat_messages','desktop_notifications','undo_operations_user_idx','chat_members_user_idx','chat_messages_conversation_idx','desktop_notifications_source_unique','desktop_notifications_user_idx','reference_values_counterparty_tax_id_unique']) AS name WHERE to_regclass('public.'||name) IS NULL ORDER BY name")"
 [[ -z "$missing_relations" ]] || fail "после миграции отсутствуют объекты: $missing_relations"
 
-missing_columns="$(docker compose exec -T db psql -U registry -d registry -At -c "WITH expected(table_name,column_name) AS (VALUES ('reference_values','tax_id'),('undo_operations','id'),('undo_operations','user_id'),('undo_operations','action'),('undo_operations','description'),('undo_operations','payload'),('undo_operations','created_at'),('undo_operations','undone_at'),('chat_conversations','id'),('chat_conversations','kind'),('chat_conversations','name'),('chat_conversations','direct_key'),('chat_conversations','created_by'),('chat_conversations','created_at'),('chat_conversations','updated_at'),('chat_members','conversation_id'),('chat_members','user_id'),('chat_members','joined_at'),('chat_members','last_read_at'),('chat_messages','id'),('chat_messages','conversation_id'),('chat_messages','sender_id'),('chat_messages','body'),('chat_messages','created_at')) SELECT expected.table_name||'.'||expected.column_name FROM expected LEFT JOIN information_schema.columns actual ON actual.table_schema='public' AND actual.table_name=expected.table_name AND actual.column_name=expected.column_name WHERE actual.column_name IS NULL ORDER BY 1")"
+missing_columns="$(docker compose exec -T db psql -U registry -d registry -At -c "WITH expected(table_name,column_name) AS (VALUES ('reference_values','tax_id'),('undo_operations','id'),('undo_operations','user_id'),('undo_operations','action'),('undo_operations','description'),('undo_operations','payload'),('undo_operations','created_at'),('undo_operations','undone_at'),('chat_conversations','id'),('chat_conversations','kind'),('chat_conversations','name'),('chat_conversations','direct_key'),('chat_conversations','created_by'),('chat_conversations','created_at'),('chat_conversations','updated_at'),('chat_members','conversation_id'),('chat_members','user_id'),('chat_members','joined_at'),('chat_members','last_read_at'),('chat_messages','id'),('chat_messages','conversation_id'),('chat_messages','sender_id'),('chat_messages','body'),('chat_messages','created_at'),('desktop_notifications','id'),('desktop_notifications','user_id'),('desktop_notifications','kind'),('desktop_notifications','title'),('desktop_notifications','body'),('desktop_notifications','action_url'),('desktop_notifications','source_key'),('desktop_notifications','created_at')) SELECT expected.table_name||'.'||expected.column_name FROM expected LEFT JOIN information_schema.columns actual ON actual.table_schema='public' AND actual.table_name=expected.table_name AND actual.column_name=expected.column_name WHERE actual.column_name IS NULL ORDER BY 1")"
 [[ -z "$missing_columns" ]] || fail "после миграции отсутствуют колонки: $missing_columns"
 
-for relation in undo_operations chat_conversations chat_members chat_messages; do
+for relation in undo_operations chat_conversations chat_members chat_messages desktop_notifications; do
   count_after="$(relation_count "$relation")"
   count_before="${relation_counts_before[$relation]}"
   if [[ "$count_before" == "missing" ]]; then

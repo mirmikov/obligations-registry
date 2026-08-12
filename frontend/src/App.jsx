@@ -16,6 +16,7 @@ import useChatNotifications from './useChatNotifications'
 import { can, firstAllowedPage, pagePermissions } from './permissions'
 import { applyTheme, resolveTheme, THEME_STORAGE_KEY } from './theme'
 import { backupStatusPresentation, backupStatusTooltip } from './backupStatus'
+import { clearDesktopNotificationTarget, readDesktopNotificationTarget } from './desktopNotificationLink'
 
 const nav = [
   { id: 'dashboard', label: 'Сводка', icon: BarChart3, permission: 'dashboard.view' },
@@ -48,9 +49,14 @@ export default function App() {
   useEffect(() => { applyTheme(theme) }, [theme])
 
   const enterWorkspace = (nextUser, state = {}) => {
+	const desktopTarget = readDesktopNotificationTarget(window.location.search)
     setUser(nextUser)
-    setPage(isAllowedPage(state.page, nextUser) ? state.page : firstAllowedPage(nextUser))
-    setRegistryOpen(state.page === 'credits-leasing')
+	const requestedPage = desktopTarget?.page
+	const nextPage = requestedPage && isAllowedPage(requestedPage, nextUser) ? requestedPage : (isAllowedPage(state.page, nextUser) ? state.page : firstAllowedPage(nextUser))
+    setPage(nextPage)
+    setRegistryOpen(nextPage === 'credits-leasing')
+	if (nextPage === 'chat' && desktopTarget?.conversationID) setChatTarget(desktopTarget.conversationID)
+	if (desktopTarget) clearDesktopNotificationTarget()
     setCollapsed(Boolean(state.sidebar_collapsed))
     setWorkspaceReady(true)
   }
