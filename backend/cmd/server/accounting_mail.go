@@ -189,6 +189,11 @@ func (a *app) createAccountingMail(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusInternalServerError, "Не удалось отправить счёт в бухгалтерию")
 		return
 	}
+	if err = enqueueChatDesktopNotifications(r.Context(), tx, conversationID, message.ID, sender.ID, sender.Name, storedBody); err != nil {
+		removeStoredFile()
+		fail(w, http.StatusInternalServerError, "Не удалось подготовить уведомления получателям")
+		return
+	}
 	if err = tx.Commit(); err != nil {
 		removeStoredFile()
 		fail(w, http.StatusInternalServerError, "Не удалось завершить отправку счёта")

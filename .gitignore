@@ -6,6 +6,9 @@ node_modules
 frontend/node_modules/
 frontend/dist/
 backend/registry-api
+windows/**/bin/
+windows/**/obj/
+windows/**/dist/
 # Незашифрованные снимки БД и ключи никогда не должны попадать в Git.
 ops/bootstrap/*.dump
 ops/bootstrap/*.tar.gz
