@@ -8,7 +8,7 @@ namespace Mirt.RegistryNotifier;
 internal sealed class ApiClient : IDisposable
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
-    private readonly HttpClient _client = new() { Timeout = TimeSpan.FromSeconds(35) };
+    private readonly HttpClient _client = new() { Timeout = TimeSpan.FromSeconds(100) };
 
     public async Task<LoginResponse> LoginAsync(string serverUrl, string email, string password, CancellationToken cancellationToken)
     {
@@ -25,6 +25,19 @@ internal sealed class ApiClient : IDisposable
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
         using var response = await _client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         return await ReadAsync<NotificationResponse>(response, cancellationToken);
+    }
+
+    public async Task<AIScanStartResponse> StartAIScanAsync(string serverUrl, string token, string filePath, CancellationToken cancellationToken)
+    {
+        var baseUri = ValidateServerUrl(serverUrl);
+        await using var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read);
+        using var file = new StreamContent(stream);
+        using var body = new MultipartFormDataContent();
+        body.Add(file, "scan", Path.GetFileName(filePath));
+        using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(baseUri, "/api/desktop/obligations/ai-scan")) { Content = body };
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        using var response = await _client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        return await ReadAsync<AIScanStartResponse>(response, cancellationToken);
     }
 
     public static Uri ValidateServerUrl(string value)

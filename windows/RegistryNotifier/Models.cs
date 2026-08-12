@@ -46,6 +46,18 @@ internal sealed class NotificationResponse
     public DateTimeOffset ServerTime { get; set; }
 }
 
+internal sealed class AIScanStartResponse
+{
+    [JsonPropertyName("batch")]
+    public string Batch { get; set; } = "";
+
+    [JsonPropertyName("pages")]
+    public int Pages { get; set; }
+
+    [JsonPropertyName("status")]
+    public string Status { get; set; } = "processing";
+}
+
 internal sealed class DesktopNotification
 {
     [JsonPropertyName("id")]

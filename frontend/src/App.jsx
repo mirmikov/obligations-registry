@@ -40,6 +40,7 @@ export default function App() {
   const [workspaceReady, setWorkspaceReady] = useState(false)
   const [registryOpen, setRegistryOpen] = useState(false)
   const [chatTarget, setChatTarget] = useState(null)
+  const [aiScanTarget, setAIScanTarget] = useState(null)
   const [undoState, setUndoState] = useState({ available: false, remaining: 0, loading: true })
   const [undoing, setUndoing] = useState(false)
   const [dataRevision, setDataRevision] = useState(0)
@@ -56,6 +57,7 @@ export default function App() {
     setPage(nextPage)
     setRegistryOpen(nextPage === 'credits-leasing')
 	if (nextPage === 'chat' && desktopTarget?.conversationID) setChatTarget(desktopTarget.conversationID)
+	if (nextPage === 'registry' && desktopTarget?.aiScanBatch) setAIScanTarget(desktopTarget.aiScanBatch)
 	if (desktopTarget) clearDesktopNotificationTarget()
     setCollapsed(Boolean(state.sidebar_collapsed))
     setWorkspaceReady(true)
@@ -137,7 +139,7 @@ export default function App() {
     dashboard: <Dashboard key={`dashboard-${dataRevision}`} notify={notify} />,
     'my-invoices': <MyInvoices key={`my-invoices-${dataRevision}`} notify={notify} />,
     executive: <ExecutiveDashboard key={`executive-${dataRevision}`} user={user} notify={notify} />,
-    registry: <Registry key={`registry-${dataRevision}`} user={user} notify={notify} maintenance={maintenance} onToggleMaintenance={toggleMaintenance} />,
+    registry: <Registry key={`registry-${dataRevision}`} user={user} notify={notify} maintenance={maintenance} onToggleMaintenance={toggleMaintenance} initialAIScanBatch={aiScanTarget} onInitialAIScanApplied={() => setAIScanTarget(null)} />,
     'credits-leasing': <CreditsLeasing key={`credits-${dataRevision}`} user={user} notify={notify} />,
     payments: <Payments key={`payments-${dataRevision}`} user={user} notify={notify} />,
     chat: <Chat user={user} notify={notify} initialConversationID={chatTarget} onInitialConversationApplied={() => setChatTarget(null)} notificationPermission={chatNotifications.permission} onEnableNotifications={chatNotifications.requestPermission} />,

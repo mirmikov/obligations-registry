@@ -65,6 +65,8 @@ func main() {
 	mux.Handle("GET /api/auth/me", a.authorize(http.HandlerFunc(a.me)))
 	mux.Handle("GET /api/desktop/notifications", a.authorizeDesktop(http.HandlerFunc(a.listDesktopNotifications)))
 	mux.Handle("POST /api/desktop/notifications", a.authorize(a.requireDeveloper(http.HandlerFunc(a.createDesktopNotification))))
+	mux.Handle("POST /api/desktop/obligations/ai-scan", a.authorizeDesktop(a.requirePermission("registry.ai_scan")(http.HandlerFunc(a.analyzeObligationScan))))
+	mux.Handle("GET /api/desktop/obligations/ai-scan/{batch}/status", a.authorizeDesktop(a.requirePermission("registry.ai_scan")(http.HandlerFunc(a.aiScanStatus))))
 	mux.Handle("GET /api/presence", a.authorize(a.requirePermission("registry.view")(http.HandlerFunc(a.listPresence))))
 	mux.Handle("POST /api/presence", a.authorize(a.requirePermission("registry.view")(http.HandlerFunc(a.updatePresence))))
 	mux.Handle("DELETE /api/presence/{session}", a.authorize(a.requirePermission("registry.view")(http.HandlerFunc(a.removePresence))))
