@@ -93,6 +93,8 @@ func main() {
 	mux.Handle("POST /api/obligations/import.xlsx", a.authorize(a.requirePermission("registry.import")(http.HandlerFunc(a.importXLSX))))
 	mux.Handle("GET /api/undo", a.authorize(a.requirePermission("registry.view")(http.HandlerFunc(a.undoStatus))))
 	mux.Handle("POST /api/undo", a.authorize(a.requirePermission("registry.undo")(http.HandlerFunc(a.undoLast))))
+	mux.Handle("POST /api/registry/counterparties/fns/lookup", a.authorize(a.requireAnyPermission("registry.create", "registry.edit")(http.HandlerFunc(a.lookupNewCounterpartyFNS))))
+	mux.Handle("POST /api/registry/counterparties", a.authorize(a.requireAnyPermission("registry.create", "registry.edit")(http.HandlerFunc(a.addRegistryCounterparty))))
 	mux.Handle("GET /api/references", a.authorize(http.HandlerFunc(a.listReferences)))
 	mux.Handle("GET /api/references/assignable-users", a.authorize(a.requirePermission("references.edit")(http.HandlerFunc(a.listAssignableUsers))))
 	mux.Handle("PUT /api/references/cost-categories/{id}/responsible", a.authorize(a.requirePermission("references.edit")(http.HandlerFunc(a.setCostCategoryResponsible))))

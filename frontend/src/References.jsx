@@ -253,10 +253,10 @@ function CounterpartyTaxIDEditor({ item, editable, onSave, notify }) {
   </div>
 }
 
-function CounterpartyModal({ value: initialValue, taxID: initialTaxID, onClose, onSave }) {
+export function CounterpartyModal({ value: initialValue = '', taxID: initialTaxID = '', initialMode, lookupPath = '/api/references/counterparties/fns/lookup', onClose, onSave }) {
   const [value, setValue] = useState(initialValue)
   const [taxID, setTaxID] = useState(initialTaxID)
-  const [mode, setMode] = useState('fns')
+  const [mode, setMode] = useState(initialMode || (initialTaxID ? 'fns' : initialValue ? 'manual' : 'fns'))
   const [fnsData, setFNSData] = useState(null)
   const [lookupError, setLookupError] = useState('')
   const [lookingUp, setLookingUp] = useState(false)
@@ -273,7 +273,7 @@ function CounterpartyModal({ value: initialValue, taxID: initialTaxID, onClose, 
     setLookupError('')
     setFNSData(null)
     try {
-      const result = await request('/api/references/counterparties/fns/lookup', {
+      const result = await request(lookupPath, {
         method: 'POST', body: JSON.stringify({ tax_id: normalizedTaxID }),
       })
       if (sequence !== lookupSequence.current) return

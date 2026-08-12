@@ -10,12 +10,14 @@ import { getRegistryStickyOffsets } from './registryColumns'
 import { canContinueRegistryDrag, canStartRegistryDrag, getRegistryDragScroll, hasRegistryDragStarted } from './registryDragScroll'
 import { can } from './permissions'
 import { referenceOptionSearchText } from './counterpartyTaxId'
+import { counterpartyCreationSeed, normalizedCounterpartyOptions } from './counterpartyCreation'
 import { buildCostCategoryResponsibleMap, withDefaultResponsible } from './referenceDefaults'
 import { buildAdvancedSplitPreview, createAdvancedSplitFields, isAdvancedSplitMode } from './advancedPaymentSplit'
 import { buildPaymentSplitPayload } from './paymentSplitPayload'
 import AdvancedSplitEditor, { AdvancedSplitModePicker } from './AdvancedSplitEditor'
 import usePresence from './usePresence'
 import AIScanModal from './AIScanModal'
+import { CounterpartyModal } from './References'
 
 const emptyFilters = { q: '', amount: '', counterparty: [], account_type: '', legal_entity: '', cost_category: '', priority: '', responsible: '', status: '', urgency: '', entry_date: '', document_date: '', planned_payment_date: '', approval_date: '', actual_payment_date: '', document_from: '', document_to: '', overdue: '' }
 const dateFields = new Set(['entry_date', 'document_date', 'planned_payment_date', 'approval_date', 'actual_payment_date'])
@@ -70,6 +72,7 @@ export default function Registry({ user, notify, maintenance, onToggleMaintenanc
   const [historyItem, setHistoryItem] = useState(null)
   const [aiScan, setAIScan] = useState(null)
   const [duplicatePrompt, setDuplicatePrompt] = useState(null)
+  const [counterpartyModal, setCounterpartyModal] = useState(null)
   const [tableFullscreen, setTableFullscreen] = useState(false)
   const [largeTableFont, setLargeTableFont] = useState(readLargeFontPreference)
   const [columnWidths, setColumnWidths] = useState(readColumnWidths)
@@ -307,6 +310,32 @@ export default function Registry({ user, notify, maintenance, onToggleMaintenanc
     } catch (error) { if (!error.duplicateCanceled) notify(error.message, 'error'); return false }
     finally { creatingRef.current = false; markSaving(`new:${field}`, false) }
   }
+  const openCounterpartyModal = (item, enteredValue) => {
+    const seed = counterpartyCreationSeed(enteredValue)
+    finishCellEdit(item)
+    setCounterpartyModal({ item, isNew: !item.id, ...seed })
+  }
+  const addCounterpartyFromRegistry = async (value, taxID) => {
+    const target = counterpartyModal
+    if (!target) return
+    let created
+    try {
+      created = await request('/api/registry/counterparties', {
+        method: 'POST', body: JSON.stringify({ value, tax_id: taxID, new_only: true }),
+      })
+      const references = await request('/api/references')
+      setRefs(references)
+    } catch (error) {
+      notify(error.message, 'error')
+      throw error
+    }
+    const saved = target.isNew
+      ? await commitNewCell(target.item, 'counterparty', value)
+      : await commitCell(target.item, 'counterparty', value)
+    setCounterpartyModal(null)
+    if (saved) notify(`Контрагент «${value}» добавлен и выбран`)
+    else notify(`Контрагент «${created?.value || value}» добавлен в справочник. Выберите его в строке повторно`, 'error')
+  }
   const remove = async id => { if (!confirm('Удалить обязательство? Отменить это действие нельзя.')) return; try { await request(`/api/obligations/${id}`, { method: 'DELETE' }); notify('Запись удалена'); load() } catch (e) { notify(e.message, 'error') } }
   const splitPayment = async (item, values) => {
     try {
@@ -402,7 +431,7 @@ export default function Registry({ user, notify, maintenance, onToggleMaintenanc
         <ColumnHead label="Ответственный" value={filters.responsible} options={refs.responsibles} onFilter={value => setFilter('responsible', value)} {...resizeProps(15)}/>
         <ColumnHead label="Приоритет" value={filters.priority} options={refs.priorities} onFilter={value => setFilter('priority', value)} {...resizeProps(16)}/>
         <PlainColumnHead label="Комментарий" {...resizeProps(17)}/><PlainColumnHead label="Условия оплаты" {...resizeProps(18)}/><th className="action-col"/></tr></thead>
-      <tbody>{newRow && <RegistryRow item={newRow} refs={refs} editable isNew savingCells={savingCells} onCommit={commitNewCell} onStartEdit={startCellEdit} onFinishEdit={finishCellEdit} onDelete={() => setNewRow(null)}/>} {loading ? <SkeletonRows/> : data.items.length === 0 && !newRow ? <tr><td colSpan="20"><div className="empty-state"><Search size={27}/><strong>Ничего не найдено</strong><span>Измените или сбросьте фильтры</span></div></td></tr> : data.items.map(item => <RegistryRow key={item.id} item={item} refs={refs} editable={can(user, 'registry.edit')} selected={selected.includes(item.id)} savingCells={savingCells} onToggle={() => setSelected(s => s.includes(item.id) ? s.filter(id => id !== item.id) : [...s, item.id])} onCommit={commitCell} onStartEdit={startCellEdit} onFinishEdit={finishCellEdit} onScanChanged={meta => updateScanMeta(item.id, meta)} notify={notify} onInfo={() => setHistoryItem(item)} onSplit={can(user, 'registry.split') && canSplitPayment(item) ? () => setSplitItem(item) : null} onDelete={can(user, 'registry.delete') ? () => remove(item.id) : null}/>)}</tbody></table></div>
+      <tbody>{newRow && <RegistryRow item={newRow} refs={refs} editable isNew savingCells={savingCells} onCommit={commitNewCell} onStartEdit={startCellEdit} onFinishEdit={finishCellEdit} onCreateCounterparty={entered => openCounterpartyModal(newRow, entered)} onDelete={() => setNewRow(null)}/>} {loading ? <SkeletonRows/> : data.items.length === 0 && !newRow ? <tr><td colSpan="20"><div className="empty-state"><Search size={27}/><strong>Ничего не найдено</strong><span>Измените или сбросьте фильтры</span></div></td></tr> : data.items.map(item => <RegistryRow key={item.id} item={item} refs={refs} editable={can(user, 'registry.edit')} selected={selected.includes(item.id)} savingCells={savingCells} onToggle={() => setSelected(s => s.includes(item.id) ? s.filter(id => id !== item.id) : [...s, item.id])} onCommit={commitCell} onStartEdit={startCellEdit} onFinishEdit={finishCellEdit} onCreateCounterparty={entered => openCounterpartyModal(item, entered)} onScanChanged={meta => updateScanMeta(item.id, meta)} notify={notify} onInfo={() => setHistoryItem(item)} onSplit={can(user, 'registry.split') && canSplitPayment(item) ? () => setSplitItem(item) : null} onDelete={can(user, 'registry.delete') ? () => remove(item.id) : null}/>)}</tbody></table></div>
       <footer className="table-footer"><div className="table-footer-summary" aria-live="polite" aria-busy={loading}><span>Показано {data.items.length} из {data.total.toLocaleString('ru-RU')}</span><span className="table-footer-total"><b>Сумма по фильтрам</b><strong>{loading ? 'Считаем…' : money(data.filtered_amount)}</strong></span></div><div><button disabled={page === 1} onClick={() => setPage(p => p - 1)}><ChevronLeft size={17}/></button><span>Страница <b>{page}</b> из {totalPages}</span><button disabled={page === totalPages} onClick={() => setPage(p => p + 1)}><ChevronRight size={17}/></button></div></footer>
     </section>
     {bulkOpen && (
@@ -412,6 +441,7 @@ export default function Registry({ user, notify, maintenance, onToggleMaintenanc
     {historyItem && <ObligationHistoryModal item={historyItem} notify={notify} onClose={() => setHistoryItem(null)}/>}
     {aiScan && <AIScanModal state={aiScan} references={refs} onChange={setAIScan} onRetry={() => aiScanRef.current.click()} onClose={() => !aiScan.loading && !aiScan.saving && setAIScan(null)} onSave={saveAIScan}/>}
     {duplicatePrompt && <DuplicateObligationModal conflict={duplicatePrompt} onCancel={() => finishDuplicatePrompt(false)} onConfirm={() => finishDuplicatePrompt(true)}/>}
+    {counterpartyModal && <CounterpartyModal value={counterpartyModal.value} taxID={counterpartyModal.taxID} initialMode={counterpartyModal.mode} lookupPath="/api/registry/counterparties/fns/lookup" onClose={() => setCounterpartyModal(null)} onSave={addCounterpartyFromRegistry}/>}
   </div>
 }
 
@@ -548,12 +578,12 @@ function hasActiveFilters(filters) {
   return Object.values(filters).some(value => Array.isArray(value) ? value.length > 0 : Boolean(value))
 }
 
-export function RegistryRow({ item, refs, editable, isNew = false, selected, savingCells, onToggle, onCommit, onStartEdit, onFinishEdit, onScanChanged, notify, onInfo, onSplit, onDelete, showSelection = true, scanEditable = editable, scanURL }) {
+export function RegistryRow({ item, refs, editable, isNew = false, selected, savingCells, onToggle, onCommit, onStartEdit, onFinishEdit, onCreateCounterparty, onScanChanged, notify, onInfo, onSplit, onDelete, showSelection = true, scanEditable = editable, scanURL }) {
   const saving = field => savingCells.has(`${isNew ? 'new' : item.id}:${field}`)
   const cell = (field, props = {}) => <EditableCell item={item} field={field} label={fieldLabels[field]} editable={editable} saving={saving(field)} onCommit={onCommit} onStartEdit={onStartEdit} onFinishEdit={onFinishEdit} {...props}/>
   return <tr className={`${isNew ? 'inline-new-row' : rowTone(item)}`}>
     <td className="check-col">{isNew ? <button type="button" className="cancel-inline-row" onClick={onDelete} title="Отменить новую строку"><X size={14}/></button> : <div className="registry-row-controls">{showSelection && <label className="registry-row-selector" title="Выбрать строку"><input type="checkbox" checked={selected} onChange={onToggle}/><span aria-hidden="true"><Check size={12}/></span></label>}{(scanEditable || item.has_scan) && <ObligationScanControl item={item} editable={scanEditable} notify={notify} onChanged={onScanChanged} scanURL={scanURL}/>}</div>}</td>
-    {cell('counterparty', { className: 'counterparty-cell', options: refs.counterparties, allowCustom: true })}
+    {cell('counterparty', { className: 'counterparty-cell', options: refs.counterparties, allowCustom: true, onCreateCustom: onCreateCounterparty })}
     {cell('entry_date', { type: 'date', className: 'entry-date-cell' })}
     {cell('account_type', { options: refs.account_types, className: 'account-type-cell' })}
     {cell('legal_entity', { options: refs.legal_entities, className: 'legal-entity-cell' })}
@@ -650,7 +680,7 @@ function formatScanDate(value) {
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString('ru-RU', { dateStyle: 'short', timeStyle: 'short' })
 }
 
-function EditableCell({ item, field, label, editable, saving, type = 'text', options, allowCustom = false, className = '', render, onCommit, onStartEdit, onFinishEdit }) {
+function EditableCell({ item, field, label, editable, saving, type = 'text', options, allowCustom = false, onCreateCustom, className = '', render, onCommit, onStartEdit, onFinishEdit }) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState('')
   const begin = () => {
@@ -666,34 +696,41 @@ function EditableCell({ item, field, label, editable, saving, type = 'text', opt
   const display = render ? render(item[field]) : type === 'date' ? shortDate(item[field]) : (item[field] ?? '') || '—'
   const ariaValue = cellAriaValue(field, item[field])
   return <td className={`editable-cell ${className} ${editing ? 'is-editing' : ''} ${saving ? 'is-saving' : ''}`} aria-label={`${label}: ${ariaValue}`} onClick={begin} title={!editing ? `${label}: ${ariaValue}${editable ? '\nНажмите, чтобы изменить' : ''}` : undefined}>
-    {editing ? options ? <InlineCellSelect label={label} value={item[field] || ''} options={options} allowCustom={allowCustom} onChoose={value => { setDraft(value); onCommit(item, field, value).then(ok => ok && setEditing(false)) }} onCancel={cancel}/> : type === 'date' ? <DateInput className="inline-cell-input" value={item[field] || ''} onChange={value => onCommit(item, field, value).then(ok => ok && setEditing(false))} onClose={() => { setEditing(false); onFinishEdit(item) }} aria-label={label} autoFocus/> : <input className="inline-cell-input" type={type === 'number' ? 'number' : 'text'} placeholder="Введите значение" value={draft} onChange={event => setDraft(event.target.value)} onBlur={commit} onKeyDown={keyDown} autoFocus/> : <div className="cell-display"><div className="cell-display-value">{display}</div></div>}
+    {editing ? options ? <InlineCellSelect label={label} value={item[field] || ''} options={options} allowCustom={allowCustom} onChoose={value => { setDraft(value); onCommit(item, field, value).then(ok => ok && setEditing(false)) }} onCreateCustom={value => { setDraft(value); setEditing(false); onCreateCustom?.(value) }} onCancel={cancel}/> : type === 'date' ? <DateInput className="inline-cell-input" value={item[field] || ''} onChange={value => onCommit(item, field, value).then(ok => ok && setEditing(false))} onClose={() => { setEditing(false); onFinishEdit(item) }} aria-label={label} autoFocus/> : <input className="inline-cell-input" type={type === 'number' ? 'number' : 'text'} placeholder="Введите значение" value={draft} onChange={event => setDraft(event.target.value)} onBlur={commit} onKeyDown={keyDown} autoFocus/> : <div className="cell-display"><div className="cell-display-value">{display}</div></div>}
     {saving && <i className="cell-saving-dot"/>}
   </td>
 }
 
-export function InlineCellSelect({ label, value, options = [], allowCustom, onChoose, onCancel }) {
+export function InlineCellSelect({ label, value, options = [], allowCustom, onChoose, onCreateCustom, onCancel }) {
   const [search, setSearch] = useState('')
   const rootRef = useRef(null)
   const inputRef = useRef(null)
-  const values = useMemo(() => [...new Set(options.map(option => typeof option === 'string' ? option : option.value).filter(Boolean))], [options])
-  const visible = useMemo(() => { const term = search.trim().toLocaleLowerCase('ru-RU'); return term ? values.filter(option => option.toLocaleLowerCase('ru-RU').includes(term)) : values }, [search, values])
+  const normalizedOptions = useMemo(() => normalizedCounterpartyOptions(options), [options])
+  const visible = useMemo(() => { const term = search.trim().toLocaleLowerCase('ru-RU'); return term ? normalizedOptions.filter(option => option.searchText.includes(term)) : normalizedOptions }, [search, normalizedOptions])
   useEffect(() => {
     const outside = event => { if (!rootRef.current?.contains(event.target)) onCancel() }
     document.addEventListener('mousedown', outside)
     requestAnimationFrame(() => inputRef.current?.focus())
     return () => document.removeEventListener('mousedown', outside)
   }, [])
-  const useCustom = search.trim() && !values.some(option => option.toLocaleLowerCase('ru-RU') === search.trim().toLocaleLowerCase('ru-RU'))
+  const normalizedSearchTaxID = search.replace(/\D/g, '')
+  const exactOption = normalizedOptions.find(option => option.value.toLocaleLowerCase('ru-RU') === search.trim().toLocaleLowerCase('ru-RU') || (normalizedSearchTaxID && option.taxID === normalizedSearchTaxID))
+  const useCustom = search.trim() && !exactOption
   const keyDown = event => {
     if (event.key === 'Escape') { event.preventDefault(); onCancel() }
-    if (event.key === 'Enter') { event.preventDefault(); const next = visible[0] || (allowCustom ? search.trim() : ''); if (next) onChoose(next) }
+    if (event.key === 'Enter') {
+      event.preventDefault()
+      if (exactOption) onChoose(exactOption.value)
+      else if (allowCustom && search.trim()) (onCreateCustom || onChoose)(search.trim())
+      else if (visible[0]) onChoose(visible[0].value)
+    }
   }
   return <div ref={rootRef} className="inline-select-menu" onClick={event => event.stopPropagation()}>
-    <div className="inline-select-search"><Search size={14}/><input ref={inputRef} value={search} onChange={event => setSearch(event.target.value)} onKeyDown={keyDown} placeholder="Поиск по наименованию" aria-label={`Поиск значения: ${label}`}/></div>
+    <div className="inline-select-search"><Search size={14}/><input ref={inputRef} value={search} onChange={event => setSearch(event.target.value)} onKeyDown={keyDown} placeholder={label === 'Контрагент' ? 'Название или ИНН' : 'Поиск по наименованию'} aria-label={`Поиск значения: ${label}`}/></div>
     <div className="inline-select-options">
       <button type="button" className={!value ? 'selected' : ''} onClick={() => onChoose('')}><span>Не выбрано</span>{!value && <Check size={13}/>}</button>
-      {allowCustom && useCustom && <button type="button" className="custom-value" onClick={() => onChoose(search.trim())}><span>Использовать «{search.trim()}»</span><Plus size={13}/></button>}
-      {visible.map(option => <button type="button" key={option} className={option === value ? 'selected' : ''} onClick={() => onChoose(option)} title={option}><span>{option}</span>{option === value && <Check size={13}/>}</button>)}
+      {allowCustom && useCustom && <button type="button" className="custom-value" onClick={() => (onCreateCustom || onChoose)(search.trim())}><span>Завести нового контрагента «{search.trim()}»</span><Plus size={13}/></button>}
+      {visible.map(option => <button type="button" key={option.value} className={option.value === value ? 'selected' : ''} onClick={() => onChoose(option.value)} title={option.taxID ? `${option.value} · ИНН ${option.taxID}` : option.value}><span>{option.value}{option.taxID && <small>ИНН {option.taxID}</small>}</span>{option.value === value && <Check size={13}/>}</button>)}
       {!visible.length && !(allowCustom && useCustom) && <p>Ничего не найдено</p>}
     </div>
   </div>

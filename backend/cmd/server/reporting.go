@@ -300,6 +300,11 @@ func (a *app) addReference(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 201, map[string]any{"id": id, "tax_id": input.TaxID})
 }
 
+func (a *app) addRegistryCounterparty(w http.ResponseWriter, r *http.Request) {
+	r.SetPathValue("kind", counterpartyReferenceKind)
+	a.addReference(w, r)
+}
+
 func (a *app) setCounterpartyTaxID(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil || id <= 0 {

@@ -33,3 +33,14 @@ test('FNS autofill is limited to new counterparties and existing cards are read-
   assert.match(source, /Только просмотр: сведения ФНС не перезаписывают существующего контрагента/)
   assert.match(source, /GET|request\(`\/api\/references\/counterparties\/\$\{id\}\/fns`\)/)
 })
+
+test('registry opens the shared new-counterparty modal and never saves a free-form name directly', () => {
+  const registrySource = readFileSync(new URL('./Registry.jsx', import.meta.url), 'utf8')
+  const referencesSource = readFileSync(new URL('./References.jsx', import.meta.url), 'utf8')
+  assert.match(referencesSource, /export function CounterpartyModal/)
+  assert.match(registrySource, /counterpartyCreationSeed\(enteredValue\)/)
+  assert.match(registrySource, /lookupPath="\/api\/registry\/counterparties\/fns\/lookup"/)
+  assert.match(registrySource, /request\('\/api\/registry\/counterparties'/)
+  assert.match(registrySource, /onCreateCustom:\s*onCreateCounterparty/)
+  assert.doesNotMatch(registrySource, /className="custom-value"[^>]+onClick=\{\(\) => onChoose\(search\.trim\(\)\)\}/)
+})
