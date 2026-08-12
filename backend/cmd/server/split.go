@@ -23,6 +23,26 @@ type paymentSplitInput struct {
 	PaymentDates    []string                     `json:"payment_dates"`
 	AmountParts     []paymentSplitAmountPart     `json:"amount_parts"`
 	PercentageParts []paymentSplitPercentagePart `json:"percentage_parts"`
+
+	// Older already-open frontend sessions submit the complete split form even
+	// when one of the basic modes is selected. These UI-only fields are ignored
+	// by the server, but accepting this known set keeps those sessions working
+	// without weakening decodeJSON for genuinely unknown fields.
+	AdvancePercent       json.RawMessage `json:"advance_percent"`
+	AdvanceDate          json.RawMessage `json:"advance_date"`
+	AdvanceAccountType   json.RawMessage `json:"advance_account_type"`
+	BalanceDate          json.RawMessage `json:"balance_date"`
+	BalanceAccountType   json.RawMessage `json:"balance_account_type"`
+	CalendarCount        json.RawMessage `json:"calendar_count"`
+	CalendarStartDate    json.RawMessage `json:"calendar_start_date"`
+	CalendarInterval     json.RawMessage `json:"calendar_interval"`
+	CalendarUnit         json.RawMessage `json:"calendar_unit"`
+	RecurringAmount      json.RawMessage `json:"recurring_amount"`
+	RecurringStartDate   json.RawMessage `json:"recurring_start_date"`
+	RecurringInterval    json.RawMessage `json:"recurring_interval"`
+	RecurringUnit        json.RawMessage `json:"recurring_unit"`
+	RecurringAccountType json.RawMessage `json:"recurring_account_type"`
+	WeightParts          json.RawMessage `json:"weight_parts"`
 }
 
 type paymentSplitAmountPart struct {

@@ -11,7 +11,8 @@ import { canContinueRegistryDrag, canStartRegistryDrag, getRegistryDragScroll, h
 import { can } from './permissions'
 import { referenceOptionSearchText } from './counterpartyTaxId'
 import { buildCostCategoryResponsibleMap, withDefaultResponsible } from './referenceDefaults'
-import { buildAdvancedSplitPayload, buildAdvancedSplitPreview, createAdvancedSplitFields, isAdvancedSplitMode } from './advancedPaymentSplit'
+import { buildAdvancedSplitPreview, createAdvancedSplitFields, isAdvancedSplitMode } from './advancedPaymentSplit'
+import { buildPaymentSplitPayload } from './paymentSplitPayload'
 import AdvancedSplitEditor, { AdvancedSplitModePicker } from './AdvancedSplitEditor'
 import usePresence from './usePresence'
 import AIScanModal from './AIScanModal'
@@ -793,9 +794,8 @@ function SplitPaymentModal({ item, refs, onClose, onSave }) {
     if (preview.error || saving) return
     setSaving(true)
     try {
-      const values = advancedMode
-        ? buildAdvancedSplitPayload(form, preview)
-        : { ...form, count: Number(form.count), payment_dates: form.mode === 'count' ? form.payment_dates : null, amount_parts: form.mode === 'amount' ? form.amount_parts.map(part => ({ ...part, amount: Number(part.amount) })) : null, percentage_parts: form.mode === 'percentage' ? form.percentage_parts.map(part => ({ ...part, percent: Number(part.percent) })) : null }
+      const values = buildPaymentSplitPayload(form, preview)
+      if (!values) return
       await onSave(values)
     } finally { setSaving(false) }
   }
