@@ -20,7 +20,9 @@ test('manual payment rows can be added, removed and filled independently', () =>
   assert.match(source, /current\.amount_parts\.filter\(\(_, partIndex\) => partIndex !== index\)/)
   assert.match(source, /aria-label={`Признак учёта платежа \$\{index \+ 1\}`}/)
   assert.match(source, /aria-label={`Плановая дата платежа \$\{index \+ 1\}`}/)
-  assert.match(source, /amount_parts: form\.mode === 'amount' \? form\.amount_parts\.map/)
+  assert.match(source, /buildPaymentSplitPayload\(form, preview\)/)
+  const payloadSource = fs.readFileSync(new URL('./paymentSplitPayload.js', import.meta.url), 'utf8')
+  assert.match(payloadSource, /amount_parts: form\.amount_parts\.map/)
 })
 
 test('manual fixed amounts require two rows, exact total, dates and OMS or Commercial', () => {
