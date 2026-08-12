@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Check, ChevronDown, Combine, Plus, Save, Search, Trash2, X } from 'lucide-react'
+import { Building2, Check, ChevronDown, CircleAlert, Combine, ExternalLink, Info, LoaderCircle, Plus, RefreshCw, Save, Search, ShieldCheck, Trash2, X } from 'lucide-react'
 import { request } from './api'
 import { PageHeader } from './App'
 import { can } from './permissions'
 import { filterCounterparties, normalizeTaxIdInput } from './counterpartyTaxId'
+import { fnsEntityLabel, formatFNSDate, safeFNSSourceURL, validateFNSTaxID } from './fnsCounterparty'
 
 const kinds = [
   ['statuses', 'Статусы', 'Этапы обработки обязательства'],
@@ -23,6 +24,7 @@ export default function References({ user, notify }) {
   const [value, setValue] = useState('')
   const [search, setSearch] = useState('')
   const [counterpartyModal, setCounterpartyModal] = useState(null)
+  const [counterpartyDetails, setCounterpartyDetails] = useState(null)
   const [mergeModal, setMergeModal] = useState(null)
   const [selectedCounterparties, setSelectedCounterparties] = useState([])
   const [savingAssignment, setSavingAssignment] = useState(null)
@@ -44,7 +46,7 @@ export default function References({ user, notify }) {
   const add = async (nextValue, taxID = '') => {
     if (!nextValue.trim()) return
     try {
-      await request(`/api/references/${active}`, { method: 'POST', body: JSON.stringify({ value: nextValue, tax_id: normalizeTaxIdInput(taxID) }) })
+      await request(`/api/references/${active}`, { method: 'POST', body: JSON.stringify({ value: nextValue, tax_id: normalizeTaxIdInput(taxID), ...(active === 'counterparties' ? { new_only: true } : {}) }) })
       setValue('')
       setCounterpartyModal(null)
       notify(active === 'counterparties' ? 'Контрагент добавлен' : 'Значение добавлено')
@@ -70,6 +72,18 @@ export default function References({ user, notify }) {
       counterparties: (current.counterparties || []).map(item => Number(item.id) === Number(id) ? { ...item, tax_id: result.tax_id || '' } : item),
     }))
     notify(result.tax_id ? 'ИНН сохранён' : 'ИНН удалён')
+  }
+
+  const openCounterpartyDetails = item => {
+    const id = Number(item.id)
+    if (!item.tax_id) {
+      setCounterpartyDetails({ item, loading: false, data: null, error: 'Для этого контрагента ИНН не указан. Карточка ФНС недоступна.' })
+      return
+    }
+    setCounterpartyDetails({ item, loading: true, data: null, error: '' })
+    request(`/api/references/counterparties/${id}/fns`)
+      .then(result => setCounterpartyDetails(current => Number(current?.item?.id) === id ? { item, loading: false, data: result, error: '' } : current))
+      .catch(error => setCounterpartyDetails(current => Number(current?.item?.id) === id ? { item, loading: false, data: null, error: error.message } : current))
   }
 
   const toggleCounterparty = id => setSelectedCounterparties(current => current.includes(id) ? current.filter(item => item !== id) : [...current, id])
@@ -174,7 +188,7 @@ export default function References({ user, notify }) {
           {currentItems.map((item, index) => <div key={item.id} className={`${active === 'cost_categories' ? 'has-assignment' : ''} ${active === 'responsibles' && editable ? 'has-user-assignment' : ''} ${active === 'counterparties' ? 'counterparty-reference-row' : ''}`}>
             <span>{String(index + 1).padStart(2, '0')}</span>
             {active === 'counterparties' && editable && <button type="button" className={`reference-merge-checkbox ${selectedCounterparties.includes(Number(item.id)) ? 'selected' : ''}`} onClick={() => toggleCounterparty(Number(item.id))} aria-label={`Выбрать контрагента ${item.value} для объединения`} aria-pressed={selectedCounterparties.includes(Number(item.id))}>{selectedCounterparties.includes(Number(item.id)) && <Check size={15}/>}</button>}
-            <strong>{item.value}</strong>
+            {active === 'counterparties' ? <button type="button" className="reference-counterparty-name" onClick={() => openCounterpartyDetails(item)} title="Открыть актуальную карточку ФНС"><span><strong>{item.value}</strong><small>Сведения ФНС</small></span><Info size={16}/></button> : <strong>{item.value}</strong>}
             {active === 'counterparties' && <CounterpartyTaxIDEditor item={item} editable={editable} onSave={saveCounterpartyTaxID} notify={notify}/>}
             {active === 'cost_categories' && <ResponsiblePicker
               value={assignments[Number(item.id)] || ''}
@@ -197,6 +211,7 @@ export default function References({ user, notify }) {
       </section>
     </div>
     {counterpartyModal && <CounterpartyModal value={counterpartyModal.value} taxID={counterpartyModal.taxID} onClose={() => setCounterpartyModal(null)} onSave={(nextValue, taxID) => add(nextValue, taxID)}/>}
+    {counterpartyDetails && <CounterpartyDetailsModal state={counterpartyDetails} onClose={() => setCounterpartyDetails(null)} onRetry={() => openCounterpartyDetails(counterpartyDetails.item)}/>}
     {mergeModal && <CounterpartyMergeModal items={selectedCounterpartyItems} value={mergeModal.value} onClose={() => setMergeModal(null)} onSave={mergeCounterparties}/>}
   </div>
 }
@@ -241,7 +256,64 @@ function CounterpartyTaxIDEditor({ item, editable, onSave, notify }) {
 function CounterpartyModal({ value: initialValue, taxID: initialTaxID, onClose, onSave }) {
   const [value, setValue] = useState(initialValue)
   const [taxID, setTaxID] = useState(initialTaxID)
+  const [mode, setMode] = useState('fns')
+  const [fnsData, setFNSData] = useState(null)
+  const [lookupError, setLookupError] = useState('')
+  const [lookingUp, setLookingUp] = useState(false)
   const [saving, setSaving] = useState(false)
+  const lookupSequence = useRef(0)
+  const lastLookupTaxID = useRef('')
+  const validation = useMemo(() => validateFNSTaxID(taxID), [taxID])
+
+  const lookup = async (normalizedTaxID, force = false) => {
+    if (!normalizedTaxID || (!force && lastLookupTaxID.current === normalizedTaxID)) return
+    lastLookupTaxID.current = normalizedTaxID
+    const sequence = ++lookupSequence.current
+    setLookingUp(true)
+    setLookupError('')
+    setFNSData(null)
+    try {
+      const result = await request('/api/references/counterparties/fns/lookup', {
+        method: 'POST', body: JSON.stringify({ tax_id: normalizedTaxID }),
+      })
+      if (sequence !== lookupSequence.current) return
+      setFNSData(result)
+      setValue(result.suggested_name || result.short_name || result.full_name || '')
+    } catch (error) {
+      if (sequence !== lookupSequence.current) return
+      setLookupError(error.message)
+      setValue('')
+    } finally {
+      if (sequence === lookupSequence.current) setLookingUp(false)
+    }
+  }
+
+  useEffect(() => {
+    if (mode !== 'fns' || !validation.complete || !validation.valid) return undefined
+    const timer = setTimeout(() => lookup(validation.taxID), 700)
+    return () => clearTimeout(timer)
+  }, [mode, validation.complete, validation.valid, validation.taxID])
+
+  const changeTaxID = event => {
+    lookupSequence.current += 1
+    lastLookupTaxID.current = ''
+    setTaxID(event.target.value.replace(/[^\d\s-]/g, ''))
+    setFNSData(null)
+    setLookupError('')
+    if (mode === 'fns') setValue('')
+    setLookingUp(false)
+  }
+
+  const switchMode = nextMode => {
+    lookupSequence.current += 1
+    lastLookupTaxID.current = ''
+    setMode(nextMode)
+    setFNSData(null)
+    setLookupError('')
+    setLookingUp(false)
+    setValue('')
+  }
+
   const submit = async event => {
     event.preventDefault()
     if (!value.trim() || saving) return
@@ -249,15 +321,65 @@ function CounterpartyModal({ value: initialValue, taxID: initialTaxID, onClose, 
     try { await onSave(value.trim(), taxID) } catch { setSaving(false) }
   }
   return <div className="modal-backdrop" onMouseDown={event => { if (event.target === event.currentTarget && !saving) onClose() }}>
-    <form className="modal small-modal counterparty-modal" onSubmit={submit}>
-      <div className="modal-head"><div><h2>Новый контрагент</h2><p>ИНН можно указать сейчас или добавить позднее в справочнике.</p></div><button type="button" onClick={onClose} disabled={saving} aria-label="Закрыть"><X size={17}/></button></div>
-      <div className="modal-body stacked-fields">
-        <label className="field"><span>Наименование контрагента *</span><input autoFocus value={value} onChange={event => setValue(event.target.value)} placeholder="Например, ООО «Поставщик»" required/></label>
-        <label className="field"><span>ИНН (необязательно)</span><input value={taxID} onChange={event => setTaxID(event.target.value)} inputMode="numeric" maxLength={15} placeholder="10 или 12 цифр"/><small>ИНН используется для поиска и защиты от дублирования контрагентов.</small></label>
+    <form className="modal counterparty-modal fns-counterparty-modal" onSubmit={submit}>
+      <div className="modal-head"><div><h2>Новый контрагент</h2><p>Для новых контрагентов название и реквизиты загружаются напрямую из ФНС. Уже заведённые записи не изменяются.</p></div><button type="button" onClick={onClose} disabled={saving} aria-label="Закрыть"><X size={17}/></button></div>
+      <div className="counterparty-create-tabs" role="tablist" aria-label="Способ добавления контрагента">
+        <button type="button" role="tab" aria-selected={mode === 'fns'} className={mode === 'fns' ? 'active' : ''} onClick={() => switchMode('fns')}><ShieldCheck size={16}/>По ИНН из ФНС</button>
+        <button type="button" role="tab" aria-selected={mode === 'manual'} className={mode === 'manual' ? 'active' : ''} onClick={() => switchMode('manual')}><Plus size={16}/>Добавить вручную</button>
       </div>
-      <div className="modal-footer"><button type="button" className="secondary" onClick={onClose} disabled={saving}>Отмена</button><button type="submit" className="primary" disabled={!value.trim() || saving}>{saving ? 'Сохранение…' : taxID.trim() ? 'Добавить с ИНН' : 'Добавить без ИНН'}</button></div>
+      <div className="modal-body stacked-fields counterparty-create-body">
+        {mode === 'fns' ? <>
+          <label className={`field fns-tax-id-field ${validation.error ? 'has-error' : ''}`}><span>ИНН организации или ИП *</span><div><input autoFocus value={taxID} onChange={changeTaxID} inputMode="numeric" maxLength={15} placeholder="10 цифр для организации, 12 — для ИП"/><button type="button" className="secondary" disabled={!validation.valid || lookingUp} onClick={() => lookup(validation.taxID, true)}>{lookingUp ? <LoaderCircle className="spin" size={16}/> : <Search size={16}/>}Найти</button></div><small>{validation.error || (!validation.complete ? 'После ввода корректного ИНН поиск начнётся автоматически.' : fnsEntityLabel(validation.entityType))}</small></label>
+          {lookingUp && <div className="fns-lookup-state"><LoaderCircle className="spin" size={20}/><div><strong>Запрашиваем сведения в ФНС</strong><span>Данные не загружаются из локальной копии и могут прийти с небольшой задержкой.</span></div></div>}
+          {lookupError && <div className="fns-message error"><CircleAlert size={19}/><div><strong>Не удалось получить сведения</strong><span>{lookupError}</span><button type="button" onClick={() => validation.valid && lookup(validation.taxID, true)}>Повторить запрос</button></div></div>}
+          {fnsData && <FNSCounterpartyCard data={fnsData} compact/>}
+          {fnsData && !fnsData.existing_reference && <label className="field"><span>Название в справочнике *</span><input value={value} onChange={event => setValue(event.target.value)} placeholder="Название получено из ФНС" required/><small>Поле заполнено по официальным данным ФНС; при необходимости бухгалтер может уточнить отображаемое название.</small></label>}
+        </> : <>
+          <div className="fns-message neutral"><Info size={19}/><div><strong>Ручное добавление</strong><span>Используйте для иностранной организации или контрагента, которого нет в ЕГРЮЛ/ЕГРИП. Проверка дубля по ИНН всё равно сохранится.</span></div></div>
+          <label className="field"><span>Наименование контрагента *</span><input autoFocus value={value} onChange={event => setValue(event.target.value)} placeholder="Например, ООО «Поставщик»" required/></label>
+          <label className="field"><span>ИНН (необязательно)</span><input value={taxID} onChange={changeTaxID} inputMode="numeric" maxLength={15} placeholder="10 или 12 цифр"/><small>Можно пропустить для контрагента без российского ИНН.</small></label>
+        </>}
+      </div>
+      <div className="modal-footer"><button type="button" className="secondary" onClick={onClose} disabled={saving}>Отмена</button><button type="submit" className="primary" disabled={!value.trim() || saving || (mode === 'fns' && (!fnsData || Boolean(fnsData.existing_reference)))}>{saving ? 'Сохранение…' : mode === 'fns' ? 'Добавить контрагента' : taxID.trim() ? 'Добавить вручную с ИНН' : 'Добавить без ИНН'}</button></div>
     </form>
   </div>
+}
+
+function CounterpartyDetailsModal({ state, onClose, onRetry }) {
+  return <div className="modal-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) onClose() }}>
+    <section className="modal counterparty-details-modal" role="dialog" aria-modal="true" aria-labelledby="counterparty-details-title">
+      <div className="modal-head"><div><h2 id="counterparty-details-title">Карточка контрагента</h2><p>{state.item.value}. Только просмотр: сведения ФНС не перезаписывают существующего контрагента.</p></div><button type="button" onClick={onClose} aria-label="Закрыть"><X size={17}/></button></div>
+      <div className="modal-body counterparty-details-body">
+        {state.loading && <div className="fns-lookup-state"><LoaderCircle className="spin" size={21}/><div><strong>Получаем актуальные сведения ФНС</strong><span>Запрашиваем карточку по ИНН {state.item.tax_id}.</span></div></div>}
+        {state.error && <div className="fns-message error"><CircleAlert size={20}/><div><strong>Карточка недоступна</strong><span>{state.error}</span>{state.item.tax_id && <button type="button" onClick={onRetry}><RefreshCw size={14}/>Повторить</button>}</div></div>}
+        {state.data && <FNSCounterpartyCard data={state.data}/>}
+      </div>
+      <div className="modal-footer"><span className="fns-readonly-note"><ShieldCheck size={15}/>Данные в справочнике не изменяются</span><button type="button" className="primary" onClick={onClose}>Закрыть</button></div>
+    </section>
+  </div>
+}
+
+function FNSCounterpartyCard({ data, compact = false }) {
+  const sourceURL = safeFNSSourceURL(data.source_url)
+  const statusClass = data.active && !data.invalid ? 'active' : 'inactive'
+  const rows = [
+    ['ИНН', data.tax_id],
+    ['КПП', data.kpp],
+    [data.entity_type === 'individual_entrepreneur' ? 'ОГРНИП' : 'ОГРН', data.ogrn],
+    ['Дата регистрации', formatFNSDate(data.registration_date)],
+    ['Регион', data.region],
+    ['Адрес', data.address],
+    ['Основной ОКВЭД', [data.okved_code, data.okved_name].filter(Boolean).join(' — ')],
+    ['Руководитель', data.director ? [data.director.name, data.director.position].filter(Boolean).join(', ') : ''],
+    ['Сведения актуальны на', formatFNSDate(data.registry_updated_at)],
+  ].filter(([, value]) => value)
+  return <article className={`fns-counterparty-card ${compact ? 'compact' : ''}`}>
+    <header><div className="fns-source-icon"><Building2 size={21}/></div><div><span>{fnsEntityLabel(data.entity_type)}</span><h3>{data.short_name || data.suggested_name || data.full_name}</h3>{data.full_name && data.full_name !== data.short_name && <p>{data.full_name}</p>}</div><i className={statusClass}>{data.status || (data.active ? 'Действующий' : 'Недействующий')}</i></header>
+    <dl>{rows.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>
+    {data.existing_reference && <div className="fns-existing-reference"><CircleAlert size={18}/><div><strong>Контрагент уже есть в справочнике</strong><span>{data.existing_reference.value} · ИНН {data.existing_reference.tax_id}. Новая запись не будет создана.</span></div></div>}
+    {(data.warnings || []).map(warning => <div className="fns-card-warning" key={warning}><CircleAlert size={16}/><span>{warning}</span></div>)}
+    <footer><span><ShieldCheck size={15}/>{data.source || 'ФНС России — Прозрачный бизнес'}</span>{sourceURL && <a href={sourceURL} target="_blank" rel="noreferrer">Открыть в ФНС <ExternalLink size={14}/></a>}</footer>
+  </article>
 }
 
 function ResponsiblePicker({ value, options, disabled, saving, onChange }) {
