@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -228,6 +229,24 @@ func enqueueChatDesktopNotifications(ctx context.Context, tx *sql.Tx, conversati
 		conversationID, senderID, messageID, title, body,
 		fmt.Sprintf("/?page=chat&conversation=%d", conversationID))
 	return err
+}
+
+func (a *app) enqueueChatDesktopNotificationsBestEffort(ctx context.Context, conversationID, messageID, senderID int64, senderName, storedBody string) {
+	notificationContext, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	tx, err := a.db.BeginTx(notificationContext, nil)
+	if err == nil {
+		err = enqueueChatDesktopNotifications(notificationContext, tx, conversationID, messageID, senderID, senderName, storedBody)
+	}
+	if err == nil {
+		err = tx.Commit()
+	}
+	if err != nil {
+		if tx != nil {
+			_ = tx.Rollback()
+		}
+		log.Printf("desktop notification enqueue failed for conversation=%d message=%d: %v", conversationID, messageID, err)
+	}
 }
 
 func chatDesktopNotificationTitle(kind, conversationName, senderName string) string {
