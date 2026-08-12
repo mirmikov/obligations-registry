@@ -185,6 +185,102 @@ func TestParseAIScanTextHandlesBrokenPaymentWordAndIntegerAmount(t *testing.T) {
 	}
 }
 
+func TestParseAIScanAmountUsesReceiptPaymentBeforeTotalWithCommission(t *testing.T) {
+	text := `
+Квитанция об операции
+Перевод по номеру телефона
+Статус: Успешно
+Сумма платежа: 9 750,00 ₽
+Комиссия: 30,00 ₽
+Итого списано: 9 780,00 ₽
+Идентификатор операции: 6212080843603150
+`
+	amount := parseAIScanAmount(text)
+	if amount == nil || *amount != 9750 {
+		t.Fatalf("expected payment without bank commission, got %v", amount)
+	}
+}
+
+func TestParseAIScanAmountUsesGenericReceiptAmountAndStopsAtCommission(t *testing.T) {
+	text := `
+Квитанция № 1-133-224-499-873
+Операция выполнена
+Сумма 4 200,00 ₽ Комиссия 42,00 ₽
+Итого списано 4 242,00 ₽
+`
+	amount := parseAIScanAmount(text)
+	if amount == nil || *amount != 4200 {
+		t.Fatalf("expected receipt amount before commission, got %v", amount)
+	}
+}
+
+func TestParseAIScanAmountIgnoresOperationIdentifierAfterTotal(t *testing.T) {
+	text := `
+Квитанция об оплате
+Итого: 1 600 ₽ Идентификатор операции: 6212080843603150
+`
+	amount := parseAIScanAmount(text)
+	if amount == nil || *amount != 1600 {
+		t.Fatalf("expected total rather than operation identifier, got %v", amount)
+	}
+}
+
+func TestParseAIScanAmountSupportsReceiptValueOnFollowingLine(t *testing.T) {
+	text := `
+Чек по операции
+Сумма перевода
+300 ₽
+Комиссия
+0 ₽
+`
+	amount := parseAIScanAmount(text)
+	if amount == nil || *amount != 300 {
+		t.Fatalf("expected amount from the following receipt line, got %v", amount)
+	}
+}
+
+func TestParseAIScanAmountSupportsGroupedInteger(t *testing.T) {
+	amount := parseAIScanAmount("Счет № 10\nИтого: 200 000 руб.")
+	if amount == nil || *amount != 200000 {
+		t.Fatalf("expected grouped integer amount, got %v", amount)
+	}
+}
+
+func TestParseAIScanAmountDoesNotUseGenericInvoiceTableSum(t *testing.T) {
+	text := `
+Счет № 10 от 12.08.2026
+Наименование Количество Цена Сумма
+Товар 1 2 500,00
+`
+	if amount := parseAIScanAmount(text); amount != nil {
+		t.Fatalf("generic invoice table column must not become the total: %v", amount)
+	}
+}
+
+func TestParseAIScanAmountDoesNotUseItemCountBeforeInvoiceTotal(t *testing.T) {
+	text := `
+Счет №1971444
+Цена 200 000,00 Сумма 200 000,00
+Итого: 200 000,00
+В том числе НДС: Без НДС
+Всего наименований: 1, на сумму: Двести тысяч рублей 00 копеек
+`
+	amount := parseAIScanAmount(text)
+	if amount == nil || *amount != 200000 {
+		t.Fatalf("expected invoice total rather than item count, got %v", amount)
+	}
+}
+
+func TestParseAIScanAmountRejectsItemCountWithoutMonetaryTotal(t *testing.T) {
+	text := `
+Счет №1971444
+Всего наименований: 1, на сумму: Двести тысяч рублей 00 копеек
+`
+	if amount := parseAIScanAmount(text); amount != nil {
+		t.Fatalf("item count must not become an amount: %v", amount)
+	}
+}
+
 func TestParseAIScanTextRecoversShortSupplierFromReorderedPaymentTable(t *testing.T) {
 	text := `
 ЦЕНТРАЛЬНО-ЧЕРНОЗЕМНЫЙ БАНК ПАО СБЕРБАНК . |БИК 042007681

@@ -655,7 +655,7 @@ func aiScanTextScore(text string) int {
 var (
 	aiDocumentPattern         = regexp.MustCompile(`(?i)(сч[её]т\s*[-–—]?\s*оферта|сч[её]т\s*[-–—]\s*фактура|сч[её]т\s*[-–—]?\s*договор(?:\s+поставки\s+[A-Za-zА-Яа-яЁё]+)?|универсальный\s+передаточный\s+документ|упд|сч[её]т(?:\s+на\s+опл\s*ату)?|товарная\s+накладная|накладная|акт(?:\s+(?:выполненных\s+работ|оказанных\s+услуг|при[её]ма\s*[-–—]?\s*передачи))?)\s*(?:№|N(?:o|е|e|2|°|º)?|No)?\s*([0-9A-Za-zА-Яа-яЁё#./_-]+)\s+от\s+([0-9]{1,2}(?:[.\-/][0-9]{1,2}[.\-/][0-9]{2,4}|\s+[А-Яа-яЁё]+\s+[0-9]{4}))`)
 	aiLooseDocumentPattern    = regexp.MustCompile(`(?is)(сч[её]т\s*[-–—]?\s*оферта|сч[её]т\s*[-–—]\s*фактура|сч[её]т\s*[-–—]?\s*договор(?:\s+поставки\s+[A-Za-zА-Яа-яЁё]+)?|универсальный\s+передаточный\s+документ|упд|сч[её]т(?:\s+на\s+опл\s*ату)?|товарная\s+накладная|накладная|акт(?:\s+(?:выполненных\s+работ|оказанных\s+услуг|при[её]ма\s*[-–—]?\s*передачи))?)\s*(?:№|N(?:o|е|e|2|°|º)?|No)?\s*([0-9A-Za-zА-Яа-яЁё]+(?:\s*[#./_-]\s*[0-9A-Za-zА-Яа-яЁё]+)*)\s+от\s+([0-9]{1,2}(?:\s*[.\-/]\s*[0-9]{1,2}\s*[.\-/]\s*[0-9]{2,4}|\s+[А-Яа-яЁё]+\s+[0-9]{4}))`)
-	aiAmountPattern           = regexp.MustCompile(`[0-9]{1,3}(?:[ \x{00A0}][0-9]{3})*(?:[,.][0-9]{2})|[0-9]+(?:[,.][0-9]{2})|[0-9]+`)
+	aiAmountPattern           = regexp.MustCompile(`[0-9]{1,3}(?:[ \x{00A0}][0-9]{3})+(?:[,.][0-9]{1,2})?|[0-9]+(?:[,.][0-9]{1,2})?`)
 	aiSupplierPattern         = regexp.MustCompile(`(?is)(?:поставщик|исполнитель|продавец)(?:\s*\([^)]*\))?\s*[:;]?\s*(.{3,1000}?)(?:покупатель|заказчик|плательщик|основание|товары|услуги)`)
 	aiSupplierLinePattern     = regexp.MustCompile(`(?i)(?:поставщик|исполнитель|продавец)(?:\s*\([^)]*\))?\s*[:;—–-]?\s*(.*)$`)
 	aiRecipientLinePattern    = regexp.MustCompile(`(?i)^\s*[\[|]?\s*получатель(?:\s+средств)?(?:\s*[:;!|]\s*|\s+|$)(.*)$`)
@@ -1198,23 +1198,152 @@ func validAIScanDate(year, month, day int) bool {
 }
 
 func parseAIScanAmount(text string) *float64 {
-	priorities := []string{"всего к оплате", "итого к оплате", "к оплате", "всего", "итого"}
 	lines := strings.Split(strings.ReplaceAll(text, "\r", ""), "\n")
+	receipt := isAIScanPaymentReceipt(text)
+	priorities := []string{"всего к оплате", "итого к оплате", "сумма к оплате", "к оплате", "итого", "всего"}
+	if receipt {
+		// A bank receipt may show both the transferred amount and a larger
+		// debited total that includes commission. An obligation must contain the
+		// payment itself, so receipt-specific labels take precedence over totals.
+		priorities = append([]string{"сумма платежа", "сумма перевода", "сумма операции", "сумма списания", "сумма"}, priorities...)
+	}
 	for _, marker := range priorities {
-		for _, line := range lines {
-			if !strings.Contains(foldAIScanText(line), marker) {
+		for lineIndex, line := range lines {
+			segment, found := aiScanAmountSegment(line, marker)
+			if !found {
 				continue
 			}
-			matches := aiAmountPattern.FindAllString(line, -1)
-			for index := len(matches) - 1; index >= 0; index-- {
-				clean := strings.NewReplacer(" ", "", "\u00a0", "", ",", ".").Replace(matches[index])
-				if amount, err := strconv.ParseFloat(clean, 64); err == nil && amount > 0 {
-					return &amount
+			if amount := parseAIScanAmountSegment(segment); amount != nil {
+				return amount
+			}
+			// Receipts often place the label and value on adjacent OCR lines. Only
+			// use the immediately following non-empty line and only when it looks
+			// like a standalone monetary value; this must not turn invoice table
+			// rows into totals.
+			if receipt {
+				for next := lineIndex + 1; next < len(lines) && next <= lineIndex+2; next++ {
+					if strings.TrimSpace(lines[next]) == "" {
+						continue
+					}
+					if amount := parseAIScanStandaloneAmount(lines[next]); amount != nil {
+						return amount
+					}
+					break
 				}
 			}
 		}
 	}
 	return nil
+}
+
+func isAIScanPaymentReceipt(text string) bool {
+	folded := foldAIScanText(text)
+	for _, marker := range []string{
+		"квитанция", "чек по операции", "статус успешно", "операция выполнена",
+		"идентификатор операции", "сумма платежа", "сумма перевода",
+		"перевод по номеру телефона", "итого списано",
+	} {
+		if strings.Contains(folded, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func aiScanAmountSegment(line, marker string) (string, bool) {
+	lower := strings.ToLower(strings.ReplaceAll(line, "ё", "е"))
+	markerIndex := strings.Index(lower, marker)
+	if markerIndex < 0 {
+		return "", false
+	}
+	segment := line[markerIndex+len(marker):]
+	folded := foldAIScanText(segment)
+	if marker == "сумма" {
+		for _, excluded := range []string{"комиссии", "комиссия", "ндс", "скидки", "скидка", "налога", "налог"} {
+			if strings.HasPrefix(folded, excluded) {
+				return "", false
+			}
+		}
+	}
+	if marker == "всего" {
+		for _, excluded := range []string{"наименований", "позиций", "товаров", "услуг"} {
+			if strings.HasPrefix(folded, excluded) {
+				return "", false
+			}
+		}
+	}
+	return trimAIScanAmountSegment(segment), true
+}
+
+func trimAIScanAmountSegment(segment string) string {
+	lower := strings.ToLower(strings.ReplaceAll(segment, "ё", "е"))
+	cut := len(segment)
+	firstAmount := aiAmountPattern.FindStringIndex(segment)
+	for _, stop := range []string{
+		"в том числе", "в т.ч", "в т ч", "ндс", "комиссия", "комиссии", "скидка",
+		"сдача", "бонус", "баллы", "идентификатор", "номер операции", "номер транзакции",
+		"дата операции", "дата платежа", "назначение платежа", "статус", "отправитель",
+		"получатель", "банк получателя", "счет списания",
+	} {
+		if index := strings.Index(lower, stop); index >= 0 && index < cut && (firstAmount == nil || index > firstAmount[0]) {
+			cut = index
+		}
+	}
+	return segment[:cut]
+}
+
+func parseAIScanAmountSegment(segment string) *float64 {
+	matches := aiAmountPattern.FindAllStringIndex(segment, -1)
+	for index := len(matches) - 1; index >= 0; index-- {
+		start, end := matches[index][0], matches[index][1]
+		raw := segment[start:end]
+		if !validAIScanAmountToken(segment, start, end, raw) {
+			continue
+		}
+		clean := strings.NewReplacer(" ", "", "\u00a0", "", ",", ".").Replace(raw)
+		if amount, err := strconv.ParseFloat(clean, 64); err == nil && amount > 0 {
+			return &amount
+		}
+	}
+	return nil
+}
+
+func parseAIScanStandaloneAmount(line string) *float64 {
+	trimmed := strings.TrimSpace(line)
+	matches := aiAmountPattern.FindAllStringIndex(trimmed, -1)
+	if len(matches) != 1 {
+		return nil
+	}
+	start, end := matches[0][0], matches[0][1]
+	if strings.TrimSpace(trimmed[:start]) != "" || !validAIScanAmountToken(trimmed, start, end, trimmed[start:end]) {
+		return nil
+	}
+	suffix := strings.ToLower(strings.TrimSpace(trimmed[end:]))
+	if suffix != "" && !strings.HasPrefix(suffix, "₽") && !strings.HasPrefix(suffix, "руб") && suffix != "р" && suffix != "р." {
+		return nil
+	}
+	return parseAIScanAmountSegment(trimmed)
+}
+
+func validAIScanAmountToken(segment string, start, end int, raw string) bool {
+	if start > 0 && strings.ContainsRune("./-", rune(segment[start-1])) || end < len(segment) && strings.ContainsRune("./-", rune(segment[end])) {
+		return false
+	}
+	suffix := strings.TrimSpace(segment[end:])
+	if strings.HasPrefix(suffix, "%") {
+		return false
+	}
+	digits := 0
+	for _, char := range raw {
+		if unicode.IsDigit(char) {
+			digits++
+		}
+	}
+	hasSeparator := strings.ContainsAny(raw, " ,.") || strings.ContainsRune(raw, '\u00a0')
+	currency := strings.HasPrefix(strings.ToLower(suffix), "₽") || strings.HasPrefix(strings.ToLower(suffix), "руб") || strings.HasPrefix(strings.ToLower(suffix), "р.")
+	// Long plain integers next to receipt labels are operation, account or
+	// document identifiers, not monetary values.
+	return digits > 0 && (digits < 7 || hasSeparator || currency)
 }
 
 func foldAIScanText(value string) string {
