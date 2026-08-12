@@ -79,6 +79,7 @@ internal static class SelfTest
             Require(ContextMenuManager.BuildCommand(@"C:\Program Files\RegistryNotifier.exe") == "\"C:\\Program Files\\RegistryNotifier.exe\" --ai-scan \"%1\"", "context command quoting");
             Require(AutoUpdater.IsNewerVersion("1.2.0", new Version(1, 1, 0)) && !AutoUpdater.IsNewerVersion("1.1.0", new Version(1, 1, 0)), "semantic update comparison");
             Require(AutoUpdater.VersionsEqual(new Version(1, 2, 0, 0), new Version(1, 2, 0)), "release version equality");
+            Require(AutoUpdater.VersionsEqual(AutoUpdater.ReadExecutableVersion(Application.ExecutablePath), AutoUpdater.CurrentVersion), "single-file executable version inspection");
             Require(AutoUpdater.QuotePowerShell("C:\\O'Brien\\app.exe") == "'C:\\O''Brien\\app.exe'", "PowerShell path quoting");
             AutoUpdater.ValidateManifest(new DesktopAppUpdate { Version = "1.2.0", DownloadUrl = "https://github.com/mirmikov/obligations-registry/releases/download/test/RegistryNotifier-win-x64.zip", Sha256 = new string('a', 64), Size = 1024 });
             var unsafeRejected = false;

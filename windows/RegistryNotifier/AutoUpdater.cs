@@ -37,7 +37,7 @@ internal sealed class AutoUpdater
         {
             await DownloadAndVerifyAsync(manifest, packagePath, progress, cancellationToken);
             ExtractExecutable(packagePath, extractedExecutable);
-            var extractedVersion = AssemblyName.GetAssemblyName(extractedExecutable).Version ?? new Version(0, 0, 0);
+            var extractedVersion = ReadExecutableVersion(extractedExecutable);
             if (!VersionsEqual(extractedVersion, new Version(manifest.Version))) throw new ApiException("Версия приложения внутри пакета не совпадает с опубликованной версией.");
             LaunchReplacement(extractedExecutable, Application.ExecutablePath, manifest.Version, updateRoot);
         }
@@ -90,6 +90,12 @@ internal sealed class AutoUpdater
     }
 
     internal static bool VersionsEqual(Version left, Version right) => left.Major == right.Major && left.Minor == right.Minor && Math.Max(0, left.Build) == Math.Max(0, right.Build);
+
+    internal static Version ReadExecutableVersion(string executablePath)
+    {
+        var versionText = FileVersionInfo.GetVersionInfo(executablePath).FileVersion;
+        return Version.TryParse(versionText, out var version) ? version : throw new ApiException("Не удалось проверить версию приложения внутри пакета.");
+    }
 
     internal static void ValidateManifest(DesktopAppUpdate manifest)
     {
