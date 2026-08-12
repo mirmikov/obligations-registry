@@ -10,8 +10,8 @@ import (
 const (
 	desktopAppLatestVersion = "1.2.0"
 	desktopAppDownloadURL   = "https://github.com/mirmikov/obligations-registry/releases/download/registry-notifier-v1.2.0/RegistryNotifier-win-x64.zip"
-	desktopAppSHA256        = "BEAC52CEA9780C59604BCAD9366FB0E758D269150669B231F69392E571D72ECD"
-	desktopAppSize          = int64(45970478)
+	desktopAppSHA256        = "548A325E05A90599D4C816219178B877F8AEE905A9ADDB97450856C7AA22E38E"
+	desktopAppSize          = int64(45970667)
 )
 
 var (
