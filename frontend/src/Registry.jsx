@@ -17,9 +17,9 @@ import AdvancedSplitEditor, { AdvancedSplitModePicker } from './AdvancedSplitEdi
 import usePresence from './usePresence'
 import AIScanModal from './AIScanModal'
 
-const emptyFilters = { q: '', counterparty: [], account_type: '', legal_entity: '', cost_category: '', priority: '', responsible: '', status: '', urgency: '', entry_date: '', document_date: '', planned_payment_date: '', approval_date: '', actual_payment_date: '', document_from: '', document_to: '', overdue: '' }
+const emptyFilters = { q: '', amount: '', counterparty: [], account_type: '', legal_entity: '', cost_category: '', priority: '', responsible: '', status: '', urgency: '', entry_date: '', document_date: '', planned_payment_date: '', approval_date: '', actual_payment_date: '', document_from: '', document_to: '', overdue: '' }
 const dateFields = new Set(['entry_date', 'document_date', 'planned_payment_date', 'approval_date', 'actual_payment_date'])
-const fieldLabels = { counterparty: 'Контрагент', entry_date: 'Дата внесения', document_number: 'Документ', document_date: 'Дата документа', legal_entity: 'Юрлицо', cost_category: 'Статья затрат', amount: 'Сумма, ₽', deferment_days: 'Отсрочка, дней', planned_payment_date: 'Плановая оплата', approval_date: 'Дата утверждения', actual_payment_date: 'Фактическая оплата', status: 'Статус', urgency: 'Срочность', responsible: 'Ответственный', priority: 'Приоритет', account_type: 'Признак учёта', comment: 'Комментарий', source_note: 'Условия оплаты' }
+export const fieldLabels = { counterparty: 'Контрагент', entry_date: 'Дата внесения', document_number: 'Документ', document_date: 'Дата документа', legal_entity: 'Юрлицо', cost_category: 'Статья затрат', amount: 'Сумма, ₽', deferment_days: 'Отсрочка, дней', planned_payment_date: 'Плановая оплата', approval_date: 'Дата утверждения', actual_payment_date: 'Фактическая оплата', status: 'Статус', urgency: 'Срочность', responsible: 'Ответственный', priority: 'Приоритет', account_type: 'Признак учёта', comment: 'Комментарий', source_note: 'Условия оплаты' }
 const historyFieldLabels = { ...fieldLabels, split_group_id: 'Группа платежей', split_parent_id: 'Исходный платёж', installment_number: 'Номер платежа', installment_count: 'Количество платежей' }
 const historyActionLabels = { create: 'Запись создана', update: 'Запись изменена', bulk_update: 'Массовое изменение', split: 'Платёж разбит', delete: 'Запись удалена' }
 const historyCurrentFields = [
@@ -275,7 +275,7 @@ export default function Registry({ user, notify, maintenance, onToggleMaintenanc
     const cellKey = `${item.id}:${field}`
     markSaving(cellKey, true); finishCellEdit(next)
     const previousSave = saveQueues.current.get(item.id) || Promise.resolve()
-    const operation = previousSave.catch(() => {}).then(() => requestJSONWithDuplicateConfirmation(`/api/obligations/${item.id}`, 'PATCH', strip(rowsRef.current.get(item.id))))
+    const operation = previousSave.catch(() => {}).then(() => requestJSONWithDuplicateConfirmation(`/api/obligations/${item.id}`, 'PATCH', stripObligation(rowsRef.current.get(item.id))))
     saveQueues.current.set(item.id, operation)
     try { await operation; return true } catch (error) {
       const latest = rowsRef.current.get(item.id)
@@ -298,7 +298,7 @@ export default function Registry({ user, notify, maintenance, onToggleMaintenanc
     if (sameCellValue(item[field], value) || creatingRef.current) return true
     creatingRef.current = true; markSaving(`new:${field}`, true)
     try {
-      const result = await requestJSONWithDuplicateConfirmation('/api/obligations', 'POST', strip(next))
+      const result = await requestJSONWithDuplicateConfirmation('/api/obligations', 'POST', stripObligation(next))
       const created = { ...next, id: result.id, source_row: 0, overdue: false, due_soon: false }
       rowsRef.current.set(created.id, created)
       setData(state => ({ ...state, items: [created, ...state.items].slice(0, state.page_size), total: state.total + 1 }))
@@ -360,7 +360,7 @@ export default function Registry({ user, notify, maintenance, onToggleMaintenanc
   const saveAIScan = async items => {
     setAIScan(current => ({ ...current, saving: true }))
     try {
-      const payload = { items: items.map(item => ({ page: item.page, values: strip(item.values) })) }
+      const payload = { items: items.map(item => ({ page: item.page, values: stripObligation(item.values) })) }
       const result = await requestJSONWithDuplicateConfirmation(`/api/obligations/ai-scan/${aiScan.batch}/commit`, 'POST', payload)
       const referenceNote = result.created_references ? `; новых контрагентов в справочнике: ${result.created_references}` : ''
       notify(`Из скана добавлено ${result.created} обязательств${referenceNote}`)
@@ -376,6 +376,7 @@ export default function Registry({ user, notify, maintenance, onToggleMaintenanc
     <PageHeader eyebrow="Рабочая область" title="Реестр обязательств" subtitle={`${data.total.toLocaleString('ru-RU')} записей с учётом фильтров`} actions={<><PresenceCluster users={activeUsers} currentSession={sessionId}/>{user.is_developer && <button className={`maintenance-toggle ${maintenance?.active ? 'is-active' : ''}`} onClick={onToggleMaintenance}><AlertTriangle size={17}/>{maintenance?.active ? 'Завершить обновление' : 'Начать обновление'}</button>}{can(user, 'registry.ai_scan') && <><input ref={aiScanRef} type="file" accept="application/pdf,image/png,image/jpeg" hidden onChange={analyzeScan}/><button className="primary ai-scan-launch" onClick={() => aiScanRef.current.click()}><ScanLine size={17}/>AI сканирование</button></>}{can(user, 'registry.import') && <><input ref={importRef} type="file" accept=".xlsx" hidden onChange={importFile}/><button className="secondary" onClick={() => importRef.current.click()}><FileUp size={17}/>Импорт</button></>}{can(user, 'registry.export') && <button className="secondary" onClick={() => download(`/api/obligations/export.xlsx?${query}`, 'Реестр обязательств.xlsx')}><Download size={17}/>Excel</button>}<button className="secondary registry-width-reset" onClick={resetColumnWidths} title="Вернуть стандартную ширину всех столбцов"><RotateCcw size={16}/>Ширина</button><FontSizeButton large={largeTableFont} onToggle={() => setLargeTableFont(value => !value)}/><button className="secondary registry-fullscreen-button" onClick={() => setTableFullscreen(true)} title="Открыть таблицу на весь экран" aria-label="Открыть таблицу на весь экран"><Maximize2 size={17}/></button></>}/>
     <section className="filter-panel">
       <div className="search-box"><Search size={18}/><input placeholder="Контрагент, счёт, комментарий…" value={filters.q} onChange={e => setFilter('q', e.target.value)}/>{filters.q && <button onClick={() => setFilter('q', '')}><X size={15}/></button>}</div>
+      <div className="search-box amount-search-box"><Search size={18}/><input inputMode="decimal" placeholder="Поиск по сумме" value={filters.amount} onChange={e => setFilter('amount', e.target.value)}/>{filters.amount && <button onClick={() => setFilter('amount', '')} aria-label="Очистить поиск по сумме"><X size={15}/></button>}</div>
       <label className="filter-date"><span>Дата документа: от</span><DateInput value={filters.document_from} onChange={value => setFilter('document_from', value)} aria-label="Дата документа: от"/></label>
       <label className="filter-date"><span>Дата документа: до</span><DateInput value={filters.document_to} onChange={value => setFilter('document_to', value)} aria-label="Дата документа: до"/></label>
       <button className={`overdue-toggle ${filters.overdue ? 'active' : ''}`} onClick={() => setFilter('overdue', filters.overdue ? '' : 'true')}><Filter size={15}/>Только просроченные</button>
@@ -414,7 +415,7 @@ export default function Registry({ user, notify, maintenance, onToggleMaintenanc
   </div>
 }
 
-function DuplicateObligationModal({ conflict, onCancel, onConfirm }) {
+export function DuplicateObligationModal({ conflict, onCancel, onConfirm }) {
   const matches = conflict.duplicates || []
   const total = conflict.duplicate_total || matches.length
   return <div className="modal-backdrop duplicate-obligation-backdrop" onMouseDown={event => event.target === event.currentTarget && onCancel()}>
@@ -547,11 +548,11 @@ function hasActiveFilters(filters) {
   return Object.values(filters).some(value => Array.isArray(value) ? value.length > 0 : Boolean(value))
 }
 
-function RegistryRow({ item, refs, editable, isNew = false, selected, savingCells, onToggle, onCommit, onStartEdit, onFinishEdit, onScanChanged, notify, onInfo, onSplit, onDelete }) {
+export function RegistryRow({ item, refs, editable, isNew = false, selected, savingCells, onToggle, onCommit, onStartEdit, onFinishEdit, onScanChanged, notify, onInfo, onSplit, onDelete, showSelection = true, scanEditable = editable, scanURL }) {
   const saving = field => savingCells.has(`${isNew ? 'new' : item.id}:${field}`)
   const cell = (field, props = {}) => <EditableCell item={item} field={field} label={fieldLabels[field]} editable={editable} saving={saving(field)} onCommit={onCommit} onStartEdit={onStartEdit} onFinishEdit={onFinishEdit} {...props}/>
   return <tr className={`${isNew ? 'inline-new-row' : rowTone(item)}`}>
-    <td className="check-col">{isNew ? <button type="button" className="cancel-inline-row" onClick={onDelete} title="Отменить новую строку"><X size={14}/></button> : <div className="registry-row-controls"><label className="registry-row-selector" title="Выбрать строку"><input type="checkbox" checked={selected} onChange={onToggle}/><span aria-hidden="true"><Check size={12}/></span></label><ObligationScanControl item={item} editable={editable} notify={notify} onChanged={onScanChanged}/></div>}</td>
+    <td className="check-col">{isNew ? <button type="button" className="cancel-inline-row" onClick={onDelete} title="Отменить новую строку"><X size={14}/></button> : <div className="registry-row-controls">{showSelection && <label className="registry-row-selector" title="Выбрать строку"><input type="checkbox" checked={selected} onChange={onToggle}/><span aria-hidden="true"><Check size={12}/></span></label>}{(scanEditable || item.has_scan) && <ObligationScanControl item={item} editable={scanEditable} notify={notify} onChanged={onScanChanged} scanURL={scanURL}/>}</div>}</td>
     {cell('counterparty', { className: 'counterparty-cell', options: refs.counterparties, allowCustom: true })}
     {cell('entry_date', { type: 'date', className: 'entry-date-cell' })}
     {cell('account_type', { options: refs.account_types, className: 'account-type-cell' })}
@@ -703,17 +704,17 @@ function Urgency({ value }) { return value ? <span className={`urgency urgency-$
 function slug(value = '') { return ({ 'Оплачено':'paid','К оплате':'to-pay','Зарегистрирован':'registered','Частично оплачено':'partial','Отменено':'cancelled','Критическая':'critical','Срочная':'urgent','Обычная':'normal' }[value] || 'empty') }
 function rowTone(item) { return item.overdue ? 'row-overdue' : item.due_soon ? 'row-soon' : item.status === 'К оплате' ? 'row-to-pay' : '' }
 function SkeletonRows() { return <>{Array.from({ length: 8 }).map((_, i) => <tr className="skeleton-row" key={i}>{Array.from({ length: 20 }).map((__, j) => <td key={j}><i/></td>)}</tr>)}</> }
-function strip(values) {
+export function stripObligation(values) {
   const result = { ...values }
   for (const field of ['id', 'created_at', 'updated_at', 'overdue', 'due_soon', 'split_group_id', 'split_parent_id', 'installment_number', 'installment_count']) delete result[field]
   return result
 }
 function blankObligation() { return { account_type:'',entry_date:todayISO(),counterparty:'',legal_entity:'',cost_category:'',priority:'',responsible:'',document_number:'',deferment_days:null,document_date:'',amount:null,planned_payment_date:'',approval_date:'',actual_payment_date:'',status:'Зарегистрирован',urgency:'',comment:'',source_note:'' } }
 function todayISO() { const date = new Date(); const offset = date.getTimezoneOffset() * 60000; return new Date(date.getTime() - offset).toISOString().slice(0, 10) }
-function sameCellValue(left, right) { return (left ?? '') === (right ?? '') }
+export function sameCellValue(left, right) { return (left ?? '') === (right ?? '') }
 function cellEditorValue(field, value) { if (dateFields.has(field)) return value ? shortDate(value) : ''; return value ?? '' }
 function cellAriaValue(field, value) { if (dateFields.has(field)) return shortDate(value); if (field === 'amount' && value != null && value !== '') return money(value); return String(value ?? '') || 'не заполнено' }
-function normalizeCellValue(field, rawValue) {
+export function normalizeCellValue(field, rawValue) {
   const value = typeof rawValue === 'string' ? rawValue.trim() : rawValue
   if (dateFields.has(field)) return parseInlineDate(value)
   if (field === 'amount') { if (value === '') return null; const number = Number(String(value).replace(',', '.')); if (!Number.isFinite(number)) throw new Error('Введите корректную сумму'); return number }
