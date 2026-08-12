@@ -196,6 +196,25 @@ func (a *app) requirePermission(permission string) func(http.Handler) http.Handl
 	}
 }
 
+func (a *app) requireAnyPermission(permissions ...string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			user := currentUser(r)
+			if user.IsDeveloper {
+				next.ServeHTTP(w, r)
+				return
+			}
+			for _, permission := range permissions {
+				if user.Permissions[permission] {
+					next.ServeHTTP(w, r)
+					return
+				}
+			}
+			fail(w, http.StatusForbidden, "Недостаточно прав")
+		})
+	}
+}
+
 func (a *app) requireDeveloper(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !currentUser(r).IsDeveloper {

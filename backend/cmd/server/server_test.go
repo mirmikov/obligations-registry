@@ -858,6 +858,28 @@ func TestPermissionMiddlewareUsesIndividualPermission(t *testing.T) {
 	}
 }
 
+func TestAnyPermissionMiddlewareAllowsRegistryCreateOrEdit(t *testing.T) {
+	handler := (&app{}).requireAnyPermission("registry.create", "registry.edit")(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	for _, permission := range []string{"registry.create", "registry.edit"} {
+		req := httptest.NewRequest(http.MethodPost, "/api/registry/counterparties", nil)
+		req = req.WithContext(context.WithValue(req.Context(), userKey, authUser{Permissions: permissionSet{permission: true}}))
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, req)
+		if recorder.Code != http.StatusNoContent {
+			t.Fatalf("expected %s to be allowed, got %d", permission, recorder.Code)
+		}
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/registry/counterparties", nil)
+	req = req.WithContext(context.WithValue(req.Context(), userKey, authUser{Permissions: permissionSet{"registry.view": true}}))
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("expected registry view alone to be forbidden, got %d", recorder.Code)
+	}
+}
+
 func TestBuildPaymentPlanEqualPartsValidatesCustomDates(t *testing.T) {
 	start := time.Date(2027, time.January, 31, 0, 0, 0, 0, time.UTC)
 	if _, err := buildPaymentPlan(10000, start, paymentSplitInput{Mode: "count", Count: 3, PaymentDates: []string{"2027-01-31"}}); err == nil || !strings.Contains(err.Error(), "Количество дат") {
