@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"image"
 	_ "image/jpeg"
@@ -387,8 +388,22 @@ func valueAt(values []string, index int) string {
 }
 
 func recoverAIScanPage(ctx context.Context, pagePath, directory string, page int, textLayer string, primary aiScanSuggestion, counterparties []aiScanCounterpartyReference, legalEntities []string) (aiScanSuggestion, error) {
+	// Preserve the long-standing 140-DPI PSM 6 fallback first. It already
+	// recovers some heavily distorted invoice headers and is deliberately parsed
+	// on its own rather than concatenated with the primary layout.
+	legacyText, legacyErr := runTesseractAtDPI(ctx, pagePath, "6", aiScanDPI)
+	if strings.TrimSpace(legacyText) != "" {
+		primary = mergeAIScanSuggestions(primary, parseAIScanTextWithReferences(legacyText, counterparties, legalEntities))
+	}
+	if !needsAIScanRecovery(primary) {
+		return primary, nil
+	}
+
 	imagePath, cleanup, err := prepareAIScanRecoveryPage(ctx, pagePath, directory, page)
 	if err != nil {
+		if legacyErr != nil {
+			return primary, errors.Join(legacyErr, err)
+		}
 		return primary, err
 	}
 	defer cleanup()
@@ -426,12 +441,16 @@ func recoverAIScanPage(ctx context.Context, pagePath, directory string, page int
 		}
 	}
 	merged := mergeAIScanSuggestions(primary, candidates...)
+	allErrors := make([]error, 0, len(errorsByMode)+1)
+	if legacyErr != nil {
+		allErrors = append(allErrors, legacyErr)
+	}
 	for _, recoveryErr := range errorsByMode {
 		if recoveryErr != nil {
-			return merged, recoveryErr
+			allErrors = append(allErrors, recoveryErr)
 		}
 	}
-	return merged, nil
+	return merged, errors.Join(allErrors...)
 }
 
 func prepareAIScanRecoveryPage(ctx context.Context, pagePath, directory string, page int) (string, func(), error) {
@@ -938,6 +957,14 @@ func parseAIScanTextWithReferences(text string, counterparties []aiScanCounterpa
 		// when this OCR pass did not repeat the digits.
 		result.CounterpartyTaxID = aiScanReferenceTaxID(result.Counterparty, counterparties)
 	}
+	if looksLikeAIScanBankParty(result.Counterparty) {
+		// Payment details are often printed above the invoice parties. A bank must
+		// never be returned as the supplier; leave the field for recovery/manual
+		// review when no labelled supplier can be found.
+		result.Counterparty = ""
+		result.CounterpartyTaxID = ""
+		result.Confidence["counterparty"] = ""
+	}
 	result.LegalEntity, result.Confidence["legal_entity"] = bestAIScanReference(buyerName, legalEntities)
 	if result.LegalEntity == "" {
 		// In table-based UPDs, pdftotext may place the beginning of the buyer name
@@ -952,6 +979,7 @@ func parseAIScanTextWithReferences(text string, counterparties []aiScanCounterpa
 			result.Confidence["legal_entity"] = "low"
 		}
 	}
+	enrichAIScanCanonicalCounterparty(&result, counterparties)
 	refreshAIScanWarnings(&result)
 	return result
 }
@@ -1314,6 +1342,33 @@ func aiScanReferenceTaxID(value string, references []aiScanCounterpartyReference
 		}
 	}
 	return ""
+}
+
+func enrichAIScanCanonicalCounterparty(value *aiScanSuggestion, references []aiScanCounterpartyReference) {
+	if value == nil || strings.TrimSpace(value.Counterparty) == "" || value.CounterpartyTaxID != "" || looksLikeAIScanBankParty(value.Counterparty) {
+		return
+	}
+	// A high supplier may have been matched by the existing fuzzy reference
+	// matcher even when punctuation or a suffix differs slightly. Re-run that
+	// matcher against the final canonical name and copy the INN only when exactly
+	// one directory candidate remains unambiguous.
+	bestIndex, bestScore, secondScore := -1, 0.0, 0.0
+	for index, reference := range references {
+		if normalizeAIScanTaxID(reference.TaxID) == "" {
+			continue
+		}
+		score := aiScanNormalizedNameSimilarity(value.Counterparty, reference.Value)
+		if score > bestScore {
+			bestIndex, secondScore, bestScore = index, bestScore, score
+		} else if score > secondScore {
+			secondScore = score
+		}
+	}
+	if bestIndex >= 0 && bestScore >= 0.88 && bestScore-secondScore >= 0.03 {
+		value.Counterparty = references[bestIndex].Value
+		value.CounterpartyTaxID = normalizeAIScanTaxID(references[bestIndex].TaxID)
+		value.Confidence["counterparty"] = "high"
+	}
 }
 
 func bestAIScanReference(text string, values []string) (string, string) {

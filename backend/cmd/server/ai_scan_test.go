@@ -369,6 +369,32 @@ func TestParseAIScanTextEnrichesCanonicalCounterpartyWithDirectoryTaxID(t *testi
 	}
 }
 
+func TestParseAIScanTextPrefersTaxBearingCanonicalVariant(t *testing.T) {
+	result := parseAIScanTextWithReferences(`
+Счет № НЧ/07/000558 от 1 июля 2026 г.
+Поставщик: НОВАТЭК- Кострома
+Покупатель: ООО "МЦ МИРТ"
+ИТОГО: 74 771,78
+`, []aiScanCounterpartyReference{
+		{Value: `НОВАТЭК- Кострома`},
+		{Value: `ООО "НОВАТЭК-Кострома"`, TaxID: "4401017834"},
+	}, []string{`ООО "МЦ МИРТ"`})
+	if result.Counterparty != `ООО "НОВАТЭК-Кострома"` || result.CounterpartyTaxID != "4401017834" {
+		t.Fatalf("tax-bearing canonical variant was not selected: %#v", result)
+	}
+}
+
+func TestEnrichAIScanCanonicalCounterpartyRepairsLowUnambiguousName(t *testing.T) {
+	value := aiScanSuggestion{Counterparty: `АКЦИОНЕРНОЕ ОБЩЕСТВО "ДЕАЛМЕД"`, Confidence: map[string]string{"counterparty": "low"}}
+	enrichAIScanCanonicalCounterparty(&value, []aiScanCounterpartyReference{
+		{Value: `АО "ДЕАЛМЕД"`, TaxID: "7728820940"},
+		{Value: `ООО "ДРУГАЯ КОМПАНИЯ"`, TaxID: "7700000000"},
+	})
+	if value.Counterparty != `АО "ДЕАЛМЕД"` || value.CounterpartyTaxID != "7728820940" || value.Confidence["counterparty"] != "high" {
+		t.Fatalf("unambiguous canonical counterparty did not repair low OCR: %#v", value)
+	}
+}
+
 func TestAIScanCounterpartyCandidateKeyDeduplicatesWritingVariants(t *testing.T) {
 	if aiScanCounterpartyCandidateKey(`ООО «ВсеИнструменты.ру»`, "") != aiScanCounterpartyCandidateKey(`ВсеИнструменты.ру`, "") {
 		t.Fatal("equivalent counterparty names must share one candidate key")
@@ -710,5 +736,17 @@ func TestMergeAIScanSuggestionsRejectsBankWhenSupplierIsEmpty(t *testing.T) {
 	merged := mergeAIScanSuggestions(primary, bank)
 	if merged.Counterparty != "" || merged.CounterpartyTaxID != "" {
 		t.Fatalf("bank from payment details became an empty supplier: %#v", merged)
+	}
+}
+
+func TestParseAIScanTextNeverReturnsBankAsSupplier(t *testing.T) {
+	result := parseAIScanTextWithReferences(`
+Счет на оплату № 273 от 26 июня 2026 г.
+Получатель: ПАО СБЕРБАНК
+Покупатель: ООО "МЦ МИРТ"
+ИТОГО: 3 000,00
+`, []aiScanCounterpartyReference{{Value: "Сбербанк"}}, []string{`ООО "МЦ МИРТ"`})
+	if result.Counterparty != "" || result.CounterpartyTaxID != "" {
+		t.Fatalf("payment bank was returned as supplier: %#v", result)
 	}
 }
