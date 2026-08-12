@@ -12,6 +12,9 @@ internal sealed class NotifierApplicationContext : ApplicationContext
     private readonly ToolStripMenuItem _statusItem;
     private readonly ToolStripMenuItem _pauseItem;
     private readonly ToolStripMenuItem _autostartItem;
+    private readonly ToolStripMenuItem _updateItem;
+    private readonly AutoUpdater _autoUpdater;
+    private readonly System.Windows.Forms.Timer _updateTimer;
     private readonly ConcurrentQueue<DesktopNotification> _notifications = new();
     private readonly CancellationTokenSource _shutdown = new();
     private readonly Control _dispatcher = new();
@@ -19,36 +22,48 @@ internal sealed class NotifierApplicationContext : ApplicationContext
     private string _token;
     private bool _checking;
     private bool _loginOpen;
+    private bool _updateChecking;
+    private DesktopAppUpdate? _availableUpdate;
+    private UpdateAvailableForm? _updateForm;
+    private string _shownUpdateVersion = "";
     private int _pollGeneration;
 
-    public NotifierApplicationContext()
+    public NotifierApplicationContext(string? afterUpdateVersion = null)
     {
 		_dispatcher.CreateControl();
         _settings = _store.Load();
         _token = _store.ReadToken(_settings);
+        _autoUpdater = new AutoUpdater(_api, _store);
         try { ContextMenuManager.Install(); }
         catch (Exception error) { _store.Log("Не удалось обновить контекстное меню: " + error.Message); }
         _statusItem = new ToolStripMenuItem("Подключение…") { Enabled = false };
         _pauseItem = new ToolStripMenuItem(_settings.Paused ? "Возобновить уведомления" : "Приостановить уведомления");
         _autostartItem = new ToolStripMenuItem("Запускать вместе с Windows") { CheckOnClick = true, Checked = AutostartManager.IsEnabled() };
+        _updateItem = new ToolStripMenuItem($"Проверить обновления · {AutoUpdater.CurrentVersion.ToString(3)}");
         var menu = new ContextMenuStrip();
         menu.Items.Add(_statusItem);
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Открыть реестр", null, (_, _) => OpenRegistry(""));
         menu.Items.Add("Проверить сейчас", null, async (_, _) => await CheckNowAsync());
+        menu.Items.Add(_updateItem);
         menu.Items.Add(_pauseItem);
         menu.Items.Add(_autostartItem);
         menu.Items.Add("Сменить пользователя / сервер", null, (_, _) => ShowLogin());
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Выход", null, (_, _) => Exit());
         _pauseItem.Click += (_, _) => TogglePause();
+        _updateItem.Click += async (_, _) => await CheckForUpdateAsync(true);
         _autostartItem.CheckedChanged += (_, _) => SetAutostart(_autostartItem.Checked);
         _tray = new NotifyIcon { Icon = AppIcon.Create(), Text = "Уведомления реестра", ContextMenuStrip = menu, Visible = true };
         _tray.DoubleClick += (_, _) => OpenRegistry("");
+        _updateTimer = new System.Windows.Forms.Timer { Interval = 6 * 60 * 60 * 1000 };
+        _updateTimer.Tick += async (_, _) => await CheckForUpdateAsync(false);
+        _updateTimer.Start();
 
         if (_settings.Autostart && !AutostartManager.IsEnabled()) SetAutostart(true);
         if (string.IsNullOrEmpty(_token)) Ui(ShowLogin);
-        else StartPolling();
+        else { StartPolling(); _ = CheckForUpdateAsync(false); }
+        if (!string.IsNullOrWhiteSpace(afterUpdateVersion)) ShowBalloon("ФинРеестр обновлён", $"Установлена версия {afterUpdateVersion}.", ToolTipIcon.Info);
     }
 
     private void StartPolling() => _ = PollLoopAsync(Interlocked.Increment(ref _pollGeneration), _shutdown.Token);
@@ -70,6 +85,7 @@ internal sealed class NotifierApplicationContext : ApplicationContext
         _statusItem.Text = $"Подключено: {form.Result.User.Name}";
         _pauseItem.Text = "Приостановить уведомления";
         StartPolling();
+		_ = CheckForUpdateAsync(false);
 		}
 		finally { _loginOpen = false; }
     }
@@ -135,6 +151,71 @@ internal sealed class NotifierApplicationContext : ApplicationContext
         finally { _checking = false; }
     }
 
+    private async Task CheckForUpdateAsync(bool announceWhenCurrent)
+    {
+        if (_updateChecking || string.IsNullOrEmpty(_token)) return;
+        if (_availableUpdate != null) { ShowUpdate(_availableUpdate); return; }
+        _updateChecking = true;
+        Ui(() => { _updateItem.Enabled = false; _updateItem.Text = "Проверяем обновления…"; });
+        try
+        {
+            var update = await _autoUpdater.CheckAsync(_settings.ServerUrl, _token, _shutdown.Token);
+            _availableUpdate = update;
+            if (update == null)
+            {
+                Ui(() => { _updateItem.Text = $"Установлена актуальная версия {AutoUpdater.CurrentVersion.ToString(3)}"; _updateItem.Enabled = true; });
+                if (announceWhenCurrent) ShowBalloon("Обновление ФинРеестра", "Установлена актуальная версия приложения.", ToolTipIcon.Info);
+            }
+            else
+            {
+                Ui(() => { _updateItem.Text = $"Доступно обновление {update.Version}"; _updateItem.Enabled = true; });
+                ShowUpdate(update);
+            }
+        }
+        catch (OperationCanceledException) when (_shutdown.IsCancellationRequested) { }
+        catch (ApiException error) when (error.StatusCode == 401) { }
+        catch (Exception error)
+        {
+            _store.Log("Update check failed: " + error);
+            Ui(() => { _updateItem.Text = "Не удалось проверить обновления"; _updateItem.Enabled = true; });
+            if (announceWhenCurrent) ShowBalloon("Обновление ФинРеестра", error.Message, ToolTipIcon.Warning);
+        }
+        finally { _updateChecking = false; }
+    }
+
+    private void ShowUpdate(DesktopAppUpdate update)
+    {
+        Ui(() =>
+        {
+            if (_updateForm is { IsDisposed: false }) { _updateForm.Activate(); return; }
+            if (_shownUpdateVersion != update.Version)
+            {
+                ShowBalloon("Доступно обновление", $"Версия {update.Version}. Нажмите «Обновить» в окне приложения.", ToolTipIcon.Info);
+                _shownUpdateVersion = update.Version;
+            }
+            _updateForm = new UpdateAvailableForm(update);
+            _updateForm.UpdateRequested += async () => await ApplyUpdateAsync(update);
+            _updateForm.FormClosed += (_, _) => _updateForm = null;
+            _updateForm.Show();
+            _updateForm.Activate();
+        });
+    }
+
+    private async Task ApplyUpdateAsync(DesktopAppUpdate update)
+    {
+        try
+        {
+            var progress = new Progress<int>(value => _updateForm?.ReportProgress(value));
+            await _autoUpdater.PrepareAndLaunchAsync(update, progress, _shutdown.Token);
+            Exit();
+        }
+        catch (Exception error)
+        {
+            _store.Log("Automatic update failed: " + error);
+            Ui(() => _updateForm?.ShowError(error.Message));
+        }
+    }
+
     private void ShowNextNotification()
     {
         if (_popup is { IsDisposed: false } || !_notifications.TryDequeue(out var notification)) return;
@@ -191,6 +272,9 @@ internal sealed class NotifierApplicationContext : ApplicationContext
     private void Exit()
     {
         _shutdown.Cancel();
+        _updateTimer.Stop();
+        _updateTimer.Dispose();
+        _updateForm?.Close();
         _popup?.Close();
         _tray.Visible = false;
         _tray.Dispose();

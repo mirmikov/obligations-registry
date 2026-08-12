@@ -24,11 +24,41 @@ internal static class Program
             return 0;
         }
 
+        if (args.Length == 1 && args[0].Equals("--apply-available-update", StringComparison.OrdinalIgnoreCase))
+        {
+            ApplicationConfiguration.Initialize();
+            return ApplyAvailableUpdate();
+        }
+
+        var afterUpdateVersion = args.Length == 2 && args[0].Equals("--after-update", StringComparison.OrdinalIgnoreCase) ? args[1] : null;
+
         using var mutex = new Mutex(initiallyOwned: true, MutexName, out var created);
         if (!created) return 0;
         ApplicationConfiguration.Initialize();
-        Application.Run(new NotifierApplicationContext());
+        Application.Run(new NotifierApplicationContext(afterUpdateVersion));
         return 0;
+    }
+
+    private static int ApplyAvailableUpdate()
+    {
+        using var api = new ApiClient();
+        var store = new SettingsStore();
+        var settings = store.Load();
+        var token = store.ReadToken(settings);
+        if (string.IsNullOrEmpty(token)) return 3;
+        try
+        {
+            var updater = new AutoUpdater(api, store);
+            var update = updater.CheckAsync(settings.ServerUrl, token, CancellationToken.None).GetAwaiter().GetResult();
+            if (update == null) return 2;
+            updater.PrepareAndLaunchAsync(update, null, CancellationToken.None).GetAwaiter().GetResult();
+            return 0;
+        }
+        catch (Exception error)
+        {
+            store.Log("Command-line automatic update failed: " + error);
+            return 1;
+        }
     }
 }
 
@@ -47,9 +77,16 @@ internal static class SelfTest
             Require(AIScanCommand.IsSupportedExtension("invoice.pdf") && AIScanCommand.IsSupportedExtension("scan.JPEG") && AIScanCommand.IsSupportedExtension("photo.jfif"), "AI scan extensions");
             Require(!AIScanCommand.IsSupportedExtension("invoice.docx") && !AIScanCommand.IsSupportedExtension("program.exe"), "unsupported AI scan extensions");
             Require(ContextMenuManager.BuildCommand(@"C:\Program Files\RegistryNotifier.exe") == "\"C:\\Program Files\\RegistryNotifier.exe\" --ai-scan \"%1\"", "context command quoting");
+            Require(AutoUpdater.IsNewerVersion("1.2.0", new Version(1, 1, 0)) && !AutoUpdater.IsNewerVersion("1.1.0", new Version(1, 1, 0)), "semantic update comparison");
+            Require(AutoUpdater.VersionsEqual(new Version(1, 2, 0, 0), new Version(1, 2, 0)), "release version equality");
+            Require(AutoUpdater.QuotePowerShell("C:\\O'Brien\\app.exe") == "'C:\\O''Brien\\app.exe'", "PowerShell path quoting");
+            AutoUpdater.ValidateManifest(new DesktopAppUpdate { Version = "1.2.0", DownloadUrl = "https://github.com/mirmikov/obligations-registry/releases/download/test/RegistryNotifier-win-x64.zip", Sha256 = new string('a', 64), Size = 1024 });
+            var unsafeRejected = false;
+            try { AutoUpdater.ValidateManifest(new DesktopAppUpdate { Version = "1.2.0", DownloadUrl = "http://example.org/app.zip", Sha256 = new string('a', 64), Size = 1024 }); } catch (ApiException) { unsafeRejected = true; }
+            Require(unsafeRejected, "unsafe update manifest rejection");
             var protectedValue = DataProtection.Protect("desktop-token-test");
             Require(protectedValue != "desktop-token-test" && DataProtection.Unprotect(protectedValue) == "desktop-token-test", "Windows DPAPI round-trip");
-            checks.Add("PASS: URL validation, action isolation and DPAPI");
+            checks.Add("PASS: URL validation, action isolation, auto-update safety and DPAPI");
             Write(resultPath, string.Join(Environment.NewLine, checks));
             return 0;
         }

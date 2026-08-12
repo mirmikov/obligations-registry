@@ -40,6 +40,15 @@ internal sealed class ApiClient : IDisposable
         return await ReadAsync<AIScanStartResponse>(response, cancellationToken);
     }
 
+    public async Task<DesktopAppUpdate> GetAppUpdateAsync(string serverUrl, string token, CancellationToken cancellationToken)
+    {
+        var baseUri = ValidateServerUrl(serverUrl);
+        using var request = new HttpRequestMessage(HttpMethod.Get, new Uri(baseUri, "/api/desktop/app/update"));
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        using var response = await _client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        return await ReadAsync<DesktopAppUpdate>(response, cancellationToken);
+    }
+
     public static Uri ValidateServerUrl(string value)
     {
         if (!Uri.TryCreate(value.Trim().TrimEnd('/') + "/", UriKind.Absolute, out var uri) || (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps) || !string.IsNullOrEmpty(uri.UserInfo) || !string.IsNullOrEmpty(uri.Query) || !string.IsNullOrEmpty(uri.Fragment))
