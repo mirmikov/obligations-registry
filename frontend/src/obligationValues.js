@@ -1,6 +1,11 @@
+export const PAYABLE_STATUS = 'К оплате'
+
 export function withDerivedObligationValues(values, changedField) {
-  if (changedField === 'actual_payment_date' && values.actual_payment_date) {
+  if ((changedField === 'actual_payment_date' || changedField === 'approval_date') && values.actual_payment_date) {
     return { ...values, status: 'Оплачено' }
+  }
+  if (changedField === 'approval_date' && values.approval_date) {
+    return { ...values, status: PAYABLE_STATUS }
   }
   if (changedField !== 'deferment_days' && changedField !== 'document_date') return values
   if (!values.document_date || values.deferment_days == null || values.deferment_days === '') return values

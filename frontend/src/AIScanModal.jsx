@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { AlertTriangle, Check, CheckCircle2, ChevronDown, FileSearch, LoaderCircle, ScanLine, Search, Sparkles, X } from 'lucide-react'
 import { DateInput, money } from './App'
 import { requestBlob } from './api'
+import { withDerivedObligationValues } from './obligationValues'
 
 const automaticFields = [
   ['counterparty', 'Контрагент'], ['entry_date', 'Дата внесения'], ['legal_entity', 'Юридическое лицо'],
@@ -15,7 +16,10 @@ export default function AIScanModal({ state, references, onChange, onRetry, onCl
   const selected = items.filter(item => item.include)
   const missing = selected.flatMap(item => requiredMissing(item).map(field => ({ page: item.page, field })))
   const updateItem = (page, updater) => onChange(current => ({ ...current, items: current.items.map(item => item.page === page ? updater(item) : item) }))
-  const updateValue = (field, value) => updateItem(active.page, item => ({ ...item, values: { ...item.values, [field]: value } }))
+  const updateValue = (field, value) => updateItem(active.page, item => ({
+    ...item,
+    values: withDerivedObligationValues({ ...item.values, [field]: value }, field),
+  }))
   const submit = () => {
     if (!selected.length || missing.length) return
     onSave(selected)

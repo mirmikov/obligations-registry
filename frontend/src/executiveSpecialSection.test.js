@@ -22,6 +22,8 @@ test('executive Kibirev rent section loads specialized details and exposes only 
 
 test('executive Kibirev rent section refreshes the dashboard and active details after an approval change', () => {
   assert.match(dashboard, /request\('\/api\/reports\/executive\/obligations\/bulk'/)
+  assert.match(dashboard, /optimisticItem = withDerivedObligationValues\(\{ \.\.\.item, \[field\]: value \}, field\)/)
+  assert.match(dashboard, /row\.id === item\.id \? optimisticItem : row/)
   assert.match(dashboard, /Promise\.all\(\[/)
   assert.match(dashboard, /setData\(dashboardResult\)/)
 })

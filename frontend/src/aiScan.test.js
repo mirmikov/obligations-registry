@@ -19,6 +19,10 @@ test('AI scan keeps recognized and accountant fields separate', () => {
   assert.match(registry, /\.\.\.blankObligation\(\), status: ''/)
 })
 
+test('AI scan applies derived status immediately when approval date changes', () => {
+  assert.match(modal, /withDerivedObligationValues\(\{ \.\.\.item\.values, \[field\]: value \}, field\)/)
+})
+
 test('multi-page scan supports preview, duplicate protection and confirmed batch commit', () => {
   assert.match(modal, /item\.duplicate.*Возможный дубль/s)
   assert.match(modal, /AIScanPreview batch=\{state\.batch\} page=\{active\.page\}/)

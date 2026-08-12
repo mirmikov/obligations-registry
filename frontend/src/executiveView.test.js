@@ -17,7 +17,13 @@ test('executive status update changes only status', () => {
 })
 
 test('executive approval date can be set or explicitly cleared', () => {
-  assert.equal(executiveUpdatePayload(42, 'approval_date', '2026-07-29').approval_date, '2026-07-29')
+  assert.deepEqual(executiveUpdatePayload(42, 'approval_date', '2026-07-29'), {
+    ids: [42],
+    status: 'К оплате',
+    approval_date: '2026-07-29',
+    actual_payment_date: '',
+    approval_date_set: true,
+  })
   assert.deepEqual(executiveUpdatePayload(42, 'approval_date', ''), {
     ids: [42],
     status: '',

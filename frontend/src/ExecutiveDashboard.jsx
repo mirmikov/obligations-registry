@@ -6,6 +6,7 @@ import { BLANK_ACCOUNT_TYPE_FILTER, filterSelectOptions } from './filterValues'
 import { defaultExecutiveFilters, EXECUTIVE_FILTER_STATUSES, executiveUpdatePayload } from './executiveView'
 import { localTodayISO } from './paymentsView'
 import { can } from './permissions'
+import { withDerivedObligationValues } from './obligationValues'
 
 const periodIcons = {
   overdue: AlertTriangle,
@@ -97,7 +98,12 @@ export default function ExecutiveDashboard({ user, notify }) {
 
   const saveDetailField = async (item, field, value) => {
     const key = `${item.id}:${field}`
+    const optimisticItem = withDerivedObligationValues({ ...item, [field]: value }, field)
     setDetailsSaving(current => new Set(current).add(key))
+    setDetails(current => current ? {
+      ...current,
+      items: current.items.map(row => row.id === item.id ? optimisticItem : row),
+    } : current)
     const payload = executiveUpdatePayload(item.id, field, value)
     const currentDetails = details
     const params = new URLSearchParams(Object.entries(filters).filter(([, filterValue]) => filterValue))
@@ -119,6 +125,15 @@ export default function ExecutiveDashboard({ user, notify }) {
       notify(field === 'status' ? 'Статус обновлён' : value ? 'Дата утверждения обновлена' : 'Дата утверждения очищена')
       return true
     } catch (error) {
+      setDetails(current => current ? {
+        ...current,
+        items: current.items.map(row => {
+          if (row.id !== item.id || row[field] !== value) return row
+          const reverted = { ...row, [field]: item[field] }
+          if (row.status === optimisticItem.status) reverted.status = item.status
+          return reverted
+        }),
+      } : current)
       notify(error.message, 'error')
       return false
     } finally {
