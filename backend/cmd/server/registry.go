@@ -269,10 +269,17 @@ func (a *app) updateObligationRecord(w http.ResponseWriter, r *http.Request, aud
 	}
 	var previous struct {
 		ApprovalDate string `json:"approval_date"`
+		Counterparty string `json:"counterparty"`
 	}
 	if err = json.Unmarshal(beforeRow, &previous); err != nil {
 		fail(w, 500, "Не удалось прочитать текущее обязательство")
 		return
+	}
+	if strings.TrimSpace(input.Counterparty) != strings.TrimSpace(previous.Counterparty) && input.DefermentDays == nil {
+		if err = applyCounterpartyDefermentDefault(r.Context(), tx, &input); err != nil {
+			fail(w, 500, "Не удалось применить отсрочку контрагента")
+			return
+		}
 	}
 	input.normalizeForUpdate(previous.ApprovalDate)
 	before, _ := snapshotArray([]json.RawMessage{beforeRow})

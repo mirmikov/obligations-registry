@@ -21,7 +21,9 @@ test('AI scan keeps recognized and accountant fields separate', () => {
 })
 
 test('AI scan applies derived status immediately when approval date changes', () => {
-  assert.match(modal, /withDerivedObligationValues\(\{ \.\.\.item\.values, \[field\]: value \}, field\)/)
+  assert.match(modal, /withReferenceDefaults\(\{ \.\.\.item\.values, \[field\]: value \}, field,/)
+  const defaults = fs.readFileSync(new URL('./referenceDefaults.js', import.meta.url), 'utf8')
+  assert.match(defaults, /withDerivedObligationValues\(next, changedField\)/)
 })
 
 test('multi-page scan supports preview, duplicate protection and confirmed batch commit', () => {
