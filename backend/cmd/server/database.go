@@ -92,6 +92,9 @@ type dbExecer interface {
 }
 
 func insertObligation(ctx context.Context, db dbExecer, input obligationInput, userID *int64) (int64, error) {
+	if err := applyCounterpartyDefermentDefault(ctx, db, &input); err != nil {
+		return 0, err
+	}
 	input.normalize()
 	var id int64
 	err := db.QueryRowContext(ctx, `

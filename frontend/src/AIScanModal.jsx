@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { AlertTriangle, Check, CheckCircle2, ChevronDown, FileSearch, LoaderCircle, ScanLine, Search, Sparkles, X } from 'lucide-react'
 import { DateInput, money } from './App'
 import { requestBlob } from './api'
-import { withDerivedObligationValues } from './obligationValues'
+import { buildCostCategoryResponsibleMap, buildCounterpartyDefermentMap, withReferenceDefaults } from './referenceDefaults'
 
 const automaticFields = [
   ['counterparty', 'Контрагент'], ['entry_date', 'Дата внесения'], ['legal_entity', 'Юридическое лицо'],
@@ -16,9 +16,11 @@ export default function AIScanModal({ state, references, onChange, onRetry, onCl
   const selected = items.filter(item => item.include)
   const missing = selected.flatMap(item => requiredMissing(item).map(field => ({ page: item.page, field })))
   const updateItem = (page, updater) => onChange(current => ({ ...current, items: current.items.map(item => item.page === page ? updater(item) : item) }))
+  const responsibleByCostCategory = useMemo(() => buildCostCategoryResponsibleMap(references), [references])
+  const defermentByCounterparty = useMemo(() => buildCounterpartyDefermentMap(references), [references])
   const updateValue = (field, value) => updateItem(active.page, item => ({
     ...item,
-    values: withDerivedObligationValues({ ...item.values, [field]: value }, field),
+    values: withReferenceDefaults({ ...item.values, [field]: value }, field, responsibleByCostCategory, defermentByCounterparty),
   }))
   const submit = () => {
     if (!selected.length || missing.length) return

@@ -11,7 +11,7 @@ import { canContinueRegistryDrag, canStartRegistryDrag, getRegistryDragScroll, h
 import { can } from './permissions'
 import { referenceOptionSearchText } from './counterpartyTaxId'
 import { counterpartyCreationSeed, normalizedCounterpartyOptions } from './counterpartyCreation'
-import { buildCostCategoryResponsibleMap, withDefaultResponsible } from './referenceDefaults'
+import { buildCostCategoryResponsibleMap, buildCounterpartyDefermentMap, withReferenceDefaults } from './referenceDefaults'
 import { buildAdvancedSplitPreview, createAdvancedSplitFields, isAdvancedSplitMode } from './advancedPaymentSplit'
 import { buildPaymentSplitPayload } from './paymentSplitPayload'
 import AdvancedSplitEditor, { AdvancedSplitModePicker } from './AdvancedSplitEditor'
@@ -151,6 +151,7 @@ export default function Registry({ user, notify, maintenance, onToggleMaintenanc
   useEffect(() => () => resizeCleanupRef.current?.(), [])
   const tableWidth = useMemo(() => columnWidths.reduce((sum, width) => sum + width, 0), [columnWidths])
   const responsibleByCostCategory = useMemo(() => buildCostCategoryResponsibleMap(refs), [refs])
+  const defermentByCounterparty = useMemo(() => buildCounterpartyDefermentMap(refs), [refs])
   const stickyOffsets = useMemo(() => getRegistryStickyOffsets(columnWidths), [columnWidths])
   const setColumnWidth = (index, width, persist = true) => {
     const next = [...columnWidthsRef.current]
@@ -275,7 +276,7 @@ export default function Registry({ user, notify, maintenance, onToggleMaintenanc
     const current = rowsRef.current.get(item.id) || item
     if (sameCellValue(current[field], value)) { finishCellEdit(current); return true }
     const previousValue = current[field]
-    const next = withDefaultResponsible(withDerivedObligationValues({ ...current, [field]: value }, field), field, responsibleByCostCategory)
+    const next = withReferenceDefaults({ ...current, [field]: value }, field, responsibleByCostCategory, defermentByCounterparty)
     rowsRef.current.set(item.id, next)
     setData(state => ({ ...state, items: state.items.map(row => row.id === item.id ? next : row) }))
     const cellKey = `${item.id}:${field}`
@@ -289,6 +290,7 @@ export default function Registry({ user, notify, maintenance, onToggleMaintenanc
         const reverted = { ...latest, [field]: previousValue }
         if (!sameCellValue(next.status, current.status) && sameCellValue(latest?.status, next.status)) reverted.status = current.status
         if (!sameCellValue(next.planned_payment_date, current.planned_payment_date) && sameCellValue(latest?.planned_payment_date, next.planned_payment_date)) reverted.planned_payment_date = current.planned_payment_date
+        if (!sameCellValue(next.deferment_days, current.deferment_days) && sameCellValue(latest?.deferment_days, next.deferment_days)) reverted.deferment_days = current.deferment_days
         rowsRef.current.set(item.id, reverted)
         setData(state => ({ ...state, items: state.items.map(row => row.id === item.id ? reverted : row) }))
       }
@@ -299,7 +301,7 @@ export default function Registry({ user, notify, maintenance, onToggleMaintenanc
   const commitNewCell = async (item, field, rawValue) => {
     let value
     try { value = normalizeCellValue(field, rawValue) } catch (error) { notify(error.message, 'error'); return false }
-    const next = withDefaultResponsible(withDerivedObligationValues({ ...item, [field]: value }, field), field, responsibleByCostCategory)
+    const next = withReferenceDefaults({ ...item, [field]: value }, field, responsibleByCostCategory, defermentByCounterparty)
     setNewRow(next)
     if (sameCellValue(item[field], value) || creatingRef.current) return true
     creatingRef.current = true; markSaving(`new:${field}`, true)
@@ -377,7 +379,12 @@ export default function Registry({ user, notify, maintenance, onToggleMaintenanc
       duplicate_matches: item.duplicate_matches || [],
       warnings: item.warnings || [],
       confidence: item.confidence || {},
-      values: { ...blankObligation(), status: '', counterparty: item.counterparty || '', legal_entity: item.legal_entity || '', document_number: item.document_number || '', document_date: item.document_date || '', amount: item.amount ?? null },
+      values: withReferenceDefaults(
+        { ...blankObligation(), status: '', counterparty: item.counterparty || '', legal_entity: item.legal_entity || '', document_number: item.document_number || '', document_date: item.document_date || '', amount: item.amount ?? null },
+        'counterparty',
+        responsibleByCostCategory,
+        defermentByCounterparty,
+      ),
     }))
     setAIScan({ ...result, filename: result.original_name || fallbackFilename, items, loading: false, error: '' })
   }

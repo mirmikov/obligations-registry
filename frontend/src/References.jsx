@@ -42,6 +42,9 @@ export default function References({ user, notify }) {
   const userAssignments = useMemo(() => Object.fromEntries(
     (data.responsible_users || []).map(item => [Number(item.responsible_id), Number(item.user_id)]),
   ), [data.responsible_users])
+  const defermentAssignments = useMemo(() => Object.fromEntries(
+    (data.counterparty_deferments || []).map(item => [Number(item.counterparty_id), Number(item.deferment_days)]),
+  ), [data.counterparty_deferments])
 
   const add = async (nextValue, taxID = '') => {
     if (!nextValue.trim()) return
@@ -72,6 +75,21 @@ export default function References({ user, notify }) {
       counterparties: (current.counterparties || []).map(item => Number(item.id) === Number(id) ? { ...item, tax_id: result.tax_id || '' } : item),
     }))
     notify(result.tax_id ? 'ИНН сохранён' : 'ИНН удалён')
+  }
+
+  const saveCounterpartyDeferment = async (id, defermentDays) => {
+    const result = await request(`/api/references/counterparties/${id}/deferment`, {
+      method: 'PUT',
+      body: JSON.stringify({ deferment_days: defermentDays }),
+    })
+    setData(current => ({
+      ...current,
+      counterparty_deferments: [
+        ...(current.counterparty_deferments || []).filter(item => Number(item.counterparty_id) !== Number(id)),
+        ...(result.deferment_days == null ? [] : [{ counterparty_id: Number(id), deferment_days: Number(result.deferment_days) }]),
+      ],
+    }))
+    notify(result.deferment_days == null ? 'Отсрочка по умолчанию удалена' : `Отсрочка ${result.deferment_days} дн. сохранена`)
   }
 
   const openCounterpartyDetails = item => {
@@ -178,6 +196,9 @@ export default function References({ user, notify }) {
           {search && <button type="button" onClick={() => setSearch('')} aria-label="Очистить поиск"><X size={15}/></button>}
           <span>Найдено: {currentItems.length}</span>
         </div>}
+        {active === 'counterparties' && <div className="reference-assignment-hint">
+          Укажите отсрочку один раз — при выборе контрагента в реестре она заполнится автоматически. В конкретном платеже значение можно изменить вручную.
+        </div>}
         {active === 'cost_categories' && <div className="reference-assignment-hint">
           Для каждой статьи можно назначить ответственного по умолчанию. В реестре его по-прежнему можно изменить вручную.
         </div>}
@@ -190,6 +211,7 @@ export default function References({ user, notify }) {
             {active === 'counterparties' && editable && <button type="button" className={`reference-merge-checkbox ${selectedCounterparties.includes(Number(item.id)) ? 'selected' : ''}`} onClick={() => toggleCounterparty(Number(item.id))} aria-label={`Выбрать контрагента ${item.value} для объединения`} aria-pressed={selectedCounterparties.includes(Number(item.id))}>{selectedCounterparties.includes(Number(item.id)) && <Check size={15}/>}</button>}
             {active === 'counterparties' ? <button type="button" className="reference-counterparty-name" onClick={() => openCounterpartyDetails(item)} title="Открыть актуальную карточку ФНС"><span><strong>{item.value}</strong><small>Сведения ФНС</small></span><Info size={16}/></button> : <strong>{item.value}</strong>}
             {active === 'counterparties' && <CounterpartyTaxIDEditor item={item} editable={editable} onSave={saveCounterpartyTaxID} notify={notify}/>}
+            {active === 'counterparties' && <CounterpartyDefermentEditor item={item} value={defermentAssignments[Number(item.id)]} editable={editable} onSave={saveCounterpartyDeferment} notify={notify}/>}
             {active === 'cost_categories' && <ResponsiblePicker
               value={assignments[Number(item.id)] || ''}
               options={data.responsibles || []}
@@ -250,6 +272,24 @@ function CounterpartyTaxIDEditor({ item, editable, onSave, notify }) {
   return <div className="reference-tax-id-editor">
     <label><span>ИНН</span><input value={value} onChange={event => setValue(event.target.value)} inputMode="numeric" maxLength={15} placeholder="Не указан" disabled={!editable || saving} aria-label={`ИНН контрагента ${item.value}`} onKeyDown={event => { if (event.key === 'Enter' && changed) { event.preventDefault(); save() } }}/></label>
     {editable && <button type="button" className="reference-tax-id-save" disabled={!changed || saving} onClick={save} title="Сохранить ИНН" aria-label={`Сохранить ИНН контрагента ${item.value}`}><Save size={15}/></button>}
+  </div>
+}
+
+function CounterpartyDefermentEditor({ item, value: initialValue, editable, onSave, notify }) {
+  const [value, setValue] = useState(initialValue ?? '')
+  const [saving, setSaving] = useState(false)
+  useEffect(() => setValue(initialValue ?? ''), [initialValue])
+  const parsed = value === '' ? null : Number(value)
+  const valid = parsed == null || (Number.isInteger(parsed) && parsed >= 0 && parsed <= 36500)
+  const changed = valid && parsed !== (initialValue ?? null)
+  const save = async () => {
+    if (!changed) return
+    setSaving(true)
+    try { await onSave(item.id, parsed) } catch (error) { notify(error.message, 'error') } finally { setSaving(false) }
+  }
+  return <div className={`reference-deferment-editor ${!valid ? 'has-error' : ''}`}>
+    <label><span>Отсрочка, дней</span><input type="number" min="0" max="36500" step="1" value={value} onChange={event => setValue(event.target.value)} placeholder="Не указана" disabled={!editable || saving} aria-label={`Отсрочка контрагента ${item.value}`} onKeyDown={event => { if (event.key === 'Enter' && changed) { event.preventDefault(); save() } }}/></label>
+    {editable && <button type="button" className="reference-deferment-save" disabled={!changed || saving} onClick={save} title="Сохранить отсрочку" aria-label={`Сохранить отсрочку контрагента ${item.value}`}><Save size={15}/></button>}
   </div>
 }
 

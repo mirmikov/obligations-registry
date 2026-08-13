@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -14,6 +15,10 @@ import (
 const costCategoryResponsibleReferenceKind = "cost_category_responsibles"
 
 const counterpartyReferenceKind = "counterparties"
+
+const counterpartyDefermentReferenceKind = "counterparty_deferments"
+
+const maxCounterpartyDefermentDays = 36500
 
 func normalizeCounterpartyTaxID(value string) (string, error) {
 	value = strings.Map(func(char rune) rune {
@@ -39,6 +44,50 @@ func normalizeCounterpartyTaxID(value string) (string, error) {
 type costCategoryResponsibleReference struct {
 	CategoryID  int64  `json:"category_id"`
 	Responsible string `json:"responsible"`
+}
+
+type counterpartyDefermentReference struct {
+	CounterpartyID int64 `json:"counterparty_id"`
+	DefermentDays  int   `json:"deferment_days"`
+}
+
+func encodeCounterpartyDefermentReference(counterpartyID int64, defermentDays int) string {
+	value, _ := json.Marshal(counterpartyDefermentReference{CounterpartyID: counterpartyID, DefermentDays: defermentDays})
+	return string(value)
+}
+
+func decodeCounterpartyDefermentReference(value string) (counterpartyDefermentReference, bool) {
+	var result counterpartyDefermentReference
+	if json.Unmarshal([]byte(value), &result) != nil || result.CounterpartyID <= 0 || result.DefermentDays < 0 || result.DefermentDays > maxCounterpartyDefermentDays {
+		return counterpartyDefermentReference{}, false
+	}
+	return result, true
+}
+
+func applyCounterpartyDefermentDefault(ctx context.Context, db dbExecer, input *obligationInput) error {
+	if input == nil || input.DefermentDays != nil || strings.TrimSpace(input.Counterparty) == "" {
+		return nil
+	}
+	var encoded string
+	err := db.QueryRowContext(ctx, `
+		SELECT mapping.value
+		FROM reference_values counterparty
+		JOIN reference_values mapping ON mapping.kind=$2 AND mapping.sort_order=counterparty.id AND mapping.active
+		WHERE counterparty.kind=$3 AND counterparty.active AND counterparty.value=$1
+		ORDER BY mapping.id DESC LIMIT 1`, strings.TrimSpace(input.Counterparty), counterpartyDefermentReferenceKind, counterpartyReferenceKind).Scan(&encoded)
+	if err == sql.ErrNoRows {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	mapping, ok := decodeCounterpartyDefermentReference(encoded)
+	if !ok {
+		return nil
+	}
+	days := mapping.DefermentDays
+	input.DefermentDays = &days
+	return nil
 }
 
 func encodeCostCategoryResponsibleReference(categoryID int64, responsible string) string {
@@ -79,6 +128,13 @@ func (a *app) listReferences(w http.ResponseWriter, r *http.Request) {
 			}
 			continue
 		}
+		if kind == counterpartyDefermentReferenceKind {
+			mapping, ok := decodeCounterpartyDefermentReference(value)
+			if ok && mapping.CounterpartyID == int64(order) {
+				result[kind] = append(result[kind], map[string]any{"id": id, "counterparty_id": mapping.CounterpartyID, "deferment_days": mapping.DefermentDays})
+			}
+			continue
+		}
 		if kind == responsibleUserReferenceKind {
 			user := currentUser(r)
 			if user.IsDeveloper || user.Permissions["references.edit"] {
@@ -96,6 +152,93 @@ func (a *app) listReferences(w http.ResponseWriter, r *http.Request) {
 		result[kind] = append(result[kind], item)
 	}
 	writeJSON(w, 200, result)
+}
+
+func (a *app) setCounterpartyDeferment(w http.ResponseWriter, r *http.Request) {
+	counterpartyID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || counterpartyID <= 0 {
+		fail(w, http.StatusBadRequest, "Некорректный контрагент")
+		return
+	}
+	var input struct {
+		DefermentDays *int `json:"deferment_days"`
+	}
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	if input.DefermentDays != nil && (*input.DefermentDays < 0 || *input.DefermentDays > maxCounterpartyDefermentDays) {
+		fail(w, http.StatusBadRequest, "Отсрочка должна быть целым числом от 0 до 36500 дней")
+		return
+	}
+	user := currentUser(r)
+	tx, err := a.db.BeginTx(r.Context(), nil)
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Не удалось начать сохранение отсрочки")
+		return
+	}
+	defer tx.Rollback()
+
+	var counterparty string
+	if err = tx.QueryRowContext(r.Context(), `SELECT value FROM reference_values WHERE id=$1 AND kind=$2 AND active FOR UPDATE`, counterpartyID, counterpartyReferenceKind).Scan(&counterparty); err == sql.ErrNoRows {
+		fail(w, http.StatusNotFound, "Контрагент не найден")
+		return
+	} else if err != nil {
+		fail(w, http.StatusInternalServerError, "Не удалось проверить контрагента")
+		return
+	}
+
+	rows, err := tx.QueryContext(r.Context(), `SELECT id FROM reference_values WHERE kind=$1 AND sort_order=$2 ORDER BY id FOR UPDATE`, counterpartyDefermentReferenceKind, counterpartyID)
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Не удалось подготовить настройку отсрочки")
+		return
+	}
+	var changedIDs []int64
+	for rows.Next() {
+		var id int64
+		if rows.Scan(&id) == nil {
+			changedIDs = append(changedIDs, id)
+		}
+	}
+	if err = rows.Err(); err != nil {
+		rows.Close()
+		fail(w, http.StatusInternalServerError, "Не удалось прочитать настройку отсрочки")
+		return
+	}
+	rows.Close()
+	before, err := snapshotRows(r.Context(), tx, "reference_values", changedIDs)
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Не удалось подготовить историю изменения")
+		return
+	}
+	if _, err = tx.ExecContext(r.Context(), `UPDATE reference_values SET active=false WHERE kind=$1 AND sort_order=$2`, counterpartyDefermentReferenceKind, counterpartyID); err != nil {
+		fail(w, http.StatusInternalServerError, "Не удалось обновить настройку отсрочки")
+		return
+	}
+	if input.DefermentDays != nil {
+		encoded := encodeCounterpartyDefermentReference(counterpartyID, *input.DefermentDays)
+		var mappingID int64
+		err = tx.QueryRowContext(r.Context(), `
+			INSERT INTO reference_values(kind,value,sort_order,active) VALUES($1,$2,$3,true)
+			ON CONFLICT(kind,value) DO UPDATE SET sort_order=excluded.sort_order,active=true
+			RETURNING id`, counterpartyDefermentReferenceKind, encoded, counterpartyID).Scan(&mappingID)
+		if err != nil {
+			fail(w, http.StatusInternalServerError, "Не удалось сохранить отсрочку")
+			return
+		}
+		changedIDs = append(changedIDs, mappingID)
+	}
+	changedIDs = uniqueInt64s(changedIDs)
+	after, err := snapshotRows(r.Context(), tx, "reference_values", changedIDs)
+	if err != nil || a.recordUndo(r.Context(), tx, user.ID, "update", "Изменение отсрочки по умолчанию для контрагента «"+counterparty+"»", undoPayload{References: &undoChange{Before: before, After: after}}) != nil {
+		fail(w, http.StatusInternalServerError, "Не удалось записать историю изменения")
+		return
+	}
+	if err = tx.Commit(); err != nil {
+		fail(w, http.StatusInternalServerError, "Не удалось завершить сохранение отсрочки")
+		return
+	}
+	a.audit(r.Context(), user.ID, "update", "reference", &counterpartyID, map[string]any{"kind": counterpartyDefermentReferenceKind, "counterparty": counterparty, "deferment_days": input.DefermentDays})
+	writeJSON(w, http.StatusOK, map[string]any{"counterparty_id": counterpartyID, "deferment_days": input.DefermentDays})
 }
 
 func (a *app) setCostCategoryResponsible(w http.ResponseWriter, r *http.Request) {
