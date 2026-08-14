@@ -62,6 +62,7 @@ func main() {
 	mux.HandleFunc("GET /api/health", a.health)
 	mux.HandleFunc("POST /api/auth/login", a.login)
 	mux.HandleFunc("POST /api/desktop/auth/login", a.desktopLogin)
+	mux.HandleFunc("GET /api/desktop/app/package", a.desktopAppPackage)
 	mux.Handle("GET /api/auth/me", a.authorize(http.HandlerFunc(a.me)))
 	mux.Handle("GET /api/desktop/notifications", a.authorizeDesktop(http.HandlerFunc(a.listDesktopNotifications)))
 	mux.Handle("GET /api/desktop/app/update", a.authorizeDesktop(http.HandlerFunc(a.desktopAppUpdateManifest)))
