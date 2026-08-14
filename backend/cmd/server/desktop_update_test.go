@@ -31,3 +31,13 @@ func TestDesktopAppUpdateManifestValidation(t *testing.T) {
 		})
 	}
 }
+
+func TestCurrentDesktopAppUpdatePublishesNotifierVersion130(t *testing.T) {
+	manifest := currentDesktopAppUpdate()
+	if manifest.Version != "1.3.0" || manifest.Size != 45978450 || manifest.SHA256 != "00E270B0A9F0490B58E78B577C657FB7621E6FE5E207FC39A1BF939A5B0D13FA" {
+		t.Fatalf("unexpected current desktop manifest: %#v", manifest)
+	}
+	if !validDesktopAppUpdate(manifest) || manifest.ReleaseNotes == "" {
+		t.Fatalf("current desktop manifest is incomplete: %#v", manifest)
+	}
+}

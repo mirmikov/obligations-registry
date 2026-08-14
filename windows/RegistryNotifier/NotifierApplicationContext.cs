@@ -10,15 +10,19 @@ internal sealed class NotifierApplicationContext : ApplicationContext
     private readonly AppSettings _settings;
     private readonly NotifyIcon _tray;
     private readonly ToolStripMenuItem _statusItem;
+    private readonly ToolStripMenuItem _historyItem;
     private readonly ToolStripMenuItem _pauseItem;
     private readonly ToolStripMenuItem _autostartItem;
     private readonly ToolStripMenuItem _updateItem;
     private readonly AutoUpdater _autoUpdater;
     private readonly System.Windows.Forms.Timer _updateTimer;
     private readonly ConcurrentQueue<DesktopNotification> _notifications = new();
+    private readonly object _historySync = new();
+    private readonly List<DesktopNotification> _history;
     private readonly CancellationTokenSource _shutdown = new();
     private readonly Control _dispatcher = new();
     private NotificationPopup? _popup;
+    private NotificationCenterForm? _historyForm;
     private string _token;
     private bool _checking;
     private bool _loginOpen;
@@ -26,17 +30,21 @@ internal sealed class NotifierApplicationContext : ApplicationContext
     private DesktopAppUpdate? _availableUpdate;
     private UpdateAvailableForm? _updateForm;
     private string _shownUpdateVersion = "";
+    private string _connectionStatus = "Подключение…";
+    private DateTimeOffset? _lastSuccessfulSync;
     private int _pollGeneration;
 
     public NotifierApplicationContext(string? afterUpdateVersion = null)
     {
-		_dispatcher.CreateControl();
+        _dispatcher.CreateControl();
         _settings = _store.Load();
         _token = _store.ReadToken(_settings);
+        _history = _store.LoadNotificationHistory(_settings.Email).ToList();
         _autoUpdater = new AutoUpdater(_api, _store);
         try { ContextMenuManager.Install(); }
         catch (Exception error) { _store.Log("Не удалось обновить контекстное меню: " + error.Message); }
         _statusItem = new ToolStripMenuItem("Подключение…") { Enabled = false };
+        _historyItem = new ToolStripMenuItem(HistoryMenuText());
         _pauseItem = new ToolStripMenuItem(_settings.Paused ? "Возобновить уведомления" : "Приостановить уведомления");
         _autostartItem = new ToolStripMenuItem("Запускать вместе с Windows") { CheckOnClick = true, Checked = AutostartManager.IsEnabled() };
         _updateItem = new ToolStripMenuItem($"Проверить обновления · {AutoUpdater.CurrentVersion.ToString(3)}");
@@ -44,6 +52,7 @@ internal sealed class NotifierApplicationContext : ApplicationContext
         menu.Items.Add(_statusItem);
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Открыть реестр", null, (_, _) => OpenRegistry(""));
+        menu.Items.Add(_historyItem);
         menu.Items.Add("Проверить сейчас", null, async (_, _) => await CheckNowAsync());
         menu.Items.Add(_updateItem);
         menu.Items.Add(_pauseItem);
@@ -52,6 +61,7 @@ internal sealed class NotifierApplicationContext : ApplicationContext
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Выход", null, (_, _) => Exit());
         _pauseItem.Click += (_, _) => TogglePause();
+        _historyItem.Click += (_, _) => ShowNotificationCenter();
         _updateItem.Click += async (_, _) => await CheckForUpdateAsync(true);
         _autostartItem.CheckedChanged += (_, _) => SetAutostart(_autostartItem.Checked);
         _tray = new NotifyIcon { Icon = AppIcon.Create(), Text = "Уведомления реестра", ContextMenuStrip = menu, Visible = true };
@@ -70,28 +80,43 @@ internal sealed class NotifierApplicationContext : ApplicationContext
 
     private void ShowLogin()
     {
-		if (_loginOpen) return;
-		_loginOpen = true;
+        if (_loginOpen) return;
+        _loginOpen = true;
+        var previousEmail = _settings.Email;
         using var form = new LoginForm(_api, _settings);
-		try
-		{
-			if (form.ShowDialog() != DialogResult.OK || form.Result == null) return;
-        _token = form.Result.Token;
-        _store.SetToken(_settings, _token);
-        _settings.Cursor = 0;
-		_settings.CursorInitialized = false;
-        _settings.Paused = false;
-        _store.Save(_settings);
-        _statusItem.Text = $"Подключено: {form.Result.User.Name}";
-        _pauseItem.Text = "Приостановить уведомления";
-        StartPolling();
-		_ = CheckForUpdateAsync(false);
-		}
-		finally { _loginOpen = false; }
+        try
+        {
+            if (form.ShowDialog() != DialogResult.OK || form.Result == null) return;
+            var userChanged = !string.Equals(previousEmail, form.Result.User.Email, StringComparison.OrdinalIgnoreCase);
+            _token = form.Result.Token;
+            _store.SetToken(_settings, _token);
+            _settings.Cursor = 0;
+            _settings.CursorInitialized = false;
+            _settings.Paused = false;
+            _store.Save(_settings);
+            if (userChanged)
+            {
+                while (_notifications.TryDequeue(out _)) { }
+                _popup?.Close();
+                _lastSuccessfulSync = null;
+                lock (_historySync)
+                {
+                    _history.Clear();
+                    _history.AddRange(_store.LoadNotificationHistory(_settings.Email));
+                }
+                RefreshNotificationCenter();
+            }
+            _statusItem.Text = $"Подключено: {form.Result.User.Name}";
+            _pauseItem.Text = "Приостановить уведомления";
+            StartPolling();
+            _ = CheckForUpdateAsync(false);
+        }
+        finally { _loginOpen = false; }
     }
 
     private async Task PollLoopAsync(int generation, CancellationToken cancellationToken)
     {
+        var consecutiveFailures = 0;
         while (!cancellationToken.IsCancellationRequested && generation == _pollGeneration && !string.IsNullOrEmpty(_token))
         {
             if (_settings.Paused)
@@ -103,15 +128,18 @@ internal sealed class NotifierApplicationContext : ApplicationContext
             try
             {
                 var response = await _api.PollAsync(_settings.ServerUrl, _token, _settings.Cursor, 20, !_settings.CursorInitialized, cancellationToken);
-				if (generation != _pollGeneration) return;
+                if (generation != _pollGeneration) return;
+                consecutiveFailures = 0;
+                _lastSuccessfulSync = response.ServerTime;
                 SetStatus("Подключено · ожидание сообщений");
+                RememberNotifications(response.Items);
                 foreach (var item in response.Items.OrderBy(item => item.Id)) _notifications.Enqueue(item);
                 if (response.NextCursor > _settings.Cursor)
                 {
                     _settings.Cursor = response.NextCursor;
                 }
-				_settings.CursorInitialized = true;
-				_store.Save(_settings);
+                _settings.CursorInitialized = true;
+                _store.Save(_settings);
                 ShowNextNotification();
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { break; }
@@ -127,8 +155,10 @@ internal sealed class NotifierApplicationContext : ApplicationContext
             catch (Exception error)
             {
                 _store.Log(error.ToString());
-                SetStatus("Нет связи · повторяем подключение");
-                try { await Task.Delay(TimeSpan.FromSeconds(5), cancellationToken); } catch (OperationCanceledException) { }
+                consecutiveFailures++;
+                var retryDelay = CalculateRetryDelay(consecutiveFailures);
+                SetStatus($"Нет связи · повтор через {(int)retryDelay.TotalSeconds} с");
+                try { await Task.Delay(retryDelay, cancellationToken); } catch (OperationCanceledException) { }
             }
         }
     }
@@ -139,10 +169,13 @@ internal sealed class NotifierApplicationContext : ApplicationContext
         _checking = true;
         try
         {
-			var response = await _api.PollAsync(_settings.ServerUrl, _token, _settings.Cursor, 0, !_settings.CursorInitialized, _shutdown.Token);
+            var response = await _api.PollAsync(_settings.ServerUrl, _token, _settings.Cursor, 0, !_settings.CursorInitialized, _shutdown.Token);
+            _lastSuccessfulSync = response.ServerTime;
+            SetStatus("Подключено · проверено вручную");
+            RememberNotifications(response.Items);
             foreach (var item in response.Items.OrderBy(item => item.Id)) _notifications.Enqueue(item);
             _settings.Cursor = Math.Max(_settings.Cursor, response.NextCursor);
-			_settings.CursorInitialized = true;
+            _settings.CursorInitialized = true;
             _store.Save(_settings);
             ShowNextNotification();
             ShowBalloon("Реестр обязательств", response.Items.Count == 0 ? "Новых уведомлений нет." : $"Новых уведомлений: {response.Items.Count}.", ToolTipIcon.Info);
@@ -227,6 +260,59 @@ internal sealed class NotifierApplicationContext : ApplicationContext
         });
     }
 
+    private void RememberNotifications(IEnumerable<DesktopNotification> items)
+    {
+        var incoming = items.Where(item => item.Id > 0).ToList();
+        if (incoming.Count == 0) { RefreshNotificationCenter(); return; }
+        List<DesktopNotification> snapshot;
+        lock (_historySync)
+        {
+            _history.AddRange(incoming);
+            snapshot = SettingsStore.NormalizeNotificationHistory(_history);
+            _history.Clear();
+            _history.AddRange(snapshot);
+            _store.SaveNotificationHistory(_settings.Email, snapshot);
+        }
+        RefreshNotificationCenter();
+    }
+
+    private IReadOnlyList<DesktopNotification> NotificationHistorySnapshot()
+    {
+        lock (_historySync) return _history.ToList();
+    }
+
+    private string HistoryMenuText()
+    {
+        lock (_historySync) return _history.Count == 0 ? "Центр уведомлений" : $"Центр уведомлений · {_history.Count}";
+    }
+
+    private void ShowNotificationCenter()
+    {
+        if (_historyForm is { IsDisposed: false })
+        {
+            _historyForm.UpdateState(NotificationHistorySnapshot(), _connectionStatus, _lastSuccessfulSync);
+            _historyForm.Activate();
+            return;
+        }
+        _historyForm = new NotificationCenterForm(NotificationHistorySnapshot(), _connectionStatus, _lastSuccessfulSync, OpenRegistry, ClearNotificationHistory);
+        _historyForm.FormClosed += (_, _) => _historyForm = null;
+        _historyForm.Show();
+        _historyForm.Activate();
+    }
+
+    private void ClearNotificationHistory()
+    {
+        lock (_historySync) _history.Clear();
+        _store.ClearNotificationHistory(_settings.Email);
+        RefreshNotificationCenter();
+    }
+
+    private void RefreshNotificationCenter() => Ui(() =>
+    {
+        _historyItem.Text = HistoryMenuText();
+        if (_historyForm is { IsDisposed: false }) _historyForm.UpdateState(NotificationHistorySnapshot(), _connectionStatus, _lastSuccessfulSync);
+    });
+
     private void TogglePause()
     {
         _settings.Paused = !_settings.Paused;
@@ -250,13 +336,27 @@ internal sealed class NotifierApplicationContext : ApplicationContext
         }
     }
 
-    private void SetStatus(string text) => Ui(() => _statusItem.Text = text);
+    internal static TimeSpan CalculateRetryDelay(int consecutiveFailures)
+    {
+        var exponent = Math.Clamp(consecutiveFailures - 1, 0, 4);
+        return TimeSpan.FromSeconds(Math.Min(60, 5 * (1 << exponent)));
+    }
+
+    private void SetStatus(string text)
+    {
+        _connectionStatus = text;
+        Ui(() =>
+        {
+            _statusItem.Text = text;
+            if (_historyForm is { IsDisposed: false }) _historyForm.UpdateState(NotificationHistorySnapshot(), _connectionStatus, _lastSuccessfulSync);
+        });
+    }
     private void ShowBalloon(string title, string text, ToolTipIcon icon) => Ui(() => _tray.ShowBalloonTip(5000, title, text, icon));
     private void Ui(Action action)
-	{
-		if (_shutdown.IsCancellationRequested || _dispatcher.IsDisposed) return;
-		if (_dispatcher.InvokeRequired) _dispatcher.BeginInvoke(action); else action();
-	}
+    {
+        if (_shutdown.IsCancellationRequested || _dispatcher.IsDisposed) return;
+        if (_dispatcher.InvokeRequired) _dispatcher.BeginInvoke(action); else action();
+    }
 
     private void OpenRegistry(string actionUrl)
     {
@@ -275,10 +375,11 @@ internal sealed class NotifierApplicationContext : ApplicationContext
         _updateTimer.Stop();
         _updateTimer.Dispose();
         _updateForm?.Close();
+        _historyForm?.Close();
         _popup?.Close();
         _tray.Visible = false;
         _tray.Dispose();
-		_dispatcher.Dispose();
+        _dispatcher.Dispose();
         _api.Dispose();
         _shutdown.Dispose();
         ExitThread();
