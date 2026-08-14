@@ -2,30 +2,21 @@ package main
 
 import (
 	"fmt"
-	"log"
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 )
 
 type priorityCenterSummary struct {
-	Count              int     `json:"count"`
-	Amount             float64 `json:"amount"`
-	OverdueCount       int     `json:"overdue_count"`
-	OverdueAmount      float64 `json:"overdue_amount"`
-	WeekCount          int     `json:"week_count"`
-	WeekAmount         float64 `json:"week_amount"`
-	UnclassifiedCount  int     `json:"unclassified_count"`
-	UnclassifiedAmount float64 `json:"unclassified_amount"`
-}
-
-type priorityCenterCell struct {
-	Urgency      string  `json:"urgency"`
-	Priority     string  `json:"priority"`
-	Count        int     `json:"count"`
-	Amount       float64 `json:"amount"`
-	OverdueCount int     `json:"overdue_count"`
-	EarliestDue  string  `json:"earliest_due"`
+	Count         int     `json:"count"`
+	Amount        float64 `json:"amount"`
+	OverdueCount  int     `json:"overdue_count"`
+	OverdueAmount float64 `json:"overdue_amount"`
+	TodayCount    int     `json:"today_count"`
+	TodayAmount   float64 `json:"today_amount"`
+	WeekCount     int     `json:"week_count"`
+	WeekAmount    float64 `json:"week_amount"`
 }
 
 type priorityCenterItem struct {
@@ -44,6 +35,7 @@ type priorityCenterItem struct {
 	ApprovalDate       string   `json:"approval_date"`
 	Comment            string   `json:"comment"`
 	Overdue            bool     `json:"overdue"`
+	DueToday           bool     `json:"due_today"`
 }
 
 func buildPriorityCenterFilters(query url.Values) (string, []any) {
@@ -54,7 +46,7 @@ func buildPriorityCenterFilters(query url.Values) (string, []any) {
 		clauses = append(clauses, fmt.Sprintf(sqlPart, len(args)))
 	}
 	for _, filter := range []struct{ param, column string }{
-		{"legal_entity", "legal_entity"}, {"responsible", "responsible"}, {"status", "status"},
+		{"legal_entity", "legal_entity"}, {"responsible", "responsible"},
 	} {
 		if value := strings.TrimSpace(query.Get(filter.param)); value != "" {
 			add(filter.column+"=$%d", value)
@@ -73,14 +65,26 @@ func buildPriorityCenterFilters(query url.Values) (string, []any) {
 	if value := strings.TrimSpace(query.Get("q")); value != "" {
 		add(`concat_ws(' ',counterparty,document_number,comment,responsible,legal_entity,cost_category) ILIKE '%%'||$%d||'%%'`, value)
 	}
-	switch query.Get("scope") {
+	switch strings.TrimSpace(query.Get("status")) {
 	case "all":
-	case "overdue":
-		clauses = append(clauses, "planned_payment_date<CURRENT_DATE", "COALESCE(status,'') NOT IN ('Оплачено','Отменено')")
-	case "week":
-		clauses = append(clauses, "planned_payment_date BETWEEN CURRENT_DATE AND CURRENT_DATE+7", "COALESCE(status,'') NOT IN ('Оплачено','Отменено')")
+		clauses = append(clauses, "COALESCE(BTRIM(status),'') NOT IN ('Оплачено','Отменено')")
+	case "payable":
+		clauses = append(clauses, "BTRIM(COALESCE(status,''))='К оплате'")
 	default:
-		clauses = append(clauses, "COALESCE(status,'') NOT IN ('Оплачено','Отменено')")
+		clauses = append(clauses, "BTRIM(COALESCE(status,'')) IN ('Зарегистрирован','Зарегистрировано')")
+	}
+	switch strings.TrimSpace(query.Get("scope")) {
+	case "overdue":
+		clauses = append(clauses, "planned_payment_date<CURRENT_DATE")
+	case "today":
+		clauses = append(clauses, "planned_payment_date<=CURRENT_DATE")
+	case "week":
+		clauses = append(clauses, "planned_payment_date BETWEEN CURRENT_DATE AND CURRENT_DATE+6")
+	case "all":
+	default:
+		clauses = append(clauses, `(planned_payment_date<=CURRENT_DATE+6
+			OR lower(COALESCE(urgency,'')) ~ '(крит|сроч|высок)'
+			OR lower(COALESCE(priority,'')) ~ '(крит|сроч|высок|важ)')`)
 	}
 	return strings.Join(clauses, " AND "), args
 }
@@ -89,72 +93,148 @@ func (a *app) priorityCenter(w http.ResponseWriter, r *http.Request) {
 	where, args := buildPriorityCenterFilters(r.URL.Query())
 	var summary priorityCenterSummary
 	summaryQuery := `SELECT count(*),COALESCE(sum(amount),0)::float8,
-		count(*) FILTER(WHERE planned_payment_date<CURRENT_DATE AND COALESCE(status,'') NOT IN ('Оплачено','Отменено')),
-		COALESCE(sum(amount) FILTER(WHERE planned_payment_date<CURRENT_DATE AND COALESCE(status,'') NOT IN ('Оплачено','Отменено')),0)::float8,
-		count(*) FILTER(WHERE planned_payment_date BETWEEN CURRENT_DATE AND CURRENT_DATE+7 AND COALESCE(status,'') NOT IN ('Оплачено','Отменено')),
-		COALESCE(sum(amount) FILTER(WHERE planned_payment_date BETWEEN CURRENT_DATE AND CURRENT_DATE+7 AND COALESCE(status,'') NOT IN ('Оплачено','Отменено')),0)::float8,
-		count(*) FILTER(WHERE NULLIF(BTRIM(urgency),'') IS NULL OR NULLIF(BTRIM(priority),'') IS NULL),
-		COALESCE(sum(amount) FILTER(WHERE NULLIF(BTRIM(urgency),'') IS NULL OR NULLIF(BTRIM(priority),'') IS NULL),0)::float8
+		count(*) FILTER(WHERE planned_payment_date<CURRENT_DATE),
+		COALESCE(sum(amount) FILTER(WHERE planned_payment_date<CURRENT_DATE),0)::float8,
+		count(*) FILTER(WHERE planned_payment_date=CURRENT_DATE),
+		COALESCE(sum(amount) FILTER(WHERE planned_payment_date=CURRENT_DATE),0)::float8,
+		count(*) FILTER(WHERE planned_payment_date BETWEEN CURRENT_DATE AND CURRENT_DATE+6),
+		COALESCE(sum(amount) FILTER(WHERE planned_payment_date BETWEEN CURRENT_DATE AND CURRENT_DATE+6),0)::float8
 		FROM obligations WHERE ` + where
-	if err := a.db.QueryRowContext(r.Context(), summaryQuery, args...).Scan(&summary.Count, &summary.Amount, &summary.OverdueCount, &summary.OverdueAmount, &summary.WeekCount, &summary.WeekAmount, &summary.UnclassifiedCount, &summary.UnclassifiedAmount); err != nil {
-		fail(w, http.StatusInternalServerError, "Не удалось рассчитать центр приоритетов")
+	if err := a.db.QueryRowContext(r.Context(), summaryQuery, args...).Scan(&summary.Count, &summary.Amount, &summary.OverdueCount, &summary.OverdueAmount, &summary.TodayCount, &summary.TodayAmount, &summary.WeekCount, &summary.WeekAmount); err != nil {
+		fail(w, http.StatusInternalServerError, "Не удалось рассчитать очередь срочных платежей")
 		return
 	}
 
-	matrixRows, err := a.db.QueryContext(r.Context(), `SELECT COALESCE(NULLIF(BTRIM(urgency),''),'—'),COALESCE(NULLIF(BTRIM(priority),''),'—'),count(*),COALESCE(sum(amount),0)::float8,count(*) FILTER(WHERE planned_payment_date<CURRENT_DATE AND COALESCE(status,'') NOT IN ('Оплачено','Отменено')),COALESCE(to_char(min(planned_payment_date),'YYYY-MM-DD'),'') FROM obligations WHERE `+where+` GROUP BY 1,2 ORDER BY count(*) DESC,1,2`, args...)
+	rows, err := a.db.QueryContext(r.Context(), `SELECT id,COALESCE(counterparty,''),COALESCE(legal_entity,''),COALESCE(cost_category,''),COALESCE(urgency,''),COALESCE(priority,''),COALESCE(responsible,''),COALESCE(document_number,''),COALESCE(to_char(document_date,'YYYY-MM-DD'),''),COALESCE(to_char(planned_payment_date,'YYYY-MM-DD'),''),amount::float8,COALESCE(status,''),COALESCE(to_char(approval_date,'YYYY-MM-DD'),''),COALESCE(comment,''),COALESCE(planned_payment_date<CURRENT_DATE,false),COALESCE(planned_payment_date=CURRENT_DATE,false)
+		FROM obligations WHERE `+where+`
+		ORDER BY (planned_payment_date<CURRENT_DATE) DESC,
+			CASE WHEN lower(COALESCE(urgency,'')) ~ '(крит|сроч)' THEN 0 WHEN lower(COALESCE(urgency,'')) LIKE '%высок%' THEN 1 WHEN NULLIF(BTRIM(urgency),'') IS NULL THEN 4 ELSE 2 END,
+			CASE WHEN lower(COALESCE(priority,'')) ~ '(крит|сроч|высок)' THEN 0 WHEN lower(COALESCE(priority,'')) LIKE '%важ%' THEN 1 WHEN NULLIF(BTRIM(priority),'') IS NULL THEN 4 ELSE 2 END,
+			planned_payment_date NULLS LAST,amount DESC NULLS LAST,id DESC LIMIT 300`, args...)
 	if err != nil {
-		fail(w, http.StatusInternalServerError, "Не удалось построить матрицу приоритетов")
+		fail(w, http.StatusInternalServerError, "Не удалось загрузить очередь срочных платежей")
 		return
 	}
-	defer matrixRows.Close()
-	matrix := []priorityCenterCell{}
-	for matrixRows.Next() {
-		var item priorityCenterCell
-		if err = matrixRows.Scan(&item.Urgency, &item.Priority, &item.Count, &item.Amount, &item.OverdueCount, &item.EarliestDue); err != nil {
-			fail(w, http.StatusInternalServerError, "Ошибка данных матрицы приоритетов")
-			return
-		}
-		matrix = append(matrix, item)
-	}
-	if err = matrixRows.Err(); err != nil {
-		fail(w, http.StatusInternalServerError, "Ошибка чтения матрицы приоритетов")
-		return
-	}
-
-	itemRows, err := a.db.QueryContext(r.Context(), `SELECT id,COALESCE(counterparty,''),COALESCE(legal_entity,''),COALESCE(cost_category,''),COALESCE(urgency,''),COALESCE(priority,''),COALESCE(responsible,''),COALESCE(document_number,''),COALESCE(to_char(document_date,'YYYY-MM-DD'),''),COALESCE(to_char(planned_payment_date,'YYYY-MM-DD'),''),amount::float8,COALESCE(status,''),COALESCE(to_char(approval_date,'YYYY-MM-DD'),''),COALESCE(comment,''),COALESCE(planned_payment_date<CURRENT_DATE AND COALESCE(status,'') NOT IN ('Оплачено','Отменено'),false) FROM obligations WHERE `+where+` ORDER BY (planned_payment_date<CURRENT_DATE AND COALESCE(status,'') NOT IN ('Оплачено','Отменено')) DESC,planned_payment_date NULLS LAST,id DESC LIMIT 300`, args...)
-	if err != nil {
-		fail(w, http.StatusInternalServerError, "Не удалось загрузить обязательства по приоритетам")
-		return
-	}
-	defer itemRows.Close()
+	defer rows.Close()
 	items := []priorityCenterItem{}
-	for itemRows.Next() {
+	for rows.Next() {
 		var item priorityCenterItem
-		if err = itemRows.Scan(&item.ID, &item.Counterparty, &item.LegalEntity, &item.CostCategory, &item.Urgency, &item.Priority, &item.Responsible, &item.DocumentNumber, &item.DocumentDate, &item.PlannedPaymentDate, &item.Amount, &item.Status, &item.ApprovalDate, &item.Comment, &item.Overdue); err != nil {
-			log.Printf("priority center row: %v", err)
-			fail(w, http.StatusInternalServerError, "Ошибка данных центра приоритетов")
+		if err = rows.Scan(&item.ID, &item.Counterparty, &item.LegalEntity, &item.CostCategory, &item.Urgency, &item.Priority, &item.Responsible, &item.DocumentNumber, &item.DocumentDate, &item.PlannedPaymentDate, &item.Amount, &item.Status, &item.ApprovalDate, &item.Comment, &item.Overdue, &item.DueToday); err != nil {
+			fail(w, http.StatusInternalServerError, "Ошибка данных очереди срочных платежей")
 			return
 		}
 		items = append(items, item)
 	}
-	if err = itemRows.Err(); err != nil {
-		fail(w, http.StatusInternalServerError, "Ошибка чтения центра приоритетов")
+	if err = rows.Err(); err != nil {
+		fail(w, http.StatusInternalServerError, "Ошибка чтения очереди срочных платежей")
 		return
 	}
 	options := map[string][]string{}
-	for key, column := range map[string]string{"legal_entities": "legal_entity", "responsibles": "responsible", "statuses": "status", "urgencies": "urgency", "priorities": "priority"} {
+	for key, column := range map[string]string{"legal_entities": "legal_entity", "responsibles": "responsible", "urgencies": "urgency", "priorities": "priority"} {
 		values, optionErr := a.priorityCenterOptions(r, column)
 		if optionErr != nil {
-			fail(w, http.StatusInternalServerError, "Не удалось загрузить фильтры центра приоритетов")
+			fail(w, http.StatusInternalServerError, "Не удалось загрузить фильтры срочных платежей")
 			return
 		}
 		options[key] = values
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"summary": summary, "matrix": matrix, "items": items, "options": options})
+	writeJSON(w, http.StatusOK, map[string]any{"summary": summary, "items": items, "options": options})
+}
+
+func (a *app) approvePriorityCenter(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		IDs          []int64 `json:"ids"`
+		ApprovalDate string  `json:"approval_date"`
+	}
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	ids := uniquePositiveIDs(input.IDs)
+	if len(ids) == 0 || len(ids) > 200 {
+		fail(w, http.StatusBadRequest, "Выберите от 1 до 200 платежей")
+		return
+	}
+	input.ApprovalDate = strings.TrimSpace(input.ApprovalDate)
+	if input.ApprovalDate == "" {
+		input.ApprovalDate = time.Now().Format("2006-01-02")
+	}
+	if _, err := time.Parse("2006-01-02", input.ApprovalDate); err != nil {
+		fail(w, http.StatusBadRequest, "Укажите корректную дату утверждения")
+		return
+	}
+	user := currentUser(r)
+	tx, err := a.db.BeginTx(r.Context(), nil)
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Не удалось начать согласование")
+		return
+	}
+	defer tx.Rollback()
+	rows, err := tx.QueryContext(r.Context(), `SELECT id FROM obligations WHERE id=ANY($1) AND BTRIM(COALESCE(status,'')) IN ('Зарегистрирован','Зарегистрировано') AND actual_payment_date IS NULL ORDER BY id FOR UPDATE`, ids)
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Не удалось подготовить платежи к согласованию")
+		return
+	}
+	eligible := []int64{}
+	for rows.Next() {
+		var id int64
+		if err = rows.Scan(&id); err != nil {
+			rows.Close()
+			fail(w, http.StatusInternalServerError, "Не удалось проверить платежи")
+			return
+		}
+		eligible = append(eligible, id)
+	}
+	if err = rows.Err(); err != nil {
+		rows.Close()
+		fail(w, http.StatusInternalServerError, "Не удалось проверить платежи")
+		return
+	}
+	if err = rows.Close(); err != nil {
+		fail(w, http.StatusInternalServerError, "Не удалось проверить платежи")
+		return
+	}
+	if len(eligible) == 0 {
+		fail(w, http.StatusConflict, "Выбранные платежи уже согласованы или недоступны")
+		return
+	}
+	before, err := snapshotRows(r.Context(), tx, "obligations", eligible)
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Не удалось подготовить историю согласования")
+		return
+	}
+	result, err := tx.ExecContext(r.Context(), `UPDATE obligations SET approval_date=$1::date,status=$2,updated_by=$3,updated_at=now() WHERE id=ANY($4)`, input.ApprovalDate, payableStatus, user.ID, eligible)
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Не удалось согласовать платежи")
+		return
+	}
+	updated, _ := result.RowsAffected()
+	after, err := snapshotRows(r.Context(), tx, "obligations", eligible)
+	if err != nil || a.recordUndo(r.Context(), tx, user.ID, "priority_approve", fmt.Sprintf("Согласование срочных платежей: %d", updated), undoPayload{Obligations: &undoChange{Before: before, After: after}}) != nil {
+		fail(w, http.StatusInternalServerError, "Не удалось записать историю согласования")
+		return
+	}
+	if err = tx.Commit(); err != nil {
+		fail(w, http.StatusInternalServerError, "Не удалось завершить согласование")
+		return
+	}
+	a.audit(r.Context(), user.ID, "approve", "obligations", nil, map[string]any{"ids": eligible, "approval_date": input.ApprovalDate, "status": payableStatus})
+	writeJSON(w, http.StatusOK, map[string]any{"updated": updated, "skipped": len(ids) - len(eligible), "approval_date": input.ApprovalDate, "status": payableStatus})
+}
+
+func uniquePositiveIDs(values []int64) []int64 {
+	seen := map[int64]bool{}
+	result := make([]int64, 0, len(values))
+	for _, value := range values {
+		if value > 0 && !seen[value] {
+			seen[value] = true
+			result = append(result, value)
+		}
+	}
+	return result
 }
 
 func (a *app) priorityCenterOptions(r *http.Request, column string) ([]string, error) {
-	allowed := map[string]bool{"legal_entity": true, "responsible": true, "status": true, "urgency": true, "priority": true}
+	allowed := map[string]bool{"legal_entity": true, "responsible": true, "urgency": true, "priority": true}
 	if !allowed[column] {
 		return nil, fmt.Errorf("unsupported option column")
 	}

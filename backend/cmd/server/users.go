@@ -54,12 +54,12 @@ func (a *app) createUser(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, "Укажите роль и пароль не короче 8 символов")
 		return
 	}
-	if protectedProfileRole(requestedRole) && !user.IsDeveloper {
-		fail(w, http.StatusForbidden, "Роли бухгалтера и руководителя может назначать только программист")
+	if protectedProfileRole(requestedRole) && !canConfigureUserPermissions(user) {
+		fail(w, http.StatusForbidden, "Недостаточно прав для назначения роли")
 		return
 	}
-	if input.Permissions != nil && !user.IsDeveloper {
-		fail(w, http.StatusForbidden, "Права может настраивать только программист")
+	if input.Permissions != nil && !canConfigureUserPermissions(user) {
+		fail(w, http.StatusForbidden, "Недостаточно прав для настройки доступов")
 		return
 	}
 	if isDeveloperEmail(input.Email) {
@@ -144,12 +144,12 @@ func (a *app) updateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	user := currentUser(r)
-	if protectedProfileRole(requestedRole) && !user.IsDeveloper {
-		fail(w, http.StatusForbidden, "Роли бухгалтера и руководителя может назначать только программист")
+	if protectedProfileRole(requestedRole) && !canConfigureUserPermissions(user) {
+		fail(w, http.StatusForbidden, "Недостаточно прав для назначения роли")
 		return
 	}
-	if input.Permissions != nil && !user.IsDeveloper {
-		fail(w, http.StatusForbidden, "Права может настраивать только программист")
+	if input.Permissions != nil && !canConfigureUserPermissions(user) {
+		fail(w, http.StatusForbidden, "Недостаточно прав для настройки доступов")
 		return
 	}
 	tx, err := a.db.BeginTx(r.Context(), nil)
@@ -176,6 +176,10 @@ func (a *app) updateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	targetDeveloper := isDeveloperEmail(targetEmail)
+	if targetDeveloper && !user.IsDeveloper {
+		fail(w, http.StatusForbidden, "Защищённую учётную запись программиста может изменять только сам программист")
+		return
+	}
 	if targetDeveloper {
 		requestedRole = "admin"
 		active := true
@@ -183,8 +187,8 @@ func (a *app) updateUser(w http.ResponseWriter, r *http.Request) {
 		input.Permissions = nil
 	}
 	currentProfileRole := profileRoleFromState(targetState, targetStoredRole)
-	if protectedProfileRole(currentProfileRole) && !user.IsDeveloper {
-		fail(w, http.StatusForbidden, "Роли бухгалтера и руководителя может изменять только программист")
+	if protectedProfileRole(currentProfileRole) && !canConfigureUserPermissions(user) {
+		fail(w, http.StatusForbidden, "Недостаточно прав для изменения роли")
 		return
 	}
 	if input.Active != nil {
@@ -268,6 +272,10 @@ func validRole(role string) bool {
 
 func protectedProfileRole(role string) bool {
 	return role == "accountant" || role == managerRole
+}
+
+func canConfigureUserPermissions(user authUser) bool {
+	return user.IsDeveloper || user.Permissions["users.permissions"]
 }
 
 func storedDatabaseRole(role string) string {

@@ -65,7 +65,7 @@ func main() {
 	mux.Handle("GET /api/auth/me", a.authorize(http.HandlerFunc(a.me)))
 	mux.Handle("GET /api/desktop/notifications", a.authorizeDesktop(http.HandlerFunc(a.listDesktopNotifications)))
 	mux.Handle("GET /api/desktop/app/update", a.authorizeDesktop(http.HandlerFunc(a.desktopAppUpdateManifest)))
-	mux.Handle("POST /api/desktop/notifications", a.authorize(a.requireDeveloper(http.HandlerFunc(a.createDesktopNotification))))
+	mux.Handle("POST /api/desktop/notifications", a.authorize(a.requirePermission("desktop.broadcast")(http.HandlerFunc(a.createDesktopNotification))))
 	mux.Handle("POST /api/desktop/obligations/ai-scan", a.authorizeDesktop(a.requirePermission("registry.ai_scan")(http.HandlerFunc(a.analyzeObligationScan))))
 	mux.Handle("GET /api/desktop/obligations/ai-scan/{batch}/status", a.authorizeDesktop(a.requirePermission("registry.ai_scan")(http.HandlerFunc(a.aiScanStatus))))
 	mux.Handle("GET /api/presence", a.authorize(a.requirePermission("registry.view")(http.HandlerFunc(a.listPresence))))
@@ -124,6 +124,7 @@ func main() {
 	mux.Handle("GET /api/reports/credits-leasing/details", a.authorize(a.requirePermission("credits.view")(http.HandlerFunc(a.creditsLeasingDetails))))
 	mux.Handle("POST /api/reports/credits-leasing/obligations/bulk", a.authorize(a.requirePermission("credits.approve")(a.requireManager(http.HandlerFunc(a.creditsLeasingBulkUpdate)))))
 	mux.Handle("GET /api/reports/priority-center", a.authorize(a.requirePermission("priority_center.view")(http.HandlerFunc(a.priorityCenter))))
+	mux.Handle("POST /api/reports/priority-center/approve", a.authorize(a.requirePermission("priority_center.approve")(a.requireManager(http.HandlerFunc(a.approvePriorityCenter)))))
 	mux.Handle("GET /api/payment-register", a.authorize(a.requirePermission("payments.view")(http.HandlerFunc(a.paymentRegister))))
 	mux.Handle("GET /api/payment-register/{id}/scan", a.authorize(a.requirePermission("payments.view")(http.HandlerFunc(a.serveObligationScan))))
 	mux.Handle("PATCH /api/payment-register/{id}", a.authorize(a.requirePermission("payments.edit")(http.HandlerFunc(a.updatePaymentFields))))
@@ -136,7 +137,7 @@ func main() {
 	mux.Handle("PATCH /api/users/{id}", a.authorize(a.requirePermission("users.manage")(http.HandlerFunc(a.updateUser))))
 	mux.Handle("GET /api/permissions/catalog", a.authorize(a.requirePermission("users.view")(http.HandlerFunc(a.permissionCatalogHandler))))
 	mux.Handle("GET /api/system/status", a.authorize(http.HandlerFunc(a.getSystemStatus)))
-	mux.Handle("PUT /api/system/maintenance", a.authorize(a.requireDeveloper(http.HandlerFunc(a.updateMaintenance))))
+	mux.Handle("PUT /api/system/maintenance", a.authorize(a.requirePermission("system.maintenance")(http.HandlerFunc(a.updateMaintenance))))
 	mux.Handle("GET /api/audit", a.authorize(a.requirePermission("audit.view")(http.HandlerFunc(a.auditLog))))
 
 	server := &http.Server{

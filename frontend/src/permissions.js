@@ -3,7 +3,7 @@ export function can(user, permission) {
 }
 
 export function canApproveObligations(user) {
-  return Boolean(user?.is_developer || user?.role === 'developer' || user?.role === 'manager')
+  return Boolean(user?.is_developer || user?.role === 'developer' || (user?.role === 'manager' && user?.permissions?.['obligations.approve']))
 }
 
 export function approvalStatusOptions(options = [], userOrAllowed) {

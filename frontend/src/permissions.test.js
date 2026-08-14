@@ -19,12 +19,13 @@ test('ordinary users receive only explicitly enabled permissions', () => {
 })
 
 test('only manager and protected developer can approve obligations', () => {
-  assert.equal(canApproveObligations({ role: 'manager' }), true)
+  assert.equal(canApproveObligations({ role: 'manager', permissions: { 'obligations.approve': true } }), true)
+  assert.equal(canApproveObligations({ role: 'manager', permissions: {} }), false)
   assert.equal(canApproveObligations({ role: 'developer', is_developer: true }), true)
   for (const role of ['admin', 'accountant', 'editor', 'viewer']) assert.equal(canApproveObligations({ role }), false)
   const options = [{ value: 'Зарегистрирован' }, { value: 'К оплате' }, { value: 'Оплачено' }]
   assert.deepEqual(approvalStatusOptions(options, { role: 'editor' }).map(item => item.value), ['Зарегистрирован', 'Оплачено'])
-  assert.equal(approvalStatusOptions(options, { role: 'manager' }).length, 3)
+  assert.equal(approvalStatusOptions(options, { role: 'manager', permissions: { 'obligations.approve': true } }).length, 3)
 })
 
 test('navigation, registry actions and access editor are permission driven', () => {
@@ -32,11 +33,13 @@ test('navigation, registry actions and access editor are permission driven', () 
   assert.match(app, /permission: 'my_invoices\.view'/)
   assert.match(app, /can\(user, 'registry\.undo'\)/)
   assert.match(registry, /can\(user, 'registry\.delete'\)/)
-  assert.match(registry, /user\.is_developer/)
+  assert.match(registry, /can\(user, 'desktop\.broadcast'\)/)
+  assert.match(registry, /can\(user, 'system\.maintenance'\)/)
   assert.match(users, /Индивидуальные права/)
   assert.match(users, /form\.is_developer/)
   assert.match(users, /RoleCard role="accountant"/)
   assert.match(users, /RoleCard role="manager"/)
+  assert.match(users, /users\.permissions/)
   assert.match(users, /option value="accountant"/)
   assert.match(app, /accountant: 'Бухгалтер'/)
   assert.match(app, /manager: 'Руководитель'/)
