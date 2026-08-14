@@ -34,6 +34,15 @@ test('multi-page scan supports preview, duplicate protection and confirmed batch
   assert.match(styles, /html\[data-theme="dark"\] \.ai-scan-layout/)
 })
 
+test('AI scan preview provides bounded zoom without changing the source document', () => {
+  assert.match(modal, /nextAIScanZoom/)
+  assert.match(modal, /event\.ctrlKey/)
+  assert.match(modal, /onDoubleClick=\{toggleZoom\}/)
+  assert.match(modal, /style=\{\{ width: `\$\{zoom\}%` \}\}/)
+  assert.match(styles, /\.ai-scan-preview-toolbar/)
+  assert.match(styles, /\.ai-scan-preview-canvas/)
+})
+
 test('confirmed AI scan refreshes counterparties created in the reference directory', () => {
   assert.match(registry, /created_references/)
   assert.match(registry, /request\('\/api\/references'\)\.then\(setRefs\)/)
