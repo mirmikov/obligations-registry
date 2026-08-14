@@ -81,13 +81,36 @@ internal static class SelfTest
             Require(AutoUpdater.VersionsEqual(new Version(1, 2, 0, 0), new Version(1, 2, 0)), "release version equality");
             Require(AutoUpdater.VersionsEqual(AutoUpdater.ReadExecutableVersion(Application.ExecutablePath), AutoUpdater.CurrentVersion), "single-file executable version inspection");
             Require(AutoUpdater.QuotePowerShell("C:\\O'Brien\\app.exe") == "'C:\\O''Brien\\app.exe'", "PowerShell path quoting");
+            Require(NotifierApplicationContext.CalculateRetryDelay(1) == TimeSpan.FromSeconds(5) && NotifierApplicationContext.CalculateRetryDelay(3) == TimeSpan.FromSeconds(20) && NotifierApplicationContext.CalculateRetryDelay(20) == TimeSpan.FromSeconds(60), "bounded reconnect backoff");
+            var notificationHistory = Enumerable.Range(1, 120).Select(id => new DesktopNotification { Id = id, Title = $"Уведомление {id}", Body = "Текст", CreatedAt = DateTimeOffset.Now }).ToList();
+            notificationHistory.Add(new DesktopNotification { Id = 120, Title = "Обновлённое уведомление", Body = "Текст", CreatedAt = DateTimeOffset.Now });
+            var normalizedHistory = SettingsStore.NormalizeNotificationHistory(notificationHistory);
+            Require(normalizedHistory.Count == 100 && normalizedHistory[0].Id == 120 && normalizedHistory[0].Title == "Обновлённое уведомление" && normalizedHistory[^1].Id == 21, "bounded deduplicated notification history");
+            Require(NotificationCenterForm.KindLabel("chat.message") == "Сообщение" && NotificationCenterForm.KindLabel("registry.approval") == "Платёж", "notification category labels");
+            var historyTestDirectory = Path.Combine(Path.GetTempPath(), "RegistryNotifierSelfTest-" + Guid.NewGuid().ToString("N"));
+            try
+            {
+                var historyStore = new SettingsStore(historyTestDirectory);
+                var secretNotification = new DesktopNotification { Id = 42, Kind = "chat.message", Title = "Секретный заголовок", Body = "Секретный текст", CreatedAt = DateTimeOffset.Now };
+                historyStore.SaveNotificationHistory("self-test@mirt-med.ru", [secretNotification]);
+                var historyFile = Directory.GetFiles(historyTestDirectory, "notifications-*.dat").Single();
+                Require(!File.ReadAllText(historyFile).Contains("Секретный", StringComparison.Ordinal), "notification history encryption at rest");
+                var restoredHistory = historyStore.LoadNotificationHistory("self-test@mirt-med.ru");
+                Require(restoredHistory.Count == 1 && restoredHistory[0].Id == 42 && restoredHistory[0].Body == "Секретный текст", "encrypted notification history round-trip");
+                historyStore.ClearNotificationHistory("self-test@mirt-med.ru");
+                Require(!File.Exists(historyFile), "notification history cleanup");
+            }
+            finally
+            {
+                try { Directory.Delete(historyTestDirectory, true); } catch { }
+            }
             AutoUpdater.ValidateManifest(new DesktopAppUpdate { Version = "1.2.0", DownloadUrl = "https://github.com/mirmikov/obligations-registry/releases/download/test/RegistryNotifier-win-x64.zip", Sha256 = new string('a', 64), Size = 1024 });
             var unsafeRejected = false;
             try { AutoUpdater.ValidateManifest(new DesktopAppUpdate { Version = "1.2.0", DownloadUrl = "http://example.org/app.zip", Sha256 = new string('a', 64), Size = 1024 }); } catch (ApiException) { unsafeRejected = true; }
             Require(unsafeRejected, "unsafe update manifest rejection");
             var protectedValue = DataProtection.Protect("desktop-token-test");
             Require(protectedValue != "desktop-token-test" && DataProtection.Unprotect(protectedValue) == "desktop-token-test", "Windows DPAPI round-trip");
-            checks.Add("PASS: URL validation, action isolation, auto-update safety and DPAPI");
+            checks.Add("PASS: URL validation, action isolation, update safety, protected notification history, reconnect backoff and DPAPI");
             Write(resultPath, string.Join(Environment.NewLine, checks));
             return 0;
         }

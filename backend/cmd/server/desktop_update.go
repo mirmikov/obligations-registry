@@ -8,10 +8,10 @@ import (
 )
 
 const (
-	desktopAppLatestVersion = "1.2.0"
-	desktopAppDownloadURL   = "https://github.com/mirmikov/obligations-registry/releases/download/registry-notifier-v1.2.0/RegistryNotifier-win-x64.zip"
-	desktopAppSHA256        = "548A325E05A90599D4C816219178B877F8AEE905A9ADDB97450856C7AA22E38E"
-	desktopAppSize          = int64(45970667)
+	desktopAppLatestVersion = "1.3.0"
+	desktopAppDownloadURL   = "https://github.com/mirmikov/obligations-registry/releases/download/registry-notifier-v1.3.0/RegistryNotifier-win-x64.zip"
+	desktopAppSHA256        = "00E270B0A9F0490B58E78B577C657FB7621E6FE5E207FC39A1BF939A5B0D13FA"
+	desktopAppSize          = int64(45978450)
 )
 
 var (
@@ -33,7 +33,7 @@ func currentDesktopAppUpdate() desktopAppUpdate {
 		DownloadURL:  desktopAppDownloadURL,
 		SHA256:       desktopAppSHA256,
 		Size:         desktopAppSize,
-		ReleaseNotes: "Добавлены рассылка уведомлений из ФинРеестра и безопасное автоматическое обновление Windows-приложения.",
+		ReleaseNotes: "Добавлены защищённая история и центр уведомлений с поиском, последняя успешная синхронизация и щадящее переподключение при сбоях сети.",
 	}
 }
 
