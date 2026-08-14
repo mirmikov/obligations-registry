@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { AlertTriangle, Check, CheckCircle2, ChevronDown, FileSearch, LoaderCircle, ScanLine, Search, Sparkles, X } from 'lucide-react'
+import { AlertTriangle, Check, CheckCircle2, ChevronDown, FileSearch, LoaderCircle, RotateCcw, ScanLine, Search, Sparkles, X, ZoomIn, ZoomOut } from 'lucide-react'
 import { DateInput, money } from './App'
 import { requestBlob } from './api'
+import { AI_SCAN_ZOOM_MAX, AI_SCAN_ZOOM_MIN, nextAIScanZoom } from './aiScanZoom'
 import { approvalStatusOptions } from './permissions'
 import { buildCostCategoryResponsibleMap, buildCounterpartyDefermentMap, withReferenceDefaults } from './referenceDefaults'
 
@@ -102,9 +103,11 @@ function ConfidenceBadge({ item }) {
 
 function AIScanPreview({ batch, page }) {
   const [preview, setPreview] = useState({ loading: true, url: '', error: '' })
+  const [zoom, setZoom] = useState(100)
   useEffect(() => {
     let active = true
     let url = ''
+    setZoom(100)
     setPreview({ loading: true, url: '', error: '' })
     requestBlob(`/api/obligations/ai-scan/${batch}/${page}`).then(blob => {
       if (!active) return
@@ -112,7 +115,22 @@ function AIScanPreview({ batch, page }) {
     }).catch(error => active && setPreview({ loading: false, url: '', error: error.message }))
     return () => { active = false; if (url) URL.revokeObjectURL(url) }
   }, [batch, page])
-  return <section className="ai-scan-preview">{preview.loading ? <LoaderCircle className="spin" size={28}/> : preview.error ? <AlertTriangle size={28}/> : <img src={preview.url} alt={`Страница ${page}`}/>}</section>
+  const changeZoom = direction => setZoom(current => nextAIScanZoom(current, direction))
+  const handleWheel = event => {
+    if (!event.ctrlKey || preview.loading || preview.error) return
+    event.preventDefault()
+    changeZoom(event.deltaY < 0 ? 1 : -1)
+  }
+  const toggleZoom = () => setZoom(current => current === 100 ? 200 : 100)
+  return <section className="ai-scan-preview" onWheel={handleWheel} aria-label={`Предпросмотр страницы ${page}`}>
+    {!preview.loading && !preview.error && <div className="ai-scan-preview-toolbar" role="toolbar" aria-label="Масштаб документа">
+      <button type="button" onClick={() => changeZoom(-1)} disabled={zoom <= AI_SCAN_ZOOM_MIN} title="Уменьшить" aria-label="Уменьшить масштаб"><ZoomOut size={16}/></button>
+      <strong aria-live="polite">{zoom}%</strong>
+      <button type="button" onClick={() => changeZoom(1)} disabled={zoom >= AI_SCAN_ZOOM_MAX} title="Увеличить" aria-label="Увеличить масштаб"><ZoomIn size={16}/></button>
+      <button type="button" onClick={() => setZoom(100)} disabled={zoom === 100} title="По ширине окна" aria-label="Сбросить масштаб"><RotateCcw size={15}/></button>
+    </div>}
+    <div className="ai-scan-preview-canvas">{preview.loading ? <LoaderCircle className="spin" size={28}/> : preview.error ? <AlertTriangle size={28}/> : <img src={preview.url} alt={`Страница ${page}`} style={{ width: `${zoom}%` }} onDoubleClick={toggleZoom} title="Двойной клик: 200% / по ширине"/>}</div>
+  </section>
 }
 
 function ScanField({ label, value, onChange, wide, ...props }) {
