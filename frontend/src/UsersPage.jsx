@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Calculator, Check, Code2, Plus, ShieldCheck, UserPen, X } from 'lucide-react'
+import { Calculator, Check, Code2, Crown, Plus, ShieldCheck, UserPen, X } from 'lucide-react'
 import { request } from './api'
 import { dateTime, PageHeader, roleLabel } from './App'
 import { can } from './permissions'
@@ -39,6 +39,7 @@ export default function UsersPage({ user: currentUser, notify }) {
     <div className="role-cards">
       <RoleCard role="developer" icon={<Code2/>} title="Программист" text="Все права и управление индивидуальными доступами"/>
       <RoleCard role="admin" title="Администратор" text="Полный рабочий доступ без управления ролью программиста"/>
+      <RoleCard role="manager" icon={<Crown/>} title="Руководитель" text="Согласование обязательств и установка даты утверждения; программист сохраняет полный доступ"/>
       <RoleCard role="accountant" icon={<Calculator/>} title="Бухгалтер" text="Получение и обработка счетов, отправленных сотрудниками"/>
       <RoleCard role="editor" title="Редактор" text="Работа с реестром, оплатами и справочниками"/>
       <RoleCard role="viewer" title="Зритель" text="Просмотр основных разделов без изменения данных"/>
@@ -72,6 +73,7 @@ function UserModal({ item, catalog, granular, onClose, onSave }) {
     permissions: granular ? { ...(catalog.presets[role] || {}) } : current.permissions,
   }))
   const togglePermission = key => {
+    if (isApprovalPermission(key) && form.role !== 'manager') return
     const group = catalog.groups.find(candidate => candidate.permissions.some(permission => permission.key === key))
     const nextEnabled = !form.permissions?.[key]
     setForm(current => {
@@ -79,17 +81,18 @@ function UserModal({ item, catalog, granular, onClose, onSave }) {
       const viewKey = group?.permissions.find(permission => permission.key.endsWith('.view'))?.key
       if (!nextEnabled && key === viewKey) group.permissions.forEach(permission => { permissions[permission.key] = false })
       if (nextEnabled && viewKey) permissions[viewKey] = true
-      if (nextEnabled && key === 'credits.view') permissions['registry.view'] = true
+      if (nextEnabled && (key === 'credits.view' || key === 'priority_center.view')) permissions['registry.view'] = true
       return { ...current, permissions }
     })
   }
   const toggleGroup = group => {
-    const enable = group.permissions.some(permission => !form.permissions?.[permission.key])
+    const available = group.permissions.filter(permission => !isApprovalPermission(permission.key) || form.role === 'manager')
+    const enable = available.some(permission => !form.permissions?.[permission.key])
     setForm(current => ({
       ...current,
       permissions: {
         ...current.permissions,
-        ...Object.fromEntries(group.permissions.map(permission => [permission.key, enable])),
+        ...Object.fromEntries(available.map(permission => [permission.key, enable])),
       },
     }))
   }
@@ -107,6 +110,7 @@ function UserModal({ item, catalog, granular, onClose, onSave }) {
             <select value={form.is_developer ? 'developer' : form.role} disabled={form.is_developer} onChange={event => setRole(event.target.value)}>
               {form.is_developer && <option value="developer">Программист</option>}
               <option value="admin">Администратор</option>
+              {(granular || form.role === 'manager') && <option value="manager" disabled={!granular}>Руководитель</option>}
               {(granular || form.role === 'accountant') && <option value="accountant" disabled={!granular}>Бухгалтер</option>}
               <option value="editor">Редактор</option><option value="viewer">Зритель</option>
             </select>
@@ -125,10 +129,10 @@ function UserModal({ item, catalog, granular, onClose, onSave }) {
                   <span className={`permission-checkbox ${enabled === group.permissions.length ? 'checked' : enabled ? 'mixed' : ''}`}>{enabled > 0 && <Check size={14}/>}</span>
                   <strong>{group.label}</strong><small>{enabled}/{group.permissions.length}</small>
                 </button>
-                <div>{group.permissions.map(permission => <label key={permission.key}>
-                  <input type="checkbox" checked={Boolean(form.permissions?.[permission.key])} onChange={() => togglePermission(permission.key)}/>
+                <div>{group.permissions.map(permission => { const locked = isApprovalPermission(permission.key) && form.role !== 'manager'; return <label className={locked ? 'permission-locked' : ''} key={permission.key} title={locked ? 'Это право доступно только руководителю и программисту' : ''}>
+                  <input type="checkbox" checked={Boolean(form.permissions?.[permission.key])} disabled={locked} onChange={() => togglePermission(permission.key)}/>
                   <i><Check size={12}/></i><span>{permission.label}</span>
-                </label>)}</div>
+                </label>})}</div>
               </article>
             })}
           </div>
@@ -138,3 +142,5 @@ function UserModal({ item, catalog, granular, onClose, onSave }) {
     </form>
   </div>
 }
+
+function isApprovalPermission(key) { return key === 'executive.approve' || key === 'credits.approve' }

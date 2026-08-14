@@ -5,7 +5,7 @@ import { DateInput, money, PageHeader, shortDate } from './App'
 import { BLANK_ACCOUNT_TYPE_FILTER, filterSelectOptions } from './filterValues'
 import { defaultExecutiveFilters, EXECUTIVE_FILTER_STATUSES, executiveUpdatePayload } from './executiveView'
 import { localTodayISO } from './paymentsView'
-import { can } from './permissions'
+import { can, canApproveObligations } from './permissions'
 import { withDerivedObligationValues } from './obligationValues'
 
 const periodIcons = {
@@ -227,7 +227,7 @@ export default function ExecutiveDashboard({ user, notify }) {
       loading={detailsLoading}
       statuses={(refs.statuses || []).map(item => item.value)}
       savingCells={detailsSaving}
-      editable={can(user, 'executive.approve')}
+      editable={canApproveObligations(user)}
       onCommit={saveDetailField}
       onClose={() => setDetails(null)}
     />}

@@ -199,6 +199,10 @@ func (a *app) createObligation(w http.ResponseWriter, r *http.Request) {
 	}
 	input.normalize()
 	user := currentUser(r)
+	if err := validateApprovalCreate(user, input); err != nil {
+		fail(w, http.StatusForbidden, err.Error())
+		return
+	}
 	tx, err := a.db.BeginTx(r.Context(), nil)
 	if err != nil {
 		fail(w, 500, "Не удалось начать сохранение")
@@ -270,6 +274,7 @@ func (a *app) updateObligationRecord(w http.ResponseWriter, r *http.Request, aud
 	var previous struct {
 		ApprovalDate string `json:"approval_date"`
 		Counterparty string `json:"counterparty"`
+		Status       string `json:"status"`
 	}
 	if err = json.Unmarshal(beforeRow, &previous); err != nil {
 		fail(w, 500, "Не удалось прочитать текущее обязательство")
@@ -282,6 +287,10 @@ func (a *app) updateObligationRecord(w http.ResponseWriter, r *http.Request, aud
 		}
 	}
 	input.normalizeForUpdate(previous.ApprovalDate)
+	if err = validateApprovalUpdate(user, obligationApprovalState{ApprovalDate: previous.ApprovalDate, Status: previous.Status}, input); err != nil {
+		fail(w, http.StatusForbidden, err.Error())
+		return
+	}
 	before, _ := snapshotArray([]json.RawMessage{beforeRow})
 	existing, splitGroupID, err := loadDuplicateIdentity(r.Context(), tx, id)
 	if err != nil {
@@ -427,8 +436,12 @@ func (a *app) bulkUpdate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	input.normalizeStatus()
 	user := currentUser(r)
+	if err := validateApprovalBulk(user, input); err != nil {
+		fail(w, http.StatusForbidden, err.Error())
+		return
+	}
+	input.normalizeStatus()
 	tx, err := a.db.BeginTx(r.Context(), nil)
 	if err != nil {
 		fail(w, 500, "Не удалось начать массовое изменение")

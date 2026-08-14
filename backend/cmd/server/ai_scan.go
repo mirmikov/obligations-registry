@@ -1870,6 +1870,13 @@ func (a *app) commitAIScan(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	user := currentUser(r)
+	for index := range input.Items {
+		input.Items[index].Values.normalize()
+		if approvalErr := validateApprovalCreate(user, input.Items[index].Values); approvalErr != nil {
+			fail(w, http.StatusForbidden, fmt.Sprintf("Страница %d: %v", input.Items[index].Page, approvalErr))
+			return
+		}
+	}
 	tx, err := a.db.BeginTx(r.Context(), nil)
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "Не удалось начать сохранение")

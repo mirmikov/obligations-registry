@@ -54,8 +54,8 @@ func (a *app) createUser(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, "Укажите роль и пароль не короче 8 символов")
 		return
 	}
-	if requestedRole == "accountant" && !user.IsDeveloper {
-		fail(w, http.StatusForbidden, "Роль бухгалтера может назначать только программист")
+	if protectedProfileRole(requestedRole) && !user.IsDeveloper {
+		fail(w, http.StatusForbidden, "Роли бухгалтера и руководителя может назначать только программист")
 		return
 	}
 	if input.Permissions != nil && !user.IsDeveloper {
@@ -65,10 +65,7 @@ func (a *app) createUser(w http.ResponseWriter, r *http.Request) {
 	if isDeveloperEmail(input.Email) {
 		requestedRole = "admin"
 	}
-	storedRole := requestedRole
-	if storedRole == "accountant" {
-		storedRole = "editor"
-	}
+	storedRole := storedDatabaseRole(requestedRole)
 	hash, _ := bcrypt.GenerateFromPassword([]byte(input.Password), bcrypt.DefaultCost)
 	tx, err := a.db.BeginTx(r.Context(), nil)
 	if err != nil {
@@ -94,7 +91,7 @@ func (a *app) createUser(w http.ResponseWriter, r *http.Request) {
 	if input.Permissions != nil {
 		effectivePermissions = normalizePermissions(*input.Permissions, requestedRole)
 	}
-	if input.Permissions != nil || requestedRole == "accountant" {
+	if input.Permissions != nil || protectedProfileRole(requestedRole) {
 		if err = saveUserPermissions(r.Context(), tx, id, effectivePermissions); err != nil {
 			fail(w, 500, "Не удалось сохранить права пользователя")
 			return
@@ -147,8 +144,8 @@ func (a *app) updateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	user := currentUser(r)
-	if requestedRole == "accountant" && !user.IsDeveloper {
-		fail(w, http.StatusForbidden, "Роль бухгалтера может назначать только программист")
+	if protectedProfileRole(requestedRole) && !user.IsDeveloper {
+		fail(w, http.StatusForbidden, "Роли бухгалтера и руководителя может назначать только программист")
 		return
 	}
 	if input.Permissions != nil && !user.IsDeveloper {
@@ -186,17 +183,14 @@ func (a *app) updateUser(w http.ResponseWriter, r *http.Request) {
 		input.Permissions = nil
 	}
 	currentProfileRole := profileRoleFromState(targetState, targetStoredRole)
-	if currentProfileRole == "accountant" && !user.IsDeveloper {
-		fail(w, http.StatusForbidden, "Роль бухгалтера может изменять только программист")
+	if protectedProfileRole(currentProfileRole) && !user.IsDeveloper {
+		fail(w, http.StatusForbidden, "Роли бухгалтера и руководителя может изменять только программист")
 		return
 	}
 	if input.Active != nil {
 		targetActive = *input.Active
 	}
-	storedRole := requestedRole
-	if storedRole == "accountant" {
-		storedRole = "editor"
-	}
+	storedRole := storedDatabaseRole(requestedRole)
 	before, err := snapshotRows(r.Context(), tx, "users", []int64{id})
 	if err != nil {
 		fail(w, 500, "Не удалось подготовить историю отмены")
@@ -216,10 +210,10 @@ func (a *app) updateUser(w http.ResponseWriter, r *http.Request) {
 	if input.Permissions != nil {
 		effectivePermissions = normalizePermissions(*input.Permissions, requestedRole)
 		savePermissions = true
-	} else if requestedRole == "accountant" && currentProfileRole != "accountant" {
+	} else if protectedProfileRole(requestedRole) && currentProfileRole != requestedRole {
 		effectivePermissions = defaultPermissions(requestedRole)
 		savePermissions = true
-	} else if requestedRole != "accountant" && currentProfileRole == "accountant" {
+	} else if requestedRole != currentProfileRole && protectedProfileRole(currentProfileRole) {
 		savePermissions = true
 	}
 	if savePermissions {
@@ -269,7 +263,21 @@ func (a *app) updateUser(w http.ResponseWriter, r *http.Request) {
 }
 
 func validRole(role string) bool {
-	return role == "admin" || role == "accountant" || role == "editor" || role == "viewer"
+	return role == "admin" || role == managerRole || role == "accountant" || role == "editor" || role == "viewer"
+}
+
+func protectedProfileRole(role string) bool {
+	return role == "accountant" || role == managerRole
+}
+
+func storedDatabaseRole(role string) string {
+	if role == "accountant" {
+		return "editor"
+	}
+	if role == managerRole {
+		return "viewer"
+	}
+	return role
 }
 
 func (a *app) auditLog(w http.ResponseWriter, r *http.Request) {

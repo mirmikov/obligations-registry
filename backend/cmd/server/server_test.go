@@ -814,6 +814,7 @@ func TestRolePermissionPresetsPreserveExistingAccess(t *testing.T) {
 	viewer := defaultPermissions("viewer")
 	editor := defaultPermissions("editor")
 	admin := defaultPermissions("admin")
+	manager := defaultPermissions(managerRole)
 	if !viewer["registry.view"] || viewer["registry.edit"] {
 		t.Fatal("viewer preset must remain read-only")
 	}
@@ -823,8 +824,11 @@ func TestRolePermissionPresetsPreserveExistingAccess(t *testing.T) {
 	if !admin["registry.import"] || !admin["executive.settings"] || !admin["users.manage"] {
 		t.Fatal("administrator preset must preserve full operational access")
 	}
-	if !editor["credits.approve"] || !admin["credits.approve"] {
-		t.Fatal("editors and administrators must be able to approve credits by default")
+	if editor["credits.approve"] || admin["credits.approve"] || admin["executive.approve"] {
+		t.Fatal("ordinary operational roles must not approve obligations")
+	}
+	if !manager["credits.approve"] || !manager["executive.approve"] {
+		t.Fatal("manager preset must include obligation approval")
 	}
 }
 

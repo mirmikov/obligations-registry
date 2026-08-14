@@ -29,6 +29,7 @@ var permissionCatalog = []permissionGroup{
 	{Key: "my_invoices", Label: "Мои счета", Permissions: []permissionItem{{Key: "my_invoices.view", Label: "Просмотр собственных счетов"}}},
 	{Key: "executive", Label: "Панель руководителя", Permissions: []permissionItem{{Key: "executive.view", Label: "Просмотр"}, {Key: "executive.approve", Label: "Изменение статуса и даты утверждения"}, {Key: "executive.settings", Label: "Настройка специальных разделов"}}},
 	{Key: "registry", Label: "Реестр", Permissions: []permissionItem{{Key: "registry.view", Label: "Просмотр"}, {Key: "registry.create", Label: "Добавление строк"}, {Key: "registry.edit", Label: "Редактирование"}, {Key: "registry.delete", Label: "Удаление строк"}, {Key: "registry.split", Label: "Разбиение платежа"}, {Key: "registry.ai_scan", Label: "AI сканирование"}, {Key: "registry.import", Label: "Импорт Excel"}, {Key: "registry.export", Label: "Выгрузка Excel"}, {Key: "registry.undo", Label: "Отмена действий"}}},
+	{Key: "priority_center", Label: "Срочность и важность", Permissions: []permissionItem{{Key: "priority_center.view", Label: "Просмотр центра приоритетов"}}},
 	{Key: "credits", Label: "Кредиты и лизинги", Permissions: []permissionItem{{Key: "credits.view", Label: "Просмотр"}, {Key: "credits.approve", Label: "Изменение статуса и даты утверждения"}}},
 	{Key: "payments", Label: "К оплате", Permissions: []permissionItem{{Key: "payments.view", Label: "Просмотр"}, {Key: "payments.edit", Label: "Редактирование полей"}, {Key: "payments.print", Label: "Печать"}}},
 	{Key: "invoice_mail", Label: "Счета в бухгалтерию", Permissions: []permissionItem{{Key: "invoice_mail.send", Label: "Отправка счетов"}, {Key: "invoice_mail.inbox", Label: "Получение и обработка счетов бухгалтерией"}}},
@@ -52,6 +53,8 @@ func defaultPermissions(role string) permissionSet {
 	baseRole := role
 	if role == "accountant" {
 		baseRole = "editor"
+	} else if role == managerRole {
+		baseRole = "viewer"
 	}
 	value := permissionSet{
 		"dashboard.view": true, "my_invoices.view": true, "registry.view": true, "registry.export": true,
@@ -59,17 +62,22 @@ func defaultPermissions(role string) permissionSet {
 		"chat.view": true, "chat.send": true, "chat.create": true, "invoice_mail.send": true,
 	}
 	if baseRole == "editor" || baseRole == "admin" {
-		for _, key := range []string{"registry.create", "registry.edit", "registry.delete", "registry.split", "registry.ai_scan", "registry.undo", "credits.approve", "payments.edit", "references.view", "references.edit"} {
+		for _, key := range []string{"registry.create", "registry.edit", "registry.delete", "registry.split", "registry.ai_scan", "registry.undo", "payments.edit", "references.view", "references.edit"} {
 			value[key] = true
 		}
 	}
 	if baseRole == "admin" {
-		for _, key := range []string{"executive.view", "executive.approve", "executive.settings", "registry.import", "users.view", "users.manage", "audit.view"} {
+		for _, key := range []string{"executive.view", "executive.settings", "registry.import", "users.view", "users.manage", "audit.view", "priority_center.view"} {
 			value[key] = true
 		}
 	}
 	if role == "accountant" {
 		value["invoice_mail.inbox"] = true
+	}
+	if role == managerRole {
+		for _, key := range []string{"registry.edit", "executive.view", "executive.approve", "credits.view", "credits.approve", "payments.edit", "priority_center.view"} {
+			value[key] = true
+		}
 	}
 	return value
 }
@@ -88,11 +96,15 @@ func normalizePermissions(input permissionSet, role string) permissionSet {
 	if role != "accountant" {
 		delete(value, "invoice_mail.inbox")
 	}
+	if role != managerRole {
+		delete(value, "executive.approve")
+		delete(value, "credits.approve")
+	}
 	for child, parent := range map[string]string{
 		"executive.approve": "executive.view", "executive.settings": "executive.view",
 		"registry.create": "registry.view", "registry.edit": "registry.view", "registry.delete": "registry.view", "registry.ai_scan": "registry.view",
 		"registry.split": "registry.view", "registry.import": "registry.view", "registry.export": "registry.view", "registry.undo": "registry.view",
-		"credits.view": "registry.view", "credits.approve": "credits.view", "payments.edit": "payments.view", "payments.print": "payments.view",
+		"credits.view": "registry.view", "credits.approve": "credits.view", "priority_center.view": "registry.view", "payments.edit": "payments.view", "payments.print": "payments.view",
 		"chat.send": "chat.view", "chat.create": "chat.view", "invoice_mail.send": "chat.view", "invoice_mail.inbox": "chat.view", "references.edit": "references.view", "users.manage": "users.view",
 	} {
 		if value[child] {
@@ -128,16 +140,19 @@ func profileRoleFromState(raw []byte, fallback string) string {
 	if state.ProfileRole == "accountant" && fallback == "editor" {
 		return "accountant"
 	}
+	if state.ProfileRole == managerRole && fallback == "viewer" {
+		return managerRole
+	}
 	return fallback
 }
 
 func saveUserProfileRole(ctx context.Context, tx *sql.Tx, userID int64, role string) error {
-	if role == "accountant" {
+	if role == "accountant" || role == managerRole {
 		_, err := tx.ExecContext(ctx, `
 			INSERT INTO user_workspace_state(user_id,state,updated_at)
-			VALUES($1,jsonb_build_object('profile_role','accountant'),now())
+			VALUES($1,jsonb_build_object('profile_role',$2),now())
 			ON CONFLICT(user_id) DO UPDATE
-			SET state=jsonb_set(COALESCE(user_workspace_state.state,'{}'::jsonb),'{profile_role}','"accountant"'::jsonb,true),updated_at=now()`, userID)
+			SET state=jsonb_set(COALESCE(user_workspace_state.state,'{}'::jsonb),'{profile_role}',to_jsonb($2::text),true),updated_at=now()`, userID, role)
 		return err
 	}
 	_, err := tx.ExecContext(ctx, `UPDATE user_workspace_state SET state=state-'profile_role',updated_at=now() WHERE user_id=$1`, userID)
@@ -229,7 +244,7 @@ func (a *app) permissionCatalogHandler(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"groups": permissionCatalog,
 		"presets": map[string]permissionSet{
-			"admin": defaultPermissions("admin"), "accountant": defaultPermissions("accountant"), "editor": defaultPermissions("editor"), "viewer": defaultPermissions("viewer"),
+			"admin": defaultPermissions("admin"), "manager": defaultPermissions(managerRole), "accountant": defaultPermissions("accountant"), "editor": defaultPermissions("editor"), "viewer": defaultPermissions("viewer"),
 		},
 	})
 }

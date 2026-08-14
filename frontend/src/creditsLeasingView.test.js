@@ -76,7 +76,7 @@ test('credits approval date can be set or explicitly cleared', () => {
 
 test('credit day details wire editable status and approval date to the scoped endpoint', () => {
   const source = fs.readFileSync(new URL('./CreditsLeasing.jsx', import.meta.url), 'utf8')
-  assert.match(source, /credits\.approve/)
+  assert.match(source, /canApproveObligations\(user\)/)
   assert.match(source, /\/api\/reports\/credits-leasing\/obligations\/bulk/)
   assert.match(source, /optimisticItem = withDerivedObligationValues\(\{ \.\.\.item, \[field\]: value \}, field\)/)
   assert.match(source, /row\.id === item\.id \? optimisticItem : row/)

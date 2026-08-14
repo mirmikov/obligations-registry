@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { AlertTriangle, Check, CheckCircle2, ChevronDown, FileSearch, LoaderCircle, ScanLine, Search, Sparkles, X } from 'lucide-react'
 import { DateInput, money } from './App'
 import { requestBlob } from './api'
+import { approvalStatusOptions } from './permissions'
 import { buildCostCategoryResponsibleMap, buildCounterpartyDefermentMap, withReferenceDefaults } from './referenceDefaults'
 
 const automaticFields = [
@@ -9,7 +10,7 @@ const automaticFields = [
   ['amount', 'Сумма'], ['document_number', 'Документ'], ['document_date', 'Дата документа'],
 ]
 
-export default function AIScanModal({ state, references, onChange, onRetry, onClose, onSave }) {
+export default function AIScanModal({ state, references, approvalEditable = false, onChange, onRetry, onClose, onSave }) {
   const [activePage, setActivePage] = useState(state.items?.[0]?.page || 1)
   const items = state.items || []
   const active = items.find(item => item.page === activePage) || items[0]
@@ -66,9 +67,9 @@ export default function AIScanModal({ state, references, onChange, onRetry, onCl
                   <CustomSelect label="Статья затрат" value={active.values.cost_category} options={references.cost_categories} onChange={value => updateValue('cost_category', value)}/>
                   <ScanField label="Отсрочка, дней" type="number" min="0" step="1" value={active.values.deferment_days ?? ''} onChange={value => updateValue('deferment_days', value === '' ? null : Number(value))}/>
                   <ScanDateField label="Плановая оплата" value={active.values.planned_payment_date} onChange={value => updateValue('planned_payment_date', value)}/>
-                  <ScanDateField label="Дата утверждения" value={active.values.approval_date} onChange={value => updateValue('approval_date', value)}/>
+                  {approvalEditable ? <ScanDateField label="Дата утверждения" value={active.values.approval_date} onChange={value => updateValue('approval_date', value)}/> : <div className="ai-scan-field ai-scan-field-locked"><span>Дата утверждения</span><strong>Только руководитель или программист</strong></div>}
                   <ScanDateField label="Фактическая оплата" value={active.values.actual_payment_date} onChange={value => updateValue('actual_payment_date', value)}/>
-                  <CustomSelect label="Статус" value={active.values.status} options={references.statuses} onChange={value => updateValue('status', value)}/>
+                  <CustomSelect label="Статус" value={active.values.status} options={approvalStatusOptions(references.statuses, approvalEditable)} onChange={value => updateValue('status', value)}/>
                   <CustomSelect label="Срочность" value={active.values.urgency} options={references.urgencies} onChange={value => updateValue('urgency', value)}/>
                   <CustomSelect label="Ответственный" value={active.values.responsible} options={references.responsibles} onChange={value => updateValue('responsible', value)} allowCustom/>
                   <CustomSelect label="Приоритет" value={active.values.priority} options={references.priorities} onChange={value => updateValue('priority', value)}/>

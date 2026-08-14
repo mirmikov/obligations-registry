@@ -3,7 +3,7 @@ import { AlertTriangle, CalendarClock, Check, CheckCircle2, ChevronDown, Chevron
 import { request } from './api'
 import { DateInput, money, PageHeader, shortDate } from './App'
 import { CREDIT_APPROVAL_STATUSES, creditApprovalUpdatePayload, groupCreditSchedule, summarizeCreditDetails } from './creditsLeasingView'
-import { can } from './permissions'
+import { canApproveObligations } from './permissions'
 import { withDerivedObligationValues } from './obligationValues'
 import './creditsApproval.css'
 
@@ -157,7 +157,7 @@ export default function CreditsLeasing({ user, notify }) {
         {shownPeriods < schedule.length && <button className="schedule-more" onClick={() => setShownPeriods(value => value + 8)}>Показать ещё периоды</button>}
       </section>
     </>}
-    {details && <CreditDayDetails details={details} loading={detailsLoading} savingCells={detailsSaving} editable={can(user, 'credits.approve')} onCommit={saveDetailField} onClose={closeDetails}/>}
+    {details && <CreditDayDetails details={details} loading={detailsLoading} savingCells={detailsSaving} editable={canApproveObligations(user)} onCommit={saveDetailField} onClose={closeDetails}/>}
   </div>
 }
 
