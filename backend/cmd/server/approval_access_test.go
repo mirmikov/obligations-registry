@@ -7,8 +7,11 @@ import (
 )
 
 func TestApprovalRoleIsLimitedToManagerAndDeveloper(t *testing.T) {
-	if !isManager(authUser{Role: managerRole}) || !isManager(authUser{Role: "developer", IsDeveloper: true}) {
+	if !isManager(authUser{Role: managerRole, Permissions: permissionSet{"obligations.approve": true}}) || !isManager(authUser{Role: "developer", IsDeveloper: true}) {
 		t.Fatal("manager and developer must be able to approve")
+	}
+	if isManager(authUser{Role: managerRole}) {
+		t.Fatal("manager without the configurable approval permission was allowed")
 	}
 	for _, role := range []string{"admin", "accountant", "editor", "viewer"} {
 		if isManager(authUser{Role: role}) {
@@ -33,7 +36,7 @@ func TestApprovalGuardAllowsUnrelatedEditsButRejectsApproval(t *testing.T) {
 	if err := validateApprovalCreate(editor, obligationInput{Status: payableStatus}); err == nil {
 		t.Fatal("editor created a payable obligation")
 	}
-	if err := validateApprovalCreate(authUser{Role: managerRole}, obligationInput{ApprovalDate: "2026-08-14", Status: payableStatus}); err != nil {
+	if err := validateApprovalCreate(authUser{Role: managerRole, Permissions: permissionSet{"obligations.approve": true}}, obligationInput{ApprovalDate: "2026-08-14", Status: payableStatus}); err != nil {
 		t.Fatalf("manager approval was rejected: %v", err)
 	}
 	if err := validateApprovalCreate(authUser{Role: "developer", IsDeveloper: true}, obligationInput{ApprovalDate: "2026-08-14", Status: payableStatus}); err != nil {
@@ -71,6 +74,45 @@ func TestManagerProfileUsesViewerStorageRole(t *testing.T) {
 	}
 	if got := storedDatabaseRole(managerRole); got != "viewer" {
 		t.Fatalf("manager stored role = %q", got)
+	}
+}
+
+func TestProfileRoleUpsertCastsJSONArgument(t *testing.T) {
+	if !strings.Contains(profileRoleUpsertSQL, "jsonb_build_object('profile_role',$2::text)") || !strings.Contains(profileRoleUpsertSQL, "to_jsonb($2::text)") {
+		t.Fatalf("profile role query can leave PostgreSQL parameter type ambiguous: %s", profileRoleUpsertSQL)
+	}
+}
+
+func TestManagerPermissionAdministrationIsConfigurable(t *testing.T) {
+	manager := authUser{Role: managerRole, Permissions: permissionSet{"users.permissions": true}}
+	if !canConfigureUserPermissions(manager) {
+		t.Fatal("manager with users.permissions cannot configure access")
+	}
+	if canConfigureUserPermissions(authUser{Role: managerRole}) {
+		t.Fatal("manager without users.permissions can configure access")
+	}
+}
+
+func TestApprovalPermissionsRemainManagerOnlyAndConfigurable(t *testing.T) {
+	requested := permissionSet{
+		"obligations.approve":     true,
+		"executive.approve":       true,
+		"credits.approve":         true,
+		"priority_center.approve": true,
+	}
+	for _, role := range []string{"admin", "accountant", "editor", "viewer"} {
+		permissions := normalizePermissions(requested, role)
+		for key := range requested {
+			if permissions[key] {
+				t.Fatalf("%s retained manager-only permission %s", role, key)
+			}
+		}
+	}
+	manager := normalizePermissions(requested, managerRole)
+	for key := range requested {
+		if !manager[key] {
+			t.Fatalf("manager lost configured approval permission %s", key)
+		}
 	}
 }
 

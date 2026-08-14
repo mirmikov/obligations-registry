@@ -28,14 +28,15 @@ var permissionCatalog = []permissionGroup{
 	{Key: "dashboard", Label: "Общая сводка", Permissions: []permissionItem{{Key: "dashboard.view", Label: "Просмотр"}}},
 	{Key: "my_invoices", Label: "Мои счета", Permissions: []permissionItem{{Key: "my_invoices.view", Label: "Просмотр собственных счетов"}}},
 	{Key: "executive", Label: "Панель руководителя", Permissions: []permissionItem{{Key: "executive.view", Label: "Просмотр"}, {Key: "executive.approve", Label: "Изменение статуса и даты утверждения"}, {Key: "executive.settings", Label: "Настройка специальных разделов"}}},
-	{Key: "registry", Label: "Реестр", Permissions: []permissionItem{{Key: "registry.view", Label: "Просмотр"}, {Key: "registry.create", Label: "Добавление строк"}, {Key: "registry.edit", Label: "Редактирование"}, {Key: "registry.delete", Label: "Удаление строк"}, {Key: "registry.split", Label: "Разбиение платежа"}, {Key: "registry.ai_scan", Label: "AI сканирование"}, {Key: "registry.import", Label: "Импорт Excel"}, {Key: "registry.export", Label: "Выгрузка Excel"}, {Key: "registry.undo", Label: "Отмена действий"}}},
-	{Key: "priority_center", Label: "Срочность и важность", Permissions: []permissionItem{{Key: "priority_center.view", Label: "Просмотр центра приоритетов"}}},
+	{Key: "registry", Label: "Реестр", Permissions: []permissionItem{{Key: "registry.view", Label: "Просмотр"}, {Key: "registry.create", Label: "Добавление строк"}, {Key: "registry.edit", Label: "Редактирование"}, {Key: "registry.delete", Label: "Удаление строк"}, {Key: "registry.split", Label: "Разбиение платежа"}, {Key: "registry.ai_scan", Label: "AI сканирование"}, {Key: "registry.import", Label: "Импорт Excel"}, {Key: "registry.export", Label: "Выгрузка Excel"}, {Key: "registry.undo", Label: "Отмена действий"}, {Key: "obligations.approve", Label: "Установка статуса «К оплате» и даты утверждения"}}},
+	{Key: "priority_center", Label: "Срочные платежи", Permissions: []permissionItem{{Key: "priority_center.view", Label: "Просмотр срочных платежей"}, {Key: "priority_center.approve", Label: "Быстрое согласование платежей"}}},
 	{Key: "credits", Label: "Кредиты и лизинги", Permissions: []permissionItem{{Key: "credits.view", Label: "Просмотр"}, {Key: "credits.approve", Label: "Изменение статуса и даты утверждения"}}},
 	{Key: "payments", Label: "К оплате", Permissions: []permissionItem{{Key: "payments.view", Label: "Просмотр"}, {Key: "payments.edit", Label: "Редактирование полей"}, {Key: "payments.print", Label: "Печать"}}},
 	{Key: "invoice_mail", Label: "Счета в бухгалтерию", Permissions: []permissionItem{{Key: "invoice_mail.send", Label: "Отправка счетов"}, {Key: "invoice_mail.inbox", Label: "Получение и обработка счетов бухгалтерией"}}},
 	{Key: "chat", Label: "Чаты", Permissions: []permissionItem{{Key: "chat.view", Label: "Просмотр"}, {Key: "chat.send", Label: "Отправка сообщений"}, {Key: "chat.create", Label: "Создание личных чатов и групп"}}},
 	{Key: "references", Label: "Справочники", Permissions: []permissionItem{{Key: "references.view", Label: "Просмотр"}, {Key: "references.edit", Label: "Добавление, объединение и удаление значений"}}},
-	{Key: "users", Label: "Пользователи", Permissions: []permissionItem{{Key: "users.view", Label: "Просмотр"}, {Key: "users.manage", Label: "Создание и редактирование пользователей"}}},
+	{Key: "users", Label: "Пользователи", Permissions: []permissionItem{{Key: "users.view", Label: "Просмотр"}, {Key: "users.manage", Label: "Создание и редактирование пользователей"}, {Key: "users.permissions", Label: "Настройка ролей и индивидуальных прав"}}},
+	{Key: "system", Label: "Системные функции", Permissions: []permissionItem{{Key: "system.backup_status", Label: "Просмотр состояния резервного копирования"}, {Key: "system.maintenance", Label: "Баннер «Ведется обновление программы»"}, {Key: "desktop.broadcast", Label: "Рассылка уведомлений на компьютеры"}}},
 	{Key: "audit", Label: "Журнал действий", Permissions: []permissionItem{{Key: "audit.view", Label: "Просмотр"}}},
 }
 
@@ -50,11 +51,14 @@ func allPermissionKeys() map[string]bool {
 }
 
 func defaultPermissions(role string) permissionSet {
+	if role == managerRole {
+		value := fullPermissions()
+		delete(value, "invoice_mail.inbox")
+		return value
+	}
 	baseRole := role
 	if role == "accountant" {
 		baseRole = "editor"
-	} else if role == managerRole {
-		baseRole = "viewer"
 	}
 	value := permissionSet{
 		"dashboard.view": true, "my_invoices.view": true, "registry.view": true, "registry.export": true,
@@ -74,11 +78,6 @@ func defaultPermissions(role string) permissionSet {
 	if role == "accountant" {
 		value["invoice_mail.inbox"] = true
 	}
-	if role == managerRole {
-		for _, key := range []string{"registry.edit", "executive.view", "executive.approve", "credits.view", "credits.approve", "payments.edit", "priority_center.view"} {
-			value[key] = true
-		}
-	}
 	return value
 }
 
@@ -97,15 +96,18 @@ func normalizePermissions(input permissionSet, role string) permissionSet {
 		delete(value, "invoice_mail.inbox")
 	}
 	if role != managerRole {
+		delete(value, "obligations.approve")
 		delete(value, "executive.approve")
 		delete(value, "credits.approve")
+		delete(value, "priority_center.approve")
 	}
 	for child, parent := range map[string]string{
 		"executive.approve": "executive.view", "executive.settings": "executive.view",
 		"registry.create": "registry.view", "registry.edit": "registry.view", "registry.delete": "registry.view", "registry.ai_scan": "registry.view",
 		"registry.split": "registry.view", "registry.import": "registry.view", "registry.export": "registry.view", "registry.undo": "registry.view",
-		"credits.view": "registry.view", "credits.approve": "credits.view", "priority_center.view": "registry.view", "payments.edit": "payments.view", "payments.print": "payments.view",
+		"obligations.approve": "registry.view", "credits.view": "registry.view", "credits.approve": "credits.view", "priority_center.view": "registry.view", "priority_center.approve": "priority_center.view", "payments.edit": "payments.view", "payments.print": "payments.view",
 		"chat.send": "chat.view", "chat.create": "chat.view", "invoice_mail.send": "chat.view", "invoice_mail.inbox": "chat.view", "references.edit": "references.view", "users.manage": "users.view",
+		"users.permissions": "users.manage", "system.maintenance": "registry.view", "desktop.broadcast": "registry.view",
 	} {
 		if value[child] {
 			value[parent] = true
@@ -146,13 +148,15 @@ func profileRoleFromState(raw []byte, fallback string) string {
 	return fallback
 }
 
+const profileRoleUpsertSQL = `
+	INSERT INTO user_workspace_state(user_id,state,updated_at)
+	VALUES($1,jsonb_build_object('profile_role',$2::text),now())
+	ON CONFLICT(user_id) DO UPDATE
+	SET state=jsonb_set(COALESCE(user_workspace_state.state,'{}'::jsonb),'{profile_role}',to_jsonb($2::text),true),updated_at=now()`
+
 func saveUserProfileRole(ctx context.Context, tx *sql.Tx, userID int64, role string) error {
 	if role == "accountant" || role == managerRole {
-		_, err := tx.ExecContext(ctx, `
-			INSERT INTO user_workspace_state(user_id,state,updated_at)
-			VALUES($1,jsonb_build_object('profile_role',$2),now())
-			ON CONFLICT(user_id) DO UPDATE
-			SET state=jsonb_set(COALESCE(user_workspace_state.state,'{}'::jsonb),'{profile_role}',to_jsonb($2::text),true),updated_at=now()`, userID, role)
+		_, err := tx.ExecContext(ctx, profileRoleUpsertSQL, userID, role)
 		return err
 	}
 	_, err := tx.ExecContext(ctx, `UPDATE user_workspace_state SET state=state-'profile_role',updated_at=now() WHERE user_id=$1`, userID)
@@ -230,16 +234,6 @@ func (a *app) requireAnyPermission(permissions ...string) func(http.Handler) htt
 	}
 }
 
-func (a *app) requireDeveloper(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !currentUser(r).IsDeveloper {
-			fail(w, http.StatusForbidden, "Настройка доступна только программисту")
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
-}
-
 func (a *app) permissionCatalogHandler(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"groups": permissionCatalog,
@@ -279,7 +273,7 @@ func (a *app) getSystemStatus(w http.ResponseWriter, r *http.Request) {
 
 func systemStatusPayload(user authUser, maintenance maintenanceState, now time.Time) map[string]any {
 	value := map[string]any{"maintenance": maintenance}
-	if user.IsDeveloper {
+	if user.IsDeveloper || user.Permissions["system.backup_status"] {
 		value["backup"] = readBackupStatus(now)
 	}
 	return value

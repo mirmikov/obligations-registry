@@ -20,7 +20,7 @@ type obligationApprovalState struct {
 }
 
 func isManager(user authUser) bool {
-	return user.Role == managerRole || user.IsDeveloper
+	return user.IsDeveloper || user.Role == managerRole && user.Permissions["obligations.approve"]
 }
 
 func validateApprovalCreate(user authUser, input obligationInput) error {

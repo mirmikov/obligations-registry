@@ -99,7 +99,7 @@ export default function App() {
     const refreshStatus = () => request('/api/system/status').then(result => {
       if (active) {
         setMaintenance(result.maintenance || { active: false, message: 'Ведется обновление программы' })
-        if (user.is_developer) setBackupStatus(result.backup || null)
+        if (can(user, 'system.backup_status')) setBackupStatus(result.backup || null)
       }
     }).catch(() => {})
     refreshStatus()
@@ -142,7 +142,7 @@ export default function App() {
     executive: <ExecutiveDashboard key={`executive-${dataRevision}`} user={user} notify={notify} />,
     registry: <Registry key={`registry-${dataRevision}`} user={user} notify={notify} maintenance={maintenance} onToggleMaintenance={toggleMaintenance} initialAIScanBatch={aiScanTarget} onInitialAIScanApplied={() => setAIScanTarget(null)} />,
     'credits-leasing': <CreditsLeasing key={`credits-${dataRevision}`} user={user} notify={notify} />,
-    'priority-center': <PriorityCenter key={`priority-${dataRevision}`} notify={notify} />,
+    'priority-center': <PriorityCenter key={`priority-${dataRevision}`} user={user} notify={notify} />,
     payments: <Payments key={`payments-${dataRevision}`} user={user} notify={notify} />,
     chat: <Chat user={user} notify={notify} initialConversationID={chatTarget} onInitialConversationApplied={() => setChatTarget(null)} notificationPermission={chatNotifications.permission} onEnableNotifications={chatNotifications.requestPermission} />,
     references: <References key={`references-${dataRevision}`} user={user} notify={notify} />,
@@ -156,7 +156,7 @@ export default function App() {
       <div className="brand"><div className="brand-mark"><ReceiptText size={23}/></div><div><strong>ФинРеестр</strong><span>обязательства</span></div></div>
       <nav>{nav.filter(item => isAllowedNavItem(item, user)).map(item => item.children ? <div className={`nav-group ${registryOpen ? 'is-open' : ''}`} key={item.id}><div className="nav-parent"><button className={page === item.id ? 'active' : ''} onClick={() => setPage(item.id)} title={item.label}><item.icon size={19}/><span>{item.label}</span></button><button type="button" className="nav-expand" onClick={() => setRegistryOpen(value => !value)} title={registryOpen ? 'Свернуть раздел' : 'Развернуть раздел'} aria-label={registryOpen ? 'Свернуть раздел Реестр' : 'Развернуть раздел Реестр'} aria-expanded={registryOpen}><ChevronDown size={16}/></button></div>{registryOpen && <div className="nav-children">{item.children.filter(child => can(user, child.permission)).map(child => <button key={child.id} className={page === child.id ? 'active' : ''} onClick={() => setPage(child.id)} title={child.label}><child.icon size={17}/><span>{child.label}</span></button>)}</div>}</div> : <button key={item.id} className={page === item.id ? 'active' : ''} onClick={() => item.id === 'chat' ? openChat() : setPage(item.id)} title={item.label}><item.icon size={19}/><span>{item.label}</span>{item.id === 'chat' && chatNotifications.unread > 0 && <b className="nav-unread">{unreadLabel(chatNotifications.unread)}</b>}{item.id === 'payments' && <i/>}</button>)}</nav>
       <div className="sidebar-bottom">
-        {user.is_developer && <DeveloperBackupStatus status={backupStatus}/>}
+        {can(user, 'system.backup_status') && <DeveloperBackupStatus status={backupStatus}/>}
         <button type="button" className={`undo-action ${undoing ? 'is-loading' : ''}`} onClick={undoLast} disabled={!undoState.available || undoState.loading || undoing || !can(user, 'registry.undo')} title={undoState.available ? `Отменить: ${undoState.description}` : 'Нет действий для отмены'} aria-label={undoState.available ? `Отменить последнее действие: ${undoState.description}` : 'Нет действий для отмены'}><Undo2 size={18}/><span>{undoing ? 'Отменяем…' : 'Отменить действие'}</span>{undoState.remaining > 0 && <b>{Math.min(undoState.remaining, 500)}</b>}</button>
         <button type="button" className="theme-toggle" onClick={() => setTheme(value => value === 'dark' ? 'light' : 'dark')} title={theme === 'dark' ? 'Включить светлую тему' : 'Включить тёмную тему'} aria-label={theme === 'dark' ? 'Включить светлую тему' : 'Включить тёмную тему'} aria-pressed={theme === 'dark'}>{theme === 'dark' ? <Sun size={18}/> : <Moon size={18}/>}<span>{theme === 'dark' ? 'Светлая тема' : 'Тёмная тема'}</span></button>
         <button className="collapse" onClick={() => setCollapsed(v => !v)}>{collapsed ? <ChevronRight size={18}/> : <ChevronLeft size={18}/>}<span>Свернуть</span></button>

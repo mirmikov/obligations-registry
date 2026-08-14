@@ -307,12 +307,16 @@ func TestBackupStatusRecognizesSuccessfulBackupToday(t *testing.T) {
 	}
 }
 
-func TestBackupStatusIsReturnedOnlyToDeveloper(t *testing.T) {
+func TestBackupStatusRequiresDedicatedPermissionOrDeveloper(t *testing.T) {
 	ordinary := systemStatusPayload(authUser{IsDeveloper: false}, maintenanceState{}, time.Now())
 	if _, ok := ordinary["backup"]; ok {
 		t.Fatal("backup status was exposed to an ordinary user")
 	}
 	t.Setenv("BACKUP_STATUS_FILE", filepath.Join(t.TempDir(), "missing.json"))
+	manager := systemStatusPayload(authUser{Role: managerRole, Permissions: permissionSet{"system.backup_status": true}}, maintenanceState{}, time.Now())
+	if _, ok := manager["backup"]; !ok {
+		t.Fatal("backup status was not returned to a manager with the configured permission")
+	}
 	developer := systemStatusPayload(authUser{IsDeveloper: true}, maintenanceState{}, time.Now())
 	if _, ok := developer["backup"]; !ok {
 		t.Fatal("backup status was not returned to the developer")
@@ -827,8 +831,10 @@ func TestRolePermissionPresetsPreserveExistingAccess(t *testing.T) {
 	if editor["credits.approve"] || admin["credits.approve"] || admin["executive.approve"] {
 		t.Fatal("ordinary operational roles must not approve obligations")
 	}
-	if !manager["credits.approve"] || !manager["executive.approve"] {
-		t.Fatal("manager preset must include obligation approval")
+	for key := range allPermissionKeys() {
+		if key != "invoice_mail.inbox" && !manager[key] {
+			t.Fatalf("manager preset must start with developer-level configurable access, missing %q", key)
+		}
 	}
 }
 

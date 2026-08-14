@@ -9,7 +9,7 @@ export default function UsersPage({ user: currentUser, notify }) {
   const [catalog, setCatalog] = useState({ groups: [], presets: {} })
   const [editing, setEditing] = useState(null)
   const manageable = can(currentUser, 'users.manage')
-  const granular = Boolean(currentUser?.is_developer)
+  const granular = can(currentUser, 'users.permissions')
   const load = () => Promise.all([request('/api/users'), request('/api/permissions/catalog')])
     .then(([items, permissions]) => { setUsers(items); setCatalog(permissions) })
     .catch(error => notify(error.message, 'error'))
@@ -33,13 +33,13 @@ export default function UsersPage({ user: currentUser, notify }) {
     <PageHeader
       eyebrow="Доступ и роли"
       title="Пользователи"
-      subtitle={granular ? 'Программист настраивает доступ к каждому разделу и действию' : 'Просмотр пользователей и назначенных прав'}
+      subtitle={granular ? 'Настройка доступа к каждому разделу и действию' : 'Просмотр пользователей и назначенных прав'}
       actions={manageable && <button className="primary" onClick={() => setEditing({ permissions: catalog.presets.viewer || {} })}><Plus size={17}/>Добавить</button>}
     />
     <div className="role-cards">
       <RoleCard role="developer" icon={<Code2/>} title="Программист" text="Все права и управление индивидуальными доступами"/>
       <RoleCard role="admin" title="Администратор" text="Полный рабочий доступ без управления ролью программиста"/>
-      <RoleCard role="manager" icon={<Crown/>} title="Руководитель" text="Согласование обязательств и установка даты утверждения; программист сохраняет полный доступ"/>
+      <RoleCard role="manager" icon={<Crown/>} title="Руководитель" text="Полный стартовый доступ как у программиста, но каждое право можно настроить"/>
       <RoleCard role="accountant" icon={<Calculator/>} title="Бухгалтер" text="Получение и обработка счетов, отправленных сотрудниками"/>
       <RoleCard role="editor" title="Редактор" text="Работа с реестром, оплатами и справочниками"/>
       <RoleCard role="viewer" title="Зритель" text="Просмотр основных разделов без изменения данных"/>
@@ -143,4 +143,4 @@ function UserModal({ item, catalog, granular, onClose, onSave }) {
   </div>
 }
 
-function isApprovalPermission(key) { return key === 'executive.approve' || key === 'credits.approve' }
+function isApprovalPermission(key) { return key === 'obligations.approve' || key === 'executive.approve' || key === 'credits.approve' || key === 'priority_center.approve' }
