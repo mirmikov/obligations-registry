@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.IO.Compression;
 using System.Reflection;
+using System.Security.Authentication;
 using System.Security.Cryptography;
 
 namespace Mirt.RegistryNotifier;
@@ -26,7 +27,7 @@ internal sealed class AutoUpdater
         return IsNewerVersion(manifest.Version, CurrentVersion) ? manifest : null;
     }
 
-    public async Task PrepareAndLaunchAsync(DesktopAppUpdate manifest, IProgress<int>? progress, CancellationToken cancellationToken)
+    public async Task PrepareAndLaunchAsync(DesktopAppUpdate manifest, string serverUrl, string token, IProgress<int>? progress, CancellationToken cancellationToken)
     {
         ValidateManifest(manifest);
         var updateRoot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Mirt", "RegistryNotifier", "Updates", manifest.Version + "-" + Guid.NewGuid().ToString("N"));
@@ -35,7 +36,7 @@ internal sealed class AutoUpdater
         var extractedExecutable = Path.Combine(updateRoot, "RegistryNotifier.exe");
         try
         {
-            await DownloadAndVerifyAsync(manifest, packagePath, progress, cancellationToken);
+            await DownloadAndVerifyAsync(manifest, serverUrl, token, packagePath, progress, cancellationToken);
             ExtractExecutable(packagePath, extractedExecutable);
             var extractedVersion = ReadExecutableVersion(extractedExecutable);
             if (!VersionsEqual(extractedVersion, new Version(manifest.Version))) throw new ApiException("Версия приложения внутри пакета не совпадает с опубликованной версией.");
@@ -48,11 +49,39 @@ internal sealed class AutoUpdater
         }
     }
 
-    private async Task DownloadAndVerifyAsync(DesktopAppUpdate manifest, string packagePath, IProgress<int>? progress, CancellationToken cancellationToken)
+    private async Task DownloadAndVerifyAsync(DesktopAppUpdate manifest, string serverUrl, string token, string packagePath, IProgress<int>? progress, CancellationToken cancellationToken)
     {
-        using var client = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
+        var attempts = new List<(Uri Uri, string Token, string Name)>();
+        var lanUri = ResolveLanDownloadUri(serverUrl, manifest.LanDownloadUrl);
+        if (lanUri != null) attempts.Add((lanUri, token, "локальный сервер ФинРеестра"));
+        attempts.Add((new Uri(manifest.DownloadUrl), "", "резервный сервер GitHub"));
+        var failures = new List<string>();
+        foreach (var attempt in attempts)
+        {
+            try
+            {
+                try { File.Delete(packagePath); } catch (FileNotFoundException) { }
+                progress?.Report(0);
+                await DownloadAndVerifyFromAsync(manifest, attempt.Uri, attempt.Token, packagePath, progress, cancellationToken);
+                return;
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+            catch (Exception error)
+            {
+                failures.Add(attempt.Name + ": " + FriendlyDownloadError(error));
+            }
+        }
+        throw new ApiException("Не удалось скачать обновление. " + string.Join("; ", failures));
+    }
+
+    private static async Task DownloadAndVerifyFromAsync(DesktopAppUpdate manifest, Uri downloadUri, string token, string packagePath, IProgress<int>? progress, CancellationToken cancellationToken)
+    {
+        using var handler = new HttpClientHandler { SslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13 };
+        using var client = new HttpClient(handler) { Timeout = TimeSpan.FromMinutes(10) };
         client.DefaultRequestHeaders.UserAgent.ParseAdd("Mirt-RegistryNotifier/" + CurrentVersion.ToString(3));
-        using var response = await client.GetAsync(manifest.DownloadUrl, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        using var request = new HttpRequestMessage(HttpMethod.Get, downloadUri);
+        if (!string.IsNullOrEmpty(token)) request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+        using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         response.EnsureSuccessStatusCode();
         if (response.Content.Headers.ContentLength is long advertised && advertised != manifest.Size) throw new ApiException("Размер загружаемого обновления не совпадает с опубликованным.");
         await using var source = await response.Content.ReadAsStreamAsync(cancellationToken);
@@ -82,6 +111,7 @@ internal sealed class AutoUpdater
         var matches = archive.Entries.Where(entry => string.Equals(entry.FullName.Replace('\\', '/'), "RegistryNotifier.exe", StringComparison.OrdinalIgnoreCase)).ToArray();
         if (matches.Length != 1 || matches[0].Length < 1024 || matches[0].Length > MaximumPackageSize) throw new ApiException("Пакет обновления имеет некорректную структуру.");
         matches[0].ExtractToFile(destinationPath, false);
+        RemoveInternetZoneMark(destinationPath);
     }
 
     internal static bool IsNewerVersion(string candidate, Version current)
@@ -99,8 +129,31 @@ internal sealed class AutoUpdater
 
     internal static void ValidateManifest(DesktopAppUpdate manifest)
     {
-        if (!Version.TryParse(manifest.Version, out var parsed) || parsed.Build < 0 || parsed.Revision > 0 || !Uri.TryCreate(manifest.DownloadUrl, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps || !uri.Host.Equals("github.com", StringComparison.OrdinalIgnoreCase) || !uri.AbsolutePath.StartsWith("/mirmikov/obligations-registry/releases/download/", StringComparison.Ordinal) || manifest.Sha256.Length != 64 || !manifest.Sha256.All(Uri.IsHexDigit) || manifest.Size < 1 || manifest.Size > MaximumPackageSize)
+        if (!Version.TryParse(manifest.Version, out var parsed) || parsed.Build < 0 || parsed.Revision > 0 || !Uri.TryCreate(manifest.DownloadUrl, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps || !uri.Host.Equals("github.com", StringComparison.OrdinalIgnoreCase) || !uri.AbsolutePath.StartsWith("/mirmikov/obligations-registry/releases/download/", StringComparison.Ordinal) || (!string.IsNullOrEmpty(manifest.LanDownloadUrl) && manifest.LanDownloadUrl != "/api/desktop/app/package") || manifest.Sha256.Length != 64 || !manifest.Sha256.All(Uri.IsHexDigit) || manifest.Size < 1 || manifest.Size > MaximumPackageSize)
             throw new ApiException("Сервер вернул небезопасное описание обновления.");
+    }
+
+    internal static Uri? ResolveLanDownloadUri(string serverUrl, string lanDownloadUrl)
+    {
+        if (lanDownloadUrl != "/api/desktop/app/package") return null;
+        return new Uri(ApiClient.ValidateServerUrl(serverUrl), lanDownloadUrl);
+    }
+
+    internal static void RemoveInternetZoneMark(string executablePath)
+    {
+        try { File.Delete(executablePath + ":Zone.Identifier"); }
+        catch (FileNotFoundException) { }
+        catch (DirectoryNotFoundException) { }
+        catch (NotSupportedException) { }
+    }
+
+    private static string FriendlyDownloadError(Exception error)
+    {
+        if (error is HttpRequestException requestError && requestError.StatusCode.HasValue)
+            return $"сервер ответил кодом {(int)requestError.StatusCode.Value}";
+        if (error is HttpRequestException)
+            return "нет защищённого сетевого соединения";
+        return error.Message;
     }
 
     internal static string QuotePowerShell(string value) => "'" + value.Replace("'", "''") + "'";
@@ -124,9 +177,11 @@ internal sealed class AutoUpdater
             "    Wait-Process -Id $waitForProcessId -Timeout 60 -ErrorAction SilentlyContinue",
             "    if (Get-Process -Id $waitForProcessId -ErrorAction SilentlyContinue) { throw 'The previous application process is still running.' }",
             "    Copy-Item -LiteralPath $source -Destination $staged -Force",
+            "    Unblock-File -LiteralPath $staged -ErrorAction SilentlyContinue",
             "    if (Test-Path -LiteralPath $backup) { Remove-Item -LiteralPath $backup -Force }",
             "    Move-Item -LiteralPath $target -Destination $backup -Force",
             "    Move-Item -LiteralPath $staged -Destination $target -Force",
+            "    Unblock-File -LiteralPath $target -ErrorAction SilentlyContinue",
             "    Start-Process -FilePath $target -ArgumentList @('--after-update', " + QuotePowerShell(version) + ")",
             "    Start-Sleep -Seconds 2",
             "    if (Test-Path -LiteralPath $backup) { Remove-Item -LiteralPath $backup -Force }",

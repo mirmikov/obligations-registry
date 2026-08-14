@@ -66,6 +66,9 @@ internal sealed class DesktopAppUpdate
     [JsonPropertyName("download_url")]
     public string DownloadUrl { get; set; } = "";
 
+    [JsonPropertyName("lan_download_url")]
+    public string LanDownloadUrl { get; set; } = "";
+
     [JsonPropertyName("sha256")]
     public string Sha256 { get; set; } = "";
 

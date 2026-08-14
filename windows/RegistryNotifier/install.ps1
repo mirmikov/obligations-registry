@@ -16,8 +16,11 @@ if ($running.Count -gt 0) {
         try { [void]$process.WaitForExit(10000) } catch { }
     }
 }
-Copy-Item -Path (Join-Path $source "RegistryNotifier.exe") -Destination $target -Force
+$sourceExecutable = Join-Path $source "RegistryNotifier.exe"
+Unblock-File -LiteralPath $sourceExecutable -ErrorAction SilentlyContinue
+Copy-Item -LiteralPath $sourceExecutable -Destination $target -Force
 $executable = Join-Path $target "RegistryNotifier.exe"
+Unblock-File -LiteralPath $executable -ErrorAction SilentlyContinue
 $contextMenu = Start-Process -FilePath $executable -ArgumentList "--install-context-menu" -Wait -PassThru
 if ($contextMenu.ExitCode -ne 0) { throw "Failed to install the Explorer AI scan command." }
 $runKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"

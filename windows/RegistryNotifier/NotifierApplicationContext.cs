@@ -239,7 +239,7 @@ internal sealed class NotifierApplicationContext : ApplicationContext
         try
         {
             var progress = new Progress<int>(value => _updateForm?.ReportProgress(value));
-            await _autoUpdater.PrepareAndLaunchAsync(update, progress, _shutdown.Token);
+            await _autoUpdater.PrepareAndLaunchAsync(update, _settings.ServerUrl, _token, progress, _shutdown.Token);
             Exit();
         }
         catch (Exception error)

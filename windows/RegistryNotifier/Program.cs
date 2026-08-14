@@ -51,7 +51,7 @@ internal static class Program
             var updater = new AutoUpdater(api, store);
             var update = updater.CheckAsync(settings.ServerUrl, token, CancellationToken.None).GetAwaiter().GetResult();
             if (update == null) return 2;
-            updater.PrepareAndLaunchAsync(update, null, CancellationToken.None).GetAwaiter().GetResult();
+            updater.PrepareAndLaunchAsync(update, settings.ServerUrl, token, null, CancellationToken.None).GetAwaiter().GetResult();
             return 0;
         }
         catch (Exception error)
@@ -81,6 +81,8 @@ internal static class SelfTest
             Require(AutoUpdater.VersionsEqual(new Version(1, 2, 0, 0), new Version(1, 2, 0)), "release version equality");
             Require(AutoUpdater.VersionsEqual(AutoUpdater.ReadExecutableVersion(Application.ExecutablePath), AutoUpdater.CurrentVersion), "single-file executable version inspection");
             Require(AutoUpdater.QuotePowerShell("C:\\O'Brien\\app.exe") == "'C:\\O''Brien\\app.exe'", "PowerShell path quoting");
+            Require(AutoUpdater.ResolveLanDownloadUri("http://192.168.1.187:8088", "/api/desktop/app/package")?.AbsoluteUri == "http://192.168.1.187:8088/api/desktop/app/package", "same-server update package URL");
+            Require(AutoUpdater.ResolveLanDownloadUri("http://192.168.1.187:8088", "https://evil.invalid/app.zip") == null, "external update package rejection");
             Require(NotifierApplicationContext.CalculateRetryDelay(1) == TimeSpan.FromSeconds(5) && NotifierApplicationContext.CalculateRetryDelay(3) == TimeSpan.FromSeconds(20) && NotifierApplicationContext.CalculateRetryDelay(20) == TimeSpan.FromSeconds(60), "bounded reconnect backoff");
             var notificationHistory = Enumerable.Range(1, 120).Select(id => new DesktopNotification { Id = id, Title = $"Уведомление {id}", Body = "Текст", CreatedAt = DateTimeOffset.Now }).ToList();
             notificationHistory.Add(new DesktopNotification { Id = 120, Title = "Обновлённое уведомление", Body = "Текст", CreatedAt = DateTimeOffset.Now });
@@ -104,10 +106,26 @@ internal static class SelfTest
             {
                 try { Directory.Delete(historyTestDirectory, true); } catch { }
             }
-            AutoUpdater.ValidateManifest(new DesktopAppUpdate { Version = "1.2.0", DownloadUrl = "https://github.com/mirmikov/obligations-registry/releases/download/test/RegistryNotifier-win-x64.zip", Sha256 = new string('a', 64), Size = 1024 });
+            AutoUpdater.ValidateManifest(new DesktopAppUpdate { Version = "1.2.0", DownloadUrl = "https://github.com/mirmikov/obligations-registry/releases/download/test/RegistryNotifier-win-x64.zip", LanDownloadUrl = "/api/desktop/app/package", Sha256 = new string('a', 64), Size = 1024 });
             var unsafeRejected = false;
             try { AutoUpdater.ValidateManifest(new DesktopAppUpdate { Version = "1.2.0", DownloadUrl = "http://example.org/app.zip", Sha256 = new string('a', 64), Size = 1024 }); } catch (ApiException) { unsafeRejected = true; }
             Require(unsafeRejected, "unsafe update manifest rejection");
+            var unsafeLanRejected = false;
+            try { AutoUpdater.ValidateManifest(new DesktopAppUpdate { Version = "1.2.0", DownloadUrl = "https://github.com/mirmikov/obligations-registry/releases/download/test/RegistryNotifier-win-x64.zip", LanDownloadUrl = "https://evil.invalid/app.zip", Sha256 = new string('a', 64), Size = 1024 }); } catch (ApiException) { unsafeLanRejected = true; }
+            Require(unsafeLanRejected, "unsafe LAN update URL rejection");
+            var zoneTestFile = Path.Combine(Path.GetTempPath(), "RegistryNotifierZone-" + Guid.NewGuid().ToString("N") + ".exe");
+            try
+            {
+                File.WriteAllText(zoneTestFile, "test");
+                File.WriteAllText(zoneTestFile + ":Zone.Identifier", "[ZoneTransfer]\r\nZoneId=3\r\n");
+                AutoUpdater.RemoveInternetZoneMark(zoneTestFile);
+                Require(!File.Exists(zoneTestFile + ":Zone.Identifier"), "downloaded-file security mark removal");
+            }
+            finally
+            {
+                try { File.Delete(zoneTestFile + ":Zone.Identifier"); } catch { }
+                try { File.Delete(zoneTestFile); } catch { }
+            }
             var protectedValue = DataProtection.Protect("desktop-token-test");
             Require(protectedValue != "desktop-token-test" && DataProtection.Unprotect(protectedValue) == "desktop-token-test", "Windows DPAPI round-trip");
             checks.Add("PASS: URL validation, action isolation, update safety, protected notification history, reconnect backoff and DPAPI");
