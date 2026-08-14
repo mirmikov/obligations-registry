@@ -4,7 +4,7 @@ import { download, request } from './api'
 import { DateInput, money, PageHeader, shortDate } from './App'
 import { DuplicateObligationModal, InlineCellSelect, normalizeCellValue, ObligationHistoryModal, ObligationScanControl, sameCellValue, stripObligation } from './Registry'
 import { localTodayISO, paymentColumns, paymentScreenColumns } from './paymentsView'
-import { can } from './permissions'
+import { approvalStatusOptions, can, canApproveObligations } from './permissions'
 import { withDerivedObligationValues } from './obligationValues'
 import { buildCostCategoryResponsibleMap, withDefaultResponsible } from './referenceDefaults'
 
@@ -79,21 +79,22 @@ export default function Payments({ user, notify }) {
   }
   useEffect(() => { request('/api/references').then(setRefs).catch(e => notify(e.message,'error')) }, [])
   useEffect(() => { load() }, [query])
+  const approvalEditable = canApproveObligations(user)
   return <div className="page payments-page">
     <PageHeader eyebrow="Платёжный реестр" title="Обязательства к оплате" subtitle="Согласованные платежи по выбранным условиям" actions={<><button className="secondary" onClick={load}><RefreshCw size={17}/>Обновить</button>{can(user, 'payments.print') && <button className="secondary" onClick={() => window.print()} disabled={loading}><Printer size={17}/>Печать</button>}{can(user, 'registry.export') && <button className="primary" onClick={() => download(`/api/obligations/export.xlsx?status=${encodeURIComponent('К оплате')}&${query}`, 'К оплате.xlsx')}><Download size={17}/>Выгрузить</button>}</>}/>
     <section className="payment-toolbar"><label><span>Дата утверждения</span><DateInput value={filters.approval_date} onChange={value => setFilters({...filters,approval_date:value})} aria-label="Дата утверждения"/></label><label><span>Юридическое лицо</span><select value={filters.legal_entity} onChange={e => setFilters({...filters,legal_entity:e.target.value})}><option value="">Все юрлица</option>{(refs.legal_entities||[]).map(x=><option key={x.id} value={x.value}>{x.value}</option>)}</select></label><label><span>Признак учёта</span><select value={filters.account_type} onChange={e => setFilters({...filters,account_type:e.target.value})}><option value="">Все</option>{(refs.account_types||[]).map(x=><option key={x.id} value={x.value}>{x.value}</option>)}</select></label></section>
     <section className="payment-summary"><div><CalendarDays/><span>Количество платежей<strong>{data.count}</strong></span></div><div><span>Общая сумма<strong>{money(data.amount)}</strong></span></div></section>
-    <section className="payment-list panel"><div className="payment-head">{paymentScreenColumns.map(column => <span key={column.key}>{column.label}</span>)}</div>{loading ? <div className="loading-line"/> : data.items.length === 0 ? <div className="empty-state"><CalendarDays size={28}/><strong>По выбранным условиям платежей нет</strong><span>Выберите другую дату или юридическое лицо</span></div> : data.items.map(item => <PaymentRow key={item.id} item={item} refs={refs} editable={can(user, 'payments.edit')} savingCells={savingCells} onSave={saveField} onOpenDetails={() => setDetailItem(item)} notify={notify}/>)}</section>
+    <section className="payment-list panel"><div className="payment-head">{paymentScreenColumns.map(column => <span key={column.key}>{column.label}</span>)}</div>{loading ? <div className="loading-line"/> : data.items.length === 0 ? <div className="empty-state"><CalendarDays size={28}/><strong>По выбранным условиям платежей нет</strong><span>Выберите другую дату или юридическое лицо</span></div> : data.items.map(item => <PaymentRow key={item.id} item={item} refs={refs} editable={can(user, 'payments.edit')} approvalEditable={approvalEditable} savingCells={savingCells} onSave={saveField} onOpenDetails={() => setDetailItem(item)} notify={notify}/>)}</section>
     <PaymentPrintReport data={data} filters={filters}/>
     {detailItem && <ObligationHistoryModal item={detailItem} notify={notify} onClose={() => setDetailItem(null)}/>}
     {duplicatePrompt && <DuplicateObligationModal conflict={duplicatePrompt} onCancel={() => finishDuplicatePrompt(false)} onConfirm={() => finishDuplicatePrompt(true)}/>}
   </div>
 }
 
-function PaymentRow({ item, refs, editable, savingCells, onSave, onOpenDetails, notify }) {
+function PaymentRow({ item, refs, editable, approvalEditable, savingCells, onSave, onOpenDetails, notify }) {
   return <div className={`payment-row ${item.urgency === 'Критическая' ? 'critical' : ''}`}>
     {paymentScreenColumns.map(column => <span key={column.key} className="payment-interactive-cell">
-      <PaymentEditableCell item={item} column={column} refs={refs} editable={editable} saving={savingCells.has(`${item.id}:${column.key}`)} onSave={onSave}/>
+      <PaymentEditableCell item={item} column={column} refs={refs} editable={editable} approvalEditable={approvalEditable} saving={savingCells.has(`${item.id}:${column.key}`)} onSave={onSave}/>
     </span>)}
     <div className="payment-row-actions">
       {item.has_scan && <span className="payment-scan-control"><ObligationScanControl item={item} editable={false} notify={notify} onChanged={() => {}} scanURL={`/api/payment-register/${item.id}/scan`}/></span>}
@@ -102,10 +103,10 @@ function PaymentRow({ item, refs, editable, savingCells, onSave, onOpenDetails, 
   </div>
 }
 
-function PaymentEditableCell({ item, column, refs, editable, saving, onSave }) {
+function PaymentEditableCell({ item, column, refs, editable, approvalEditable, saving, onSave }) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState('')
-  const options = paymentCellOptions(refs, column.key)
+  const options = paymentCellOptions(refs, column.key, approvalEditable)
   const type = paymentCellType(column.key)
   const begin = () => {
     if (!editable || saving) return
@@ -134,8 +135,9 @@ function paymentCellType(key) {
   return 'text'
 }
 
-function paymentCellOptions(refs, key) {
-  return ({ account_type: refs.account_types, legal_entity: refs.legal_entities, counterparty: refs.counterparties, status: refs.statuses }[key] || null)
+function paymentCellOptions(refs, key, approvalEditable) {
+  if (key === 'status') return approvalStatusOptions(refs.statuses, approvalEditable)
+  return ({ account_type: refs.account_types, legal_entity: refs.legal_entities, counterparty: refs.counterparties }[key] || null)
 }
 
 function PaymentPrintReport({ data, filters }) {

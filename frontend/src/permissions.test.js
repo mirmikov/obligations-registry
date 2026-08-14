@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { can, pagePermissions } from './permissions.js'
+import { approvalStatusOptions, can, canApproveObligations, pagePermissions } from './permissions.js'
 
 const app = readFileSync(new URL('./App.jsx', import.meta.url), 'utf8')
 const registry = readFileSync(new URL('./Registry.jsx', import.meta.url), 'utf8')
@@ -18,6 +18,15 @@ test('ordinary users receive only explicitly enabled permissions', () => {
   assert.equal(can(user, 'registry.delete'), false)
 })
 
+test('only manager and protected developer can approve obligations', () => {
+  assert.equal(canApproveObligations({ role: 'manager' }), true)
+  assert.equal(canApproveObligations({ role: 'developer', is_developer: true }), true)
+  for (const role of ['admin', 'accountant', 'editor', 'viewer']) assert.equal(canApproveObligations({ role }), false)
+  const options = [{ value: 'Зарегистрирован' }, { value: 'К оплате' }, { value: 'Оплачено' }]
+  assert.deepEqual(approvalStatusOptions(options, { role: 'editor' }).map(item => item.value), ['Зарегистрирован', 'Оплачено'])
+  assert.equal(approvalStatusOptions(options, { role: 'manager' }).length, 3)
+})
+
 test('navigation, registry actions and access editor are permission driven', () => {
   assert.match(app, /permission: 'executive\.view'/)
   assert.match(app, /permission: 'my_invoices\.view'/)
@@ -27,8 +36,10 @@ test('navigation, registry actions and access editor are permission driven', () 
   assert.match(users, /Индивидуальные права/)
   assert.match(users, /form\.is_developer/)
   assert.match(users, /RoleCard role="accountant"/)
+  assert.match(users, /RoleCard role="manager"/)
   assert.match(users, /option value="accountant"/)
   assert.match(app, /accountant: 'Бухгалтер'/)
+  assert.match(app, /manager: 'Руководитель'/)
 })
 
 test('maintenance banner is non-blocking and controlled from registry', () => {

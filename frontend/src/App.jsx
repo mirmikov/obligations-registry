@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { BarChart3, BellRing, BookOpen, ChartNoAxesCombined, ChevronDown, ChevronLeft, ChevronRight, CircleDollarSign, DatabaseBackup, FileCheck2, FileClock, Landmark, LogOut, Maximize2, Menu, MessageCircle, Minus, Moon, ReceiptText, Settings, ShieldCheck, Sun, Undo2, Users, X } from 'lucide-react'
+import { BarChart3, BellRing, BookOpen, ChartNoAxesCombined, ChevronDown, ChevronLeft, ChevronRight, CircleDollarSign, DatabaseBackup, FileCheck2, FileClock, Gauge, Landmark, LogOut, Maximize2, Menu, MessageCircle, Minus, Moon, ReceiptText, Settings, ShieldCheck, Sun, Undo2, Users, X } from 'lucide-react'
 import { request } from './api'
 import Dashboard from './Dashboard'
 import Registry from './Registry'
@@ -12,6 +12,7 @@ import CreditsLeasing from './CreditsLeasing'
 import Chat from './Chat'
 import ExecutiveDashboard from './ExecutiveDashboard'
 import MyInvoices from './MyInvoices'
+import PriorityCenter from './PriorityCenter'
 import useChatNotifications from './useChatNotifications'
 import { can, firstAllowedPage, pagePermissions } from './permissions'
 import { applyTheme, resolveTheme, THEME_STORAGE_KEY } from './theme'
@@ -22,7 +23,7 @@ const nav = [
   { id: 'dashboard', label: 'Сводка', icon: BarChart3, permission: 'dashboard.view' },
   { id: 'my-invoices', label: 'Мои счета', icon: FileCheck2, permission: 'my_invoices.view' },
   { id: 'executive', label: 'Панель руководителя', icon: ChartNoAxesCombined, permission: 'executive.view' },
-  { id: 'registry', label: 'Реестр', icon: BookOpen, permission: 'registry.view', children: [{ id: 'credits-leasing', label: 'Кредиты и лизинги', icon: Landmark, permission: 'credits.view' }] },
+  { id: 'registry', label: 'Реестр', icon: BookOpen, permission: 'registry.view', children: [{ id: 'credits-leasing', label: 'Кредиты и лизинги', icon: Landmark, permission: 'credits.view' }, { id: 'priority-center', label: 'Срочность и важность', icon: Gauge, permission: 'priority_center.view' }] },
   { id: 'payments', label: 'К оплате', icon: CircleDollarSign, permission: 'payments.view' },
   { id: 'chat', label: 'Чаты', icon: MessageCircle, permission: 'chat.view' },
   { id: 'references', label: 'Справочники', icon: Settings, permission: 'references.view' },
@@ -55,7 +56,7 @@ export default function App() {
 	const requestedPage = desktopTarget?.page
 	const nextPage = requestedPage && isAllowedPage(requestedPage, nextUser) ? requestedPage : (isAllowedPage(state.page, nextUser) ? state.page : firstAllowedPage(nextUser))
     setPage(nextPage)
-    setRegistryOpen(nextPage === 'credits-leasing')
+    setRegistryOpen(['credits-leasing', 'priority-center'].includes(nextPage))
 	if (nextPage === 'chat' && desktopTarget?.conversationID) setChatTarget(desktopTarget.conversationID)
 	if (nextPage === 'registry' && desktopTarget?.aiScanBatch) setAIScanTarget(desktopTarget.aiScanBatch)
 	if (desktopTarget) clearDesktopNotificationTarget()
@@ -141,6 +142,7 @@ export default function App() {
     executive: <ExecutiveDashboard key={`executive-${dataRevision}`} user={user} notify={notify} />,
     registry: <Registry key={`registry-${dataRevision}`} user={user} notify={notify} maintenance={maintenance} onToggleMaintenance={toggleMaintenance} initialAIScanBatch={aiScanTarget} onInitialAIScanApplied={() => setAIScanTarget(null)} />,
     'credits-leasing': <CreditsLeasing key={`credits-${dataRevision}`} user={user} notify={notify} />,
+    'priority-center': <PriorityCenter key={`priority-${dataRevision}`} notify={notify} />,
     payments: <Payments key={`payments-${dataRevision}`} user={user} notify={notify} />,
     chat: <Chat user={user} notify={notify} initialConversationID={chatTarget} onInitialConversationApplied={() => setChatTarget(null)} notificationPermission={chatNotifications.permission} onEnableNotifications={chatNotifications.requestPermission} />,
     references: <References key={`references-${dataRevision}`} user={user} notify={notify} />,
@@ -227,7 +229,7 @@ function Login({ onLogin }) {
 export function PageHeader({ eyebrow, title, subtitle, actions }) { return <header className="page-header"><div><p className="eyebrow">{eyebrow}</p><h1>{title}</h1>{subtitle && <span>{subtitle}</span>}</div>{actions && <div className="header-actions">{actions}</div>}</header> }
 function isAllowedNavItem(item, user) { return can(user, item.permission) || item.children?.some(child => can(user, child.permission)) }
 function isAllowedPage(page, user) { return can(user, pagePermissions[page]) }
-export const roleLabel = role => ({ developer: 'Программист', admin: 'Администратор', accountant: 'Бухгалтер', editor: 'Редактор', viewer: 'Зритель' }[role] || role)
+export const roleLabel = role => ({ developer: 'Программист', admin: 'Администратор', manager: 'Руководитель', accountant: 'Бухгалтер', editor: 'Редактор', viewer: 'Зритель' }[role] || role)
 export const money = value => new Intl.NumberFormat('ru-RU', {
   style: 'currency',
   currency: 'RUB',

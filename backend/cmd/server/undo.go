@@ -177,6 +177,12 @@ func (a *app) undoLast(w http.ResponseWriter, r *http.Request) {
 		fail(w, 500, "История отмены повреждена")
 		return
 	}
+	if payload.Obligations != nil && !isManager(user) {
+		if err = validateApprovalUndo(user, payload.Obligations); err != nil {
+			fail(w, http.StatusForbidden, err.Error())
+			return
+		}
+	}
 	if payload.UserAccess != nil {
 		if err = lockAccountingMailboxRouting(r.Context(), tx); err != nil {
 			fail(w, 500, "Не удалось зафиксировать настройки бухгалтерии для отмены")
@@ -236,6 +242,41 @@ func (a *app) undoLast(w http.ResponseWriter, r *http.Request) {
 	}
 	a.audit(r.Context(), user.ID, "undo", "operation", &id, map[string]any{"action": action, "description": description})
 	writeJSON(w, 200, map[string]any{"undone": true, "id": id, "description": description})
+}
+
+func validateApprovalUndo(user authUser, change *undoChange) error {
+	if isManager(user) || change == nil {
+		return nil
+	}
+	type row struct {
+		ID int64 `json:"id"`
+		obligationApprovalState
+	}
+	var before, after []row
+	if err := json.Unmarshal(change.Before, &before); err != nil {
+		return err
+	}
+	if err := json.Unmarshal(change.After, &after); err != nil {
+		return err
+	}
+	current := make(map[int64]obligationApprovalState, len(after))
+	for _, item := range after {
+		current[item.ID] = item.obligationApprovalState
+	}
+	for _, target := range before {
+		previous, exists := current[target.ID]
+		if !exists {
+			input := obligationInput{ApprovalDate: target.ApprovalDate, Status: target.Status}
+			if err := validateApprovalCreate(user, input); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := validateApprovalUpdate(user, previous, obligationInput{ApprovalDate: target.ApprovalDate, Status: target.Status}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func restoreObligations(ctx context.Context, tx *sql.Tx, change *undoChange) error {

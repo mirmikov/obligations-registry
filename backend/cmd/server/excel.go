@@ -191,6 +191,10 @@ func (a *app) importXLSX(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if id == nil {
+			if approvalErr := validateApprovalCreate(user, input); approvalErr != nil {
+				fail(w, http.StatusForbidden, fmt.Sprintf("Ошибка в строке %d: %v", index+2, approvalErr))
+				return
+			}
 			duplicates, duplicateErr := findDuplicateObligations(r.Context(), tx, input, 0, "")
 			if duplicateErr != nil {
 				fail(w, 500, fmt.Sprintf("Не удалось проверить строку %d на дублирование", index+2))
@@ -214,6 +218,15 @@ func (a *app) importXLSX(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			beforeRows = append(beforeRows, beforeRow)
+			previous, approvalErr := approvalStateFromSnapshot(beforeRow)
+			if approvalErr != nil {
+				fail(w, 500, fmt.Sprintf("Не удалось проверить согласование в строке %d", index+2))
+				return
+			}
+			if approvalErr = validateApprovalUpdate(user, previous, input); approvalErr != nil {
+				fail(w, http.StatusForbidden, fmt.Sprintf("Ошибка в строке %d: %v", index+2, approvalErr))
+				return
+			}
 			touchedIDs = append(touchedIDs, *id)
 			existing, splitGroupID, identityErr := loadDuplicateIdentity(r.Context(), tx, *id)
 			if identityErr != nil {
