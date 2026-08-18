@@ -613,11 +613,18 @@ func readGroups(rows interface {
 	return result
 }
 
+const paymentRegisterDefaultStatusPredicate = "BTRIM(COALESCE(status,'')) IN ('К оплате','Оплачено')"
+
+func paymentRegisterStatusWhere(where, requestedStatus string) string {
+	if strings.TrimSpace(requestedStatus) == "" {
+		return where + " AND " + paymentRegisterDefaultStatusPredicate
+	}
+	return where
+}
+
 func (a *app) paymentRegister(w http.ResponseWriter, r *http.Request) {
 	where, args := buildFilters(r, 1)
-	if r.URL.Query().Get("status") == "" {
-		where += " AND status='К оплате'"
-	}
+	where = paymentRegisterStatusWhere(where, r.URL.Query().Get("status"))
 	rows, err := a.db.QueryContext(r.Context(), "SELECT "+obligationColumns+" FROM obligations WHERE "+where+" ORDER BY urgency DESC,planned_payment_date,id", args...)
 	if err != nil {
 		fail(w, 500, "Не удалось сформировать реестр к оплате")

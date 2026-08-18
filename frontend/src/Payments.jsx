@@ -3,10 +3,11 @@ import { CalendarDays, ChevronDown, Download, ExternalLink, Printer, RefreshCw }
 import { download, request } from './api'
 import { DateInput, money, PageHeader, shortDate } from './App'
 import { DuplicateObligationModal, InlineCellSelect, normalizeCellValue, ObligationHistoryModal, ObligationScanControl, sameCellValue, stripObligation } from './Registry'
-import { localTodayISO, paymentColumns, paymentScreenColumns } from './paymentsView'
+import { localTodayISO, paymentColumns, paymentRowClassName, paymentScreenColumns } from './paymentsView'
 import { approvalStatusOptions, can, canApproveObligations } from './permissions'
 import { withDerivedObligationValues } from './obligationValues'
 import { buildCostCategoryResponsibleMap, withDefaultResponsible } from './referenceDefaults'
+import './paymentsPaid.css'
 
 export default function Payments({ user, notify }) {
   const [refs, setRefs] = useState({})
@@ -92,7 +93,7 @@ export default function Payments({ user, notify }) {
 }
 
 function PaymentRow({ item, refs, editable, approvalEditable, savingCells, onSave, onOpenDetails, notify }) {
-  return <div className={`payment-row ${item.urgency === 'Критическая' ? 'critical' : ''}`}>
+  return <div className={paymentRowClassName(item)}>
     {paymentScreenColumns.map(column => <span key={column.key} className="payment-interactive-cell">
       <PaymentEditableCell item={item} column={column} refs={refs} editable={editable} approvalEditable={approvalEditable} saving={savingCells.has(`${item.id}:${column.key}`)} onSave={onSave}/>
     </span>)}

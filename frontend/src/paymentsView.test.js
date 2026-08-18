@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { localTodayISO, paymentColumns, paymentScreenColumns } from './paymentsView.js'
+import { localTodayISO, paymentColumns, paymentRowClassName, paymentScreenColumns } from './paymentsView.js'
 
 test('payment register starts with the local current date', () => {
   assert.equal(localTodayISO(new Date(2026, 6, 23, 0, 1)), '2026-07-23')
@@ -26,4 +26,11 @@ test('editable screen keeps the original eight columns while print stays optimiz
   ])
   assert.ok(paymentScreenColumns.every(column => column.interactive))
   assert.equal(paymentColumns.length, 6)
+})
+
+test('paid payments stay in the register and receive the green row state', () => {
+  assert.equal(paymentRowClassName({ status: 'Оплачено', urgency: 'Критическая' }), 'payment-row paid')
+  assert.equal(paymentRowClassName({ status: 'К оплате', actual_payment_date: '2026-08-18' }), 'payment-row paid')
+  assert.equal(paymentRowClassName({ status: 'К оплате', urgency: 'Критическая' }), 'payment-row critical')
+  assert.equal(paymentRowClassName({ status: 'К оплате' }), 'payment-row')
 })
