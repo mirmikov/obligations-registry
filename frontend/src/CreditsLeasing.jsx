@@ -113,7 +113,7 @@ export default function CreditsLeasing({ user, notify }) {
     <PageHeader eyebrow="Подраздел реестра" title="Кредиты и лизинги" subtitle="Платёжный график по статье затрат в разрезе юрлица и кредиторов" actions={<button className="secondary" onClick={load} disabled={loading}><RefreshCw size={16} className={loading ? 'spin' : ''}/>Обновить</button>}/>
 
     <section className="credits-toolbar">
-      <label><span>Юридическое лицо</span><select value={data.selected_entity || entity} onChange={event => { setEntity(event.target.value); setCreditor(''); setShownPeriods(8) }}>{data.entities.map(item => <option key={item.name} value={item.name}>{item.name}</option>)}</select></label>
+      <label><span>Юридическое лицо</span><select value={data.selected_entity || entity} onChange={event => { setEntity(event.target.value); setCreditor(''); setShownPeriods(8) }}><option value="">Все юридические лица</option>{data.entities.map(item => <option key={item.name} value={item.name}>{item.name}</option>)}</select></label>
       <label><span>Дата отчёта</span><DateInput value={asOf} onChange={setAsOf} aria-label="Дата отчёта"/></label>
       <div className="credits-source-note"><Layers3 size={17}/><div><strong>{data.category || 'Кредиты и лизинг'}</strong><span>Плановая дата оплаты × контрагент × сумма</span></div></div>
     </section>
@@ -183,7 +183,7 @@ function CreditDayDetails({ details, loading, savingCells, editable, onCommit, o
   return <div className="modal-backdrop credits-detail-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) onClose() }}>
     <section className="modal credits-detail-modal" role="dialog" aria-modal="true" aria-label={`Платежи за ${fullDate(details.date)}`}>
       <header className="modal-head credits-detail-head">
-        <div><p className="eyebrow">Кредиты и лизинги · {details.legal_entity}</p><h2>Платежи за {fullDate(details.date)}</h2><span>{count || 0} {paymentWord(count || 0)} · {money(total)}</span></div>
+        <div><p className="eyebrow">Кредиты и лизинги · {details.legal_entity || 'Все юридические лица'}</p><h2>Платежи за {fullDate(details.date)}</h2><span>{count || 0} {paymentWord(count || 0)} · {money(total)}</span></div>
         <button type="button" onClick={onClose} title="Закрыть" aria-label="Закрыть"><X/></button>
       </header>
       <div className="credits-detail-summary">
@@ -194,9 +194,9 @@ function CreditDayDetails({ details, loading, savingCells, editable, onCommit, o
       <div className="credits-detail-scroll">
         {loading ? <div className="credits-detail-loading"><RefreshCw size={22} className="spin"/><span>Загружаем платежи выбранного дня…</span></div>
           : !details.items.length ? <div className="credits-detail-loading"><CalendarClock size={25}/><span>Платежи не найдены</span></div>
-            : <table className="credits-detail-table"><thead><tr><th>№</th><th>Кредитор</th><th>Документ</th><th>Назначение и комментарий</th><th>График</th><th>Сумма</th><th>Статус</th><th>Дата утверждения</th><th>Факт. оплата</th><th>Ответственный</th></tr></thead>
-              <tbody>{details.items.map((item, index) => <tr key={item.id}><td>{index + 1}</td><td><strong>{item.counterparty || '—'}</strong></td><td><strong>{item.document_number || '—'}</strong><small>{shortDate(item.document_date)}</small></td><td><strong>{item.source_note || '—'}</strong>{item.comment && <small>{item.comment}</small>}</td><td>{installmentLabel(item)}</td><td className="credits-detail-amount">{money(item.amount)}</td><CreditStatusCell item={item} saving={savingCells.has(`${item.id}:status`)} editable={editable} onCommit={onCommit}/><CreditApprovalDateCell item={item} saving={savingCells.has(`${item.id}:approval_date`)} editable={editable} onCommit={onCommit}/><td>{shortDate(item.actual_payment_date)}</td><td>{item.responsible || '—'}</td></tr>)}</tbody>
-              <tfoot><tr><td colSpan="5">Итого · {summary.count} {paymentWord(summary.count)}</td><td>{money(summary.total)}</td><td colSpan="4">Остаток {money(summary.outstanding)}</td></tr></tfoot></table>}
+            : <table className="credits-detail-table"><thead><tr><th>№</th>{!details.legal_entity && <th>Юрлицо</th>}<th>Кредитор</th><th>Документ</th><th>Назначение и комментарий</th><th>График</th><th>Сумма</th><th>Статус</th><th>Дата утверждения</th><th>Факт. оплата</th><th>Ответственный</th></tr></thead>
+              <tbody>{details.items.map((item, index) => <tr key={item.id}><td>{index + 1}</td>{!details.legal_entity && <td><strong>{item.legal_entity || 'Не указано'}</strong></td>}<td><strong>{item.counterparty || '—'}</strong></td><td><strong>{item.document_number || '—'}</strong><small>{shortDate(item.document_date)}</small></td><td><strong>{item.source_note || '—'}</strong>{item.comment && <small>{item.comment}</small>}</td><td>{installmentLabel(item)}</td><td className="credits-detail-amount">{money(item.amount)}</td><CreditStatusCell item={item} saving={savingCells.has(`${item.id}:status`)} editable={editable} onCommit={onCommit}/><CreditApprovalDateCell item={item} saving={savingCells.has(`${item.id}:approval_date`)} editable={editable} onCommit={onCommit}/><td>{shortDate(item.actual_payment_date)}</td><td>{item.responsible || '—'}</td></tr>)}</tbody>
+              <tfoot><tr><td colSpan={details.legal_entity ? 5 : 6}>Итого · {summary.count} {paymentWord(summary.count)}</td><td>{money(summary.total)}</td><td colSpan="4">Остаток {money(summary.outstanding)}</td></tr></tfoot></table>}
       </div>
       <footer className="modal-footer"><button type="button" className="primary" onClick={onClose}>Закрыть</button></footer>
     </section>
