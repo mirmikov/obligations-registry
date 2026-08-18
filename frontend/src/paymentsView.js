@@ -22,6 +22,11 @@ export function paymentUpdatePayload(item, field, value) {
   return updated
 }
 
+export function paymentRowClassName(item) {
+  if (item?.status === 'Оплачено' || item?.actual_payment_date) return 'payment-row paid'
+  return `payment-row ${item?.urgency === 'Критическая' ? 'critical' : ''}`.trim()
+}
+
 export function localTodayISO(date = new Date()) {
   const year = date.getFullYear()
   const month = String(date.getMonth() + 1).padStart(2, '0')

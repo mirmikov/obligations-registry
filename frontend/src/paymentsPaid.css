@@ -1,0 +1,27 @@
+.payment-row.paid {
+  background: #e8f6ee;
+  box-shadow: inset 3px 0 #3c9b6c;
+}
+
+.payment-row.paid .payment-cell-control {
+  color: #1f6948;
+}
+
+.payment-row.paid .payment-cell-control:hover:not(:disabled) {
+  border-color: #8fc4a7;
+  background: #dcf0e5;
+}
+
+html[data-theme="dark"] .payment-row.paid {
+  background: #17342a;
+  box-shadow: inset 3px 0 #55b984;
+}
+
+html[data-theme="dark"] .payment-row.paid .payment-cell-control {
+  color: #b3e8ca;
+}
+
+html[data-theme="dark"] .payment-row.paid .payment-cell-control:hover:not(:disabled) {
+  border-color: #4b8368;
+  background: #204435;
+}
