@@ -44,6 +44,14 @@ test('clicking the whole calendar day loads payment details', () => {
   assert.match(source, /detailsRequest\.current === requestID/)
 })
 
+test('credits report offers all legal entities and identifies them in combined details', () => {
+  const source = fs.readFileSync(new URL('./CreditsLeasing.jsx', import.meta.url), 'utf8')
+  assert.match(source, /<option value="">Все юридические лица<\/option>/)
+  assert.match(source, /details\.legal_entity \|\| 'Все юридические лица'/)
+  assert.match(source, /!details\.legal_entity && <th>Юрлицо<\/th>/)
+  assert.match(source, /item\.legal_entity \|\| 'Не указано'/)
+})
+
 test('credits approval exposes only registered and payable statuses', () => {
   assert.deepEqual(CREDIT_APPROVAL_STATUSES, ['К оплате', 'Зарегистрирован'])
 })

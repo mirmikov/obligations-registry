@@ -51,6 +51,36 @@ type creditsLeasingPayment struct {
 	Overdue           bool    `json:"overdue"`
 }
 
+func selectCreditsLeasingEntity(requested string, entities []creditsLeasingEntity) string {
+	selected := strings.TrimSpace(requested)
+	if selected == "" {
+		return ""
+	}
+	for _, entity := range entities {
+		if entity.Name == selected {
+			return selected
+		}
+	}
+	if len(entities) > 0 {
+		return entities[0].Name
+	}
+	return selected
+}
+
+func creditsLeasingDetailsScope(legalEntity, paymentDate string, counterparties []string) (string, []any) {
+	args := []any{creditsLeasingCategory, paymentDate}
+	where := "cost_category=$1 AND planned_payment_date=$2::date"
+	if legalEntity != "" {
+		args = append(args, legalEntity)
+		where += fmt.Sprintf(" AND COALESCE(legal_entity,'Не указано')=$%d", len(args))
+	}
+	if len(counterparties) > 0 {
+		args = append(args, counterparties)
+		where += fmt.Sprintf(" AND COALESCE(counterparty,'Не указан')=ANY($%d::text[])", len(args))
+	}
+	return where, args
+}
+
 func (a *app) creditsLeasingReport(w http.ResponseWriter, r *http.Request) {
 	asOf := r.URL.Query().Get("as_of")
 	if _, err := time.Parse("2006-01-02", asOf); asOf == "" || err != nil {
@@ -79,20 +109,7 @@ func (a *app) creditsLeasingReport(w http.ResponseWriter, r *http.Request) {
 	}
 	entityRows.Close()
 
-	selectedEntity := r.URL.Query().Get("legal_entity")
-	if selectedEntity == "" && len(entities) > 0 {
-		selectedEntity = entities[0].Name
-	}
-	validEntity := false
-	for _, entity := range entities {
-		if entity.Name == selectedEntity {
-			validEntity = true
-			break
-		}
-	}
-	if !validEntity && len(entities) > 0 {
-		selectedEntity = entities[0].Name
-	}
+	selectedEntity := selectCreditsLeasingEntity(r.URL.Query().Get("legal_entity"), entities)
 
 	var totals creditsLeasingTotals
 	err = a.db.QueryRowContext(r.Context(), `
@@ -102,7 +119,7 @@ func (a *app) creditsLeasingReport(w http.ResponseWriter, r *http.Request) {
 			count(*) FILTER (WHERE planned_payment_date<$3::date AND COALESCE(status,'') NOT IN ('Оплачено','Отменено') AND actual_payment_date IS NULL),
 			COALESCE(sum(amount) FILTER (WHERE planned_payment_date<$3::date AND COALESCE(status,'') NOT IN ('Оплачено','Отменено') AND actual_payment_date IS NULL),0)::float8,
 			COALESCE(sum(amount) FILTER (WHERE planned_payment_date BETWEEN $3::date AND $3::date+30 AND COALESCE(status,'') NOT IN ('Оплачено','Отменено') AND actual_payment_date IS NULL),0)::float8
-		FROM obligations WHERE cost_category=$1 AND COALESCE(legal_entity,'Не указано')=$2`, creditsLeasingCategory, selectedEntity, asOf).Scan(
+		FROM obligations WHERE cost_category=$1 AND ($2='' OR COALESCE(legal_entity,'Не указано')=$2)`, creditsLeasingCategory, selectedEntity, asOf).Scan(
 		&totals.Count, &totals.TotalAmount, &totals.PaidAmount, &totals.OutstandingAmount, &totals.OverdueCount, &totals.OverdueAmount, &totals.Next30Amount,
 	)
 	if err != nil {
@@ -114,7 +131,7 @@ func (a *app) creditsLeasingReport(w http.ResponseWriter, r *http.Request) {
 		SELECT COALESCE(counterparty,'Не указан'),count(*),COALESCE(sum(amount),0)::float8,
 			COALESCE(sum(amount) FILTER (WHERE status='Оплачено' OR actual_payment_date IS NOT NULL),0)::float8,
 			COALESCE(sum(amount) FILTER (WHERE COALESCE(status,'') NOT IN ('Оплачено','Отменено') AND actual_payment_date IS NULL),0)::float8
-		FROM obligations WHERE cost_category=$1 AND COALESCE(legal_entity,'Не указано')=$2
+		FROM obligations WHERE cost_category=$1 AND ($2='' OR COALESCE(legal_entity,'Не указано')=$2)
 		GROUP BY counterparty ORDER BY sum(amount) DESC,counterparty`, creditsLeasingCategory, selectedEntity)
 	if err != nil {
 		fail(w, 500, "Не удалось рассчитать кредиторов")
@@ -136,7 +153,7 @@ func (a *app) creditsLeasingReport(w http.ResponseWriter, r *http.Request) {
 		SELECT to_char(date_trunc('month',planned_payment_date),'YYYY-MM'),COALESCE(sum(amount),0)::float8,
 			COALESCE(sum(amount) FILTER (WHERE status='Оплачено' OR actual_payment_date IS NOT NULL),0)::float8,
 			COALESCE(sum(amount) FILTER (WHERE COALESCE(status,'') NOT IN ('Оплачено','Отменено') AND actual_payment_date IS NULL),0)::float8
-		FROM obligations WHERE cost_category=$1 AND COALESCE(legal_entity,'Не указано')=$2 AND planned_payment_date IS NOT NULL
+		FROM obligations WHERE cost_category=$1 AND ($2='' OR COALESCE(legal_entity,'Не указано')=$2) AND planned_payment_date IS NOT NULL
 		GROUP BY 1 ORDER BY 1`, creditsLeasingCategory, selectedEntity)
 	if err != nil {
 		fail(w, 500, "Не удалось рассчитать платёжную нагрузку")
@@ -159,7 +176,7 @@ func (a *app) creditsLeasingReport(w http.ResponseWriter, r *http.Request) {
 			COALESCE(sum(amount) FILTER (WHERE status='Оплачено' OR actual_payment_date IS NOT NULL),0)::float8,
 			COALESCE(sum(amount) FILTER (WHERE COALESCE(status,'') NOT IN ('Оплачено','Отменено') AND actual_payment_date IS NULL),0)::float8,
 			planned_payment_date<$3::date AND bool_or(COALESCE(status,'') NOT IN ('Оплачено','Отменено') AND actual_payment_date IS NULL)
-		FROM obligations WHERE cost_category=$1 AND COALESCE(legal_entity,'Не указано')=$2 AND planned_payment_date IS NOT NULL
+		FROM obligations WHERE cost_category=$1 AND ($2='' OR COALESCE(legal_entity,'Не указано')=$2) AND planned_payment_date IS NOT NULL
 		GROUP BY planned_payment_date,counterparty ORDER BY planned_payment_date,counterparty`, creditsLeasingCategory, selectedEntity, asOf)
 	if err != nil {
 		fail(w, 500, "Не удалось сформировать график платежей")
@@ -190,10 +207,6 @@ func (a *app) creditsLeasingDetails(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	legalEntity := strings.TrimSpace(r.URL.Query().Get("legal_entity"))
-	if legalEntity == "" {
-		fail(w, http.StatusBadRequest, "Не указано юридическое лицо")
-		return
-	}
 	counterparties := []string{}
 	seenCounterparties := map[string]bool{}
 	for _, raw := range r.URL.Query()["counterparty"] {
@@ -203,12 +216,7 @@ func (a *app) creditsLeasingDetails(w http.ResponseWriter, r *http.Request) {
 			seenCounterparties[counterparty] = true
 		}
 	}
-	args := []any{creditsLeasingCategory, legalEntity, paymentDate}
-	where := "cost_category=$1 AND COALESCE(legal_entity,'Не указано')=$2 AND planned_payment_date=$3::date"
-	if len(counterparties) > 0 {
-		args = append(args, counterparties)
-		where += fmt.Sprintf(" AND COALESCE(counterparty,'Не указан')=ANY($%d::text[])", len(args))
-	}
+	where, args := creditsLeasingDetailsScope(legalEntity, paymentDate, counterparties)
 
 	rows, err := a.db.QueryContext(r.Context(), fmt.Sprintf(`
 		SELECT %s FROM obligations
