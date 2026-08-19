@@ -208,6 +208,7 @@
 @keyframes executiveShimmer{to{background-position:-200% 0}}
 .executive-detail-backdrop{z-index:1200;padding:22px}
 .custom-calendar{z-index:2000}
+.split-payment-backdrop{z-index:1600}
 .executive-detail-modal{width:min(1480px,calc(100vw - 44px));height:min(780px,calc(100vh - 44px));max-width:none;display:flex;flex-direction:column;overflow:hidden}
 .executive-detail-head{flex:0 0 auto;gap:18px}
 .executive-detail-head>div{min-width:0}

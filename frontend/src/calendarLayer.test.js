@@ -12,8 +12,16 @@ const finalZIndexFor = selector => {
 }
 
 test('calendar is rendered above the executive details modal', () => {
+  const detailsLayer = finalZIndexFor('.executive-detail-backdrop')
+  const splitLayer = finalZIndexFor('.split-payment-backdrop')
+  const calendarLayer = finalZIndexFor('.custom-calendar')
+
   assert.ok(
-    finalZIndexFor('.custom-calendar') > finalZIndexFor('.executive-detail-backdrop'),
+    splitLayer > detailsLayer,
+    'The split payment modal must stay above the executive details backdrop',
+  )
+  assert.ok(
+    calendarLayer > splitLayer,
     'The portalled calendar must stay above the executive details backdrop',
   )
 })
