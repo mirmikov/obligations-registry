@@ -826,7 +826,7 @@ function presenceLocation(person) {
 function Field({ label, fieldKey, value, onChange, onFocus, wide, type, ...props }) { return <label className={`field ${wide ? 'wide' : ''}`}><span>{label}</span>{type === 'date' ? <DateInput value={value ?? ''} onChange={onChange} onFocus={() => onFocus?.(fieldKey, label)} {...props}/> : <input type={type} value={value ?? ''} onChange={e => onChange(e.target.value)} onFocus={() => onFocus?.(fieldKey, label)} {...props}/>}</label> }
 function SelectField({ label, fieldKey, value, options = [], onChange, onFocus, wide, editable }) { return <label className={`field ${wide ? 'wide' : ''}`}><span>{label}</span>{editable ? <><input list={`list-${label}`} value={value} onChange={e => onChange(e.target.value)} onFocus={() => onFocus?.(fieldKey, label)}/><datalist id={`list-${label}`}>{options.map(o => <option key={o.id ?? o.value} value={o.value}/>)}</datalist></> : <select value={value} onChange={e => onChange(e.target.value)} onFocus={() => onFocus?.(fieldKey, label)}><option value="">Не выбрано</option>{options.map(o => <option key={o.id ?? o.value} value={o.value}>{o.value}</option>)}</select>}</label> }
 
-function SplitPaymentModal({ item, refs, onClose, onSave }) {
+export function SplitPaymentModal({ item, refs, onClose, onSave }) {
   const accountTypes = refs.account_types || []
   const fixedAmountAccountTypes = ['ОМС', 'Коммерция']
   const defaultPaymentDate = item.planned_payment_date || isoDate(new Date())
@@ -908,7 +908,7 @@ function SplitPaymentModal({ item, refs, onClose, onSave }) {
   </div></div>
 }
 
-function canSplitPayment(item) {
+export function canSplitPayment(item) {
   return Number(item?.amount) > 0 && Number(item?.installment_count || 0) <= 1 && !item?.split_group_id && !item?.actual_payment_date && !['Оплачено', 'Отменено'].includes(item?.status)
 }
 
