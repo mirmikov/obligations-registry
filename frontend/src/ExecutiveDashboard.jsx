@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { AlertTriangle, Building2, CalendarClock, CalendarRange, Check, ChevronDown, ChevronRight, Layers3, Printer, RefreshCw, Search, Settings2, X } from 'lucide-react'
+import { AlertTriangle, Building2, CalendarClock, CalendarRange, Check, ChevronDown, ChevronRight, Layers3, Printer, RefreshCw, Scissors, Search, Settings2, X } from 'lucide-react'
 import { request } from './api'
 import { DateInput, money, PageHeader, shortDate } from './App'
 import { BLANK_ACCOUNT_TYPE_FILTER, filterSelectOptions } from './filterValues'
@@ -7,6 +7,7 @@ import { defaultExecutiveFilters, EXECUTIVE_FILTER_STATUSES, executiveUpdatePayl
 import { localTodayISO } from './paymentsView'
 import { can, canApproveObligations } from './permissions'
 import { withDerivedObligationValues } from './obligationValues'
+import { canSplitPayment, SplitPaymentModal } from './Registry'
 
 const periodIcons = {
   overdue: AlertTriangle,
@@ -24,6 +25,7 @@ export default function ExecutiveDashboard({ user, notify }) {
   const [details, setDetails] = useState(null)
   const [detailsLoading, setDetailsLoading] = useState(false)
   const [detailsSaving, setDetailsSaving] = useState(() => new Set())
+  const [splitItem, setSplitItem] = useState(null)
   const [settings, setSettings] = useState({ kibirev_rent_enabled: true })
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [settingsSaving, setSettingsSaving] = useState(false)
@@ -145,6 +147,36 @@ export default function ExecutiveDashboard({ user, notify }) {
     }
   }
 
+  const splitPayment = async (item, values) => {
+    const currentDetails = details
+    if (!currentDetails) return
+    try {
+      const result = await request(`/api/obligations/${item.id}/split`, {
+        method: 'POST',
+        body: JSON.stringify(values),
+      })
+      const params = new URLSearchParams(Object.entries(filters).filter(([, filterValue]) => filterValue))
+      if (currentDetails.kind !== 'special') {
+        params.set('period', currentDetails.period.key)
+        params.set('cost_category', currentDetails.cost_category)
+      }
+      const detailsEndpoint = currentDetails.kind === 'special'
+        ? '/api/reports/executive/special-details'
+        : '/api/reports/executive/details'
+      const [dashboardResult, detailsResult] = await Promise.all([
+        request(`/api/reports/executive?${query}`),
+        request(`${detailsEndpoint}?${params}`),
+      ])
+      setData(dashboardResult)
+      setDetails(current => current ? { ...current, ...detailsResult } : current)
+      setSplitItem(null)
+      notify(`Платёж разбит на ${result.installments.length} частей без изменения общей суммы`)
+    } catch (error) {
+      notify(error.message, 'error')
+      throw error
+    }
+  }
+
   const saveSpecialSetting = async enabled => {
     setSettingsSaving(true)
     try {
@@ -228,9 +260,12 @@ export default function ExecutiveDashboard({ user, notify }) {
       statuses={(refs.statuses || []).map(item => item.value)}
       savingCells={detailsSaving}
       editable={canApproveObligations(user)}
+      splitAllowed={can(user, 'registry.split')}
       onCommit={saveDetailField}
+      onSplit={setSplitItem}
       onClose={() => setDetails(null)}
     />}
+    {splitItem && <SplitPaymentModal item={splitItem} refs={refs} onClose={() => setSplitItem(null)} onSave={values => splitPayment(splitItem, values)}/>}
     {settingsOpen && <ExecutiveSettingsModal
       settings={settings}
       saving={settingsSaving}
@@ -365,7 +400,7 @@ function ExecutiveSettingsModal({ settings, saving, onChange, onClose }) {
   </div>
 }
 
-function ExecutiveDetails({ details, loading, statuses, savingCells, editable, onCommit, onClose }) {
+function ExecutiveDetails({ details, loading, statuses, savingCells, editable, splitAllowed, onCommit, onSplit, onClose }) {
   const statusOptions = details.kind === 'special'
     ? ['К оплате']
     : (statuses.length ? statuses : executiveStatusOptions.map(option => option.value))
@@ -385,14 +420,15 @@ function ExecutiveDetails({ details, loading, statuses, savingCells, editable, o
       <div className="executive-detail-scroll">
         {loading ? <div className="executive-detail-loading"><div className="loading-line"/><span>Загружаем обязательства…</span></div>
           : details.items.length === 0 ? <div className="executive-empty"><Layers3 size={28}/><strong>Записи не найдены</strong></div>
-            : details.kind === 'special' ? <ExecutiveSpecialDetailsTable details={details} statusOptions={statusOptions} savingCells={savingCells} editable={editable} onCommit={onCommit}/>
-            : <table className="executive-detail-table">
+            : details.kind === 'special' ? <ExecutiveSpecialDetailsTable details={details} statusOptions={statusOptions} savingCells={savingCells} editable={editable} splitAllowed={splitAllowed} onCommit={onCommit} onSplit={onSplit}/>
+            : <table className="executive-detail-table executive-general-detail-table">
               <thead><tr>
-                <th>Юридическое лицо</th><th>Плановая дата</th><th>Контрагент</th><th>Назначение платежа</th>
-                <th>Комментарий</th><th>Сумма</th><th>Ответственный</th><th>Статус</th><th>Дата утверждения</th>
+                <th>Юридическое лицо</th><th>Признак учёта</th><th>Плановая дата</th><th>Контрагент</th><th>Назначение платежа</th>
+                <th>Комментарий</th><th>Сумма</th><th>Ответственный</th><th>Статус</th><th>Дата утверждения</th>{splitAllowed && <th>Действия</th>}
               </tr></thead>
               <tbody>{details.items.map(item => <tr key={item.id}>
                 <td>{item.legal_entity || '—'}</td>
+                <td>{item.account_type || '—'}</td>
                 <td>{shortDate(item.planned_payment_date)}</td>
                 <td><strong>{item.counterparty || '—'}</strong></td>
                 <td>{item.payment_purpose || '—'}</td>
@@ -401,8 +437,9 @@ function ExecutiveDetails({ details, loading, statuses, savingCells, editable, o
                 <td>{item.responsible || '—'}</td>
                 <ExecutiveStatusCell item={item} options={statusOptions} saving={savingCells.has(`${item.id}:status`)} editable={editable} onCommit={onCommit}/>
                 <ExecutiveApprovalDateCell item={item} saving={savingCells.has(`${item.id}:approval_date`)} editable={editable} onCommit={onCommit}/>
+                {splitAllowed && <ExecutiveSplitCell item={item} onSplit={onSplit}/>}
               </tr>)}</tbody>
-              <tfoot><tr><td colSpan="4">Итого</td><td colSpan="2">{money(details.amount)}</td><td colSpan="3">{details.count.toLocaleString('ru-RU')} обязательств</td></tr></tfoot>
+              <tfoot><tr><td colSpan="6">Итого</td><td>{money(details.amount)}</td><td colSpan={splitAllowed ? 4 : 3}>{details.count.toLocaleString('ru-RU')} обязательств</td></tr></tfoot>
             </table>}
       </div>
       {!loading && details.items.length > 0 && (details.kind === 'special'
@@ -412,14 +449,15 @@ function ExecutiveDetails({ details, loading, statuses, savingCells, editable, o
   </div>
 }
 
-function ExecutiveSpecialDetailsTable({ details, statusOptions, savingCells, editable, onCommit }) {
+function ExecutiveSpecialDetailsTable({ details, statusOptions, savingCells, editable, splitAllowed, onCommit, onSplit }) {
   return <table className="executive-detail-table executive-special-detail-table">
     <thead><tr>
-      <th>Юридическое лицо</th><th>Плановая дата</th><th>Счёт</th><th>Назначение платежа</th><th>Комментарий</th>
-      <th>Сумма</th><th>Оплачено</th><th>Остаток</th><th>Статус</th><th>Дата утверждения</th>
+      <th>Юридическое лицо</th><th>Признак учёта</th><th>Плановая дата</th><th>Счёт</th><th>Назначение платежа</th><th>Комментарий</th>
+      <th>Сумма</th><th>Оплачено</th><th>Остаток</th><th>Статус</th><th>Дата утверждения</th>{splitAllowed && <th>Действия</th>}
     </tr></thead>
     <tbody>{details.items.map(item => <tr key={item.id}>
       <td>{item.legal_entity || '—'}</td>
+      <td>{item.account_type || '—'}</td>
       <td>{shortDate(item.planned_payment_date)}</td>
       <td><strong>{item.document_number || '—'}</strong><small>{shortDate(item.document_date)}</small></td>
       <td>{item.payment_purpose || '—'}</td>
@@ -429,12 +467,18 @@ function ExecutiveSpecialDetailsTable({ details, statusOptions, savingCells, edi
       <td className="executive-detail-outstanding">{money(item.outstanding_amount)}</td>
       <ExecutiveStatusCell item={item} options={statusOptions} saving={savingCells.has(`${item.id}:status`)} editable={editable} onCommit={onCommit}/>
       <ExecutiveApprovalDateCell item={item} saving={savingCells.has(`${item.id}:approval_date`)} editable={editable} onCommit={onCommit}/>
+      {splitAllowed && <ExecutiveSplitCell item={item} onSplit={onSplit}/>}
     </tr>)}</tbody>
     <tfoot><tr>
-      <td colSpan="5">Итого · {details.count.toLocaleString('ru-RU')} счетов</td>
-      <td>{money(details.amount)}</td><td>{money(details.paid_amount)}</td><td>{money(details.outstanding_amount)}</td><td colSpan="2"/>
+      <td colSpan="6">Итого · {details.count.toLocaleString('ru-RU')} счетов</td>
+      <td>{money(details.amount)}</td><td>{money(details.paid_amount)}</td><td>{money(details.outstanding_amount)}</td><td colSpan={splitAllowed ? 3 : 2}/>
     </tr></tfoot>
   </table>
+}
+
+function ExecutiveSplitCell({ item, onSplit }) {
+  if (!canSplitPayment(item)) return <td className="executive-detail-action"><span title="Этот платёж уже разбит, оплачен или отменён">—</span></td>
+  return <td className="executive-detail-action"><button type="button" className="secondary executive-split-button" onClick={() => onSplit(item)} title="Разбить платёж"><Scissors size={14}/>Разбить</button></td>
 }
 
 function ExecutiveStatusCell({ item, options, saving, editable, onCommit }) {

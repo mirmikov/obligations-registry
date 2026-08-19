@@ -220,17 +220,18 @@
 .executive-detail-actions>button:last-child:hover{background:#e1ece8;color:#245f53}
 .executive-detail-scroll{flex:1;min-height:0;overflow:auto;background:#fff}
 .executive-detail-loading{padding:34px;display:flex;flex-direction:column;gap:12px;text-align:center;color:#72827f;font-size:12px}
-.executive-detail-table{width:100%;min-width:1320px;border-collapse:separate;border-spacing:0;font-size:11px}
+.executive-detail-table{width:100%;min-width:1480px;border-collapse:separate;border-spacing:0;font-size:11px}
 .executive-detail-table th{position:sticky;top:0;z-index:2;height:42px;padding:0 10px;background:#f4f7f6;border-bottom:1px solid #dce5e2;color:#63746f;text-align:left;font-size:9px;letter-spacing:.04em;text-transform:uppercase;white-space:nowrap}
 .executive-detail-table td{padding:10px;border-bottom:1px solid #e8eeec;color:#3a4b47;vertical-align:top;line-height:1.35;max-width:220px}
 .executive-detail-table tbody tr:hover td{background:#f8fbfa}
-.executive-detail-table td:nth-child(2),.executive-detail-table td:nth-child(6),.executive-detail-table td:nth-child(9){white-space:nowrap}
-.executive-detail-table td:nth-child(4),.executive-detail-table td:nth-child(5){min-width:170px}
+.executive-detail-table td:nth-child(2),.executive-detail-table td:nth-child(3),.executive-detail-table td:nth-child(7){white-space:nowrap}
+.executive-general-detail-table td:nth-child(5),.executive-general-detail-table td:nth-child(6){min-width:170px}
 .executive-detail-amount{font-weight:800;color:#1f6254!important;text-align:right}
-.executive-special-detail-table{min-width:1420px}
-.executive-special-detail-table td:nth-child(3) strong,.executive-special-detail-table td:nth-child(3) small{display:block;white-space:nowrap}
-.executive-special-detail-table td:nth-child(3) small{margin-top:3px;color:#788984}
-.executive-special-detail-table td:nth-child(6),.executive-special-detail-table td:nth-child(7),.executive-special-detail-table td:nth-child(8){text-align:right;white-space:nowrap;font-weight:800}
+.executive-special-detail-table td:nth-child(4) strong,.executive-special-detail-table td:nth-child(4) small{display:block;white-space:nowrap}
+.executive-special-detail-table td:nth-child(4) small{margin-top:3px;color:#788984}
+.executive-special-detail-table td:nth-child(7),.executive-special-detail-table td:nth-child(8),.executive-special-detail-table td:nth-child(9){text-align:right;white-space:nowrap;font-weight:800}
+.executive-detail-action{width:108px;text-align:center;white-space:nowrap}
+.executive-split-button{width:auto;min-width:88px;height:34px;padding:0 10px;display:inline-flex;align-items:center;justify-content:center;gap:6px;font-size:11px}
 .executive-detail-paid{color:#2f725f!important}
 .executive-detail-outstanding{color:#9b5d26!important}
 .executive-status{display:inline-flex;padding:4px 7px;border-radius:999px;background:#edf6f3;color:#256858;font-size:9px;font-weight:800;white-space:nowrap}
