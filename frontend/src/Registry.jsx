@@ -866,7 +866,7 @@ export function SplitPaymentModal({ item, refs, onClose, onSave }) {
       await onSave(values)
     } finally { setSaving(false) }
   }
-  return <div className="modal-backdrop"><div className="modal split-payment-modal">
+  return <div className="modal-backdrop split-payment-backdrop"><div className="modal split-payment-modal">
     <div className="modal-head"><div><p className="eyebrow">График оплаты</p><h2>Разбить платёж</h2></div><button onClick={onClose} aria-label="Закрыть"><X/></button></div>
     <div className="modal-body split-payment-body">
       <div className="split-source-card"><div><span>Контрагент</span><strong>{item.counterparty || 'Не указан'}</strong><small>{item.document_number ? `Документ ${item.document_number}` : 'Без номера документа'}</small></div><div><span>Общая сумма</span><strong>{money(item.amount)}</strong><small>Сумма графика останется неизменной</small></div></div>
