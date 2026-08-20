@@ -41,6 +41,67 @@ func normalizeCounterpartyTaxID(value string) (string, error) {
 	return value, nil
 }
 
+type counterpartyTaxIDConflict struct {
+	ID     int64
+	Value  string
+	Active bool
+}
+
+func counterpartyTaxIDReassignment(conflict *counterpartyTaxIDConflict, taxID string) (*counterpartyTaxIDConflict, error) {
+	if conflict == nil {
+		return nil, nil
+	}
+	if conflict.Active {
+		return nil, fmt.Errorf("Контрагент с ИНН %s уже существует: %s", taxID, conflict.Value)
+	}
+	return conflict, nil
+}
+
+func normalizeCounterpartyAliases(value string, aliases []string) []string {
+	seen := map[string]struct{}{strings.ToLower(strings.TrimSpace(value)): {}}
+	result := make([]string, 0, len(aliases))
+	for _, alias := range aliases {
+		alias = strings.TrimSpace(alias)
+		key := strings.ToLower(alias)
+		if alias == "" {
+			continue
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		result = append(result, alias)
+	}
+	return result
+}
+
+func (a *app) counterpartyAliases(ctx context.Context) (map[int64][]string, error) {
+	rows, err := a.db.QueryContext(ctx, `
+		SELECT audit.entity_id, source_value.value
+		FROM audit_log audit
+		CROSS JOIN LATERAL jsonb_array_elements_text(
+			CASE WHEN jsonb_typeof(audit.details->'source_values')='array'
+				THEN audit.details->'source_values' ELSE '[]'::jsonb END
+		) WITH ORDINALITY AS source_value(value, position)
+		WHERE audit.action='merge' AND audit.entity_type='reference'
+			AND audit.entity_id IS NOT NULL AND audit.details->>'kind'=$1
+		ORDER BY audit.id, source_value.position`, counterpartyReferenceKind)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := map[int64][]string{}
+	for rows.Next() {
+		var id int64
+		var alias string
+		if err := rows.Scan(&id, &alias); err != nil {
+			return nil, err
+		}
+		result[id] = append(result[id], alias)
+	}
+	return result, rows.Err()
+}
+
 type costCategoryResponsibleReference struct {
 	CategoryID  int64  `json:"category_id"`
 	Responsible string `json:"responsible"`
@@ -105,6 +166,11 @@ func decodeCostCategoryResponsibleReference(value string) (costCategoryResponsib
 }
 
 func (a *app) listReferences(w http.ResponseWriter, r *http.Request) {
+	counterpartyAliases, err := a.counterpartyAliases(r.Context())
+	if err != nil {
+		fail(w, 500, "Не удалось загрузить историю объединения контрагентов")
+		return
+	}
 	rows, err := a.db.QueryContext(r.Context(), `SELECT id,kind,value,sort_order,tax_id FROM reference_values WHERE active AND kind <> $1 ORDER BY kind,sort_order,value`, executiveSettingsReferenceKind)
 	if err != nil {
 		fail(w, 500, "Не удалось загрузить справочники")
@@ -148,6 +214,7 @@ func (a *app) listReferences(w http.ResponseWriter, r *http.Request) {
 		item := map[string]any{"id": id, "value": value, "sort_order": order}
 		if kind == counterpartyReferenceKind {
 			item["tax_id"] = taxID.String
+			item["aliases"] = normalizeCounterpartyAliases(value, counterpartyAliases[id])
 		}
 		result[kind] = append(result[kind], item)
 	}
@@ -480,28 +547,49 @@ func (a *app) setCounterpartyTaxID(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusInternalServerError, "Не удалось проверить контрагента")
 		return
 	}
+	var reassignedFrom *counterpartyTaxIDConflict
 	if input.TaxID != "" {
-		var duplicateValue string
-		err = tx.QueryRowContext(r.Context(), `SELECT value FROM reference_values WHERE kind=$1 AND tax_id=$2 AND id<>$3 FOR UPDATE`, counterpartyReferenceKind, input.TaxID, id).Scan(&duplicateValue)
+		var conflict counterpartyTaxIDConflict
+		err = tx.QueryRowContext(r.Context(), `SELECT id,value,active FROM reference_values WHERE kind=$1 AND tax_id=$2 AND id<>$3 FOR UPDATE`, counterpartyReferenceKind, input.TaxID, id).Scan(&conflict.ID, &conflict.Value, &conflict.Active)
 		if err == nil {
-			fail(w, http.StatusConflict, fmt.Sprintf("Контрагент с ИНН %s уже существует: %s", input.TaxID, duplicateValue))
-			return
+			reassignedFrom, err = counterpartyTaxIDReassignment(&conflict, input.TaxID)
+			if err != nil {
+				fail(w, http.StatusConflict, err.Error())
+				return
+			}
 		}
 		if err != sql.ErrNoRows {
-			fail(w, http.StatusInternalServerError, "Не удалось проверить уникальность ИНН")
-			return
+			if err != nil {
+				fail(w, http.StatusInternalServerError, "Не удалось проверить уникальность ИНН")
+				return
+			}
 		}
 	}
-	before, err := snapshotRows(r.Context(), tx, "reference_values", []int64{id})
+	changedIDs := []int64{id}
+	if reassignedFrom != nil {
+		changedIDs = append(changedIDs, reassignedFrom.ID)
+	}
+	before, err := snapshotRows(r.Context(), tx, "reference_values", changedIDs)
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "Не удалось подготовить историю изменения")
 		return
+	}
+	if reassignedFrom != nil {
+		result, releaseErr := tx.ExecContext(r.Context(), `UPDATE reference_values SET tax_id=NULL WHERE id=$1 AND kind=$2 AND NOT active`, reassignedFrom.ID, counterpartyReferenceKind)
+		if releaseErr != nil {
+			fail(w, http.StatusInternalServerError, "Не удалось освободить ИНН архивного контрагента")
+			return
+		}
+		if affected, _ := result.RowsAffected(); affected != 1 {
+			fail(w, http.StatusConflict, "Архивная запись контрагента изменилась. Обновите страницу и повторите попытку")
+			return
+		}
 	}
 	if _, err = tx.ExecContext(r.Context(), `UPDATE reference_values SET tax_id=NULLIF($1,'') WHERE id=$2 AND kind=$3`, input.TaxID, id, counterpartyReferenceKind); err != nil {
 		fail(w, http.StatusConflict, "Не удалось сохранить ИНН: проверьте, что он не используется другим контрагентом")
 		return
 	}
-	after, err := snapshotRows(r.Context(), tx, "reference_values", []int64{id})
+	after, err := snapshotRows(r.Context(), tx, "reference_values", changedIDs)
 	if err != nil || a.recordUndo(r.Context(), tx, user.ID, "update", "Изменение ИНН контрагента «"+value+"»", undoPayload{References: &undoChange{Before: before, After: after}}) != nil {
 		fail(w, http.StatusInternalServerError, "Не удалось записать историю изменения")
 		return
@@ -510,8 +598,15 @@ func (a *app) setCounterpartyTaxID(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusInternalServerError, "Не удалось завершить сохранение ИНН")
 		return
 	}
-	a.audit(r.Context(), user.ID, "update", "reference", &id, map[string]any{"kind": counterpartyReferenceKind, "value": value, "tax_id": input.TaxID})
-	writeJSON(w, http.StatusOK, map[string]any{"id": id, "tax_id": input.TaxID})
+	auditDetails := map[string]any{"kind": counterpartyReferenceKind, "value": value, "tax_id": input.TaxID}
+	response := map[string]any{"id": id, "tax_id": input.TaxID}
+	if reassignedFrom != nil {
+		reassignment := map[string]any{"id": reassignedFrom.ID, "value": reassignedFrom.Value}
+		auditDetails["tax_id_reassigned_from"] = reassignment
+		response["reassigned_from"] = reassignment
+	}
+	a.audit(r.Context(), user.ID, "update", "reference", &id, auditDetails)
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (a *app) deleteReference(w http.ResponseWriter, r *http.Request) {
