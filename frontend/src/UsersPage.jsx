@@ -3,6 +3,7 @@ import { Calculator, Check, Code2, Crown, Plus, ShieldCheck, UserPen, X } from '
 import { request } from './api'
 import { dateTime, PageHeader, roleLabel } from './App'
 import { can } from './permissions'
+import { normalizeApprovalEntityOptions } from './approvalScope'
 
 export default function UsersPage({ user: currentUser, notify }) {
   const [users, setUsers] = useState([])
@@ -12,7 +13,11 @@ export default function UsersPage({ user: currentUser, notify }) {
   const manageable = can(currentUser, 'users.manage')
   const granular = can(currentUser, 'users.permissions')
   const load = () => Promise.all([request('/api/users'), request('/api/permissions/catalog'), request('/api/references')])
-    .then(([items, permissions, references]) => { setUsers(items); setCatalog(permissions); setLegalEntities(references.legal_entities || []) })
+    .then(([items, permissions, references]) => {
+      setUsers(items)
+      setCatalog(permissions)
+      setLegalEntities(normalizeApprovalEntityOptions(references.legal_entities))
+    })
     .catch(error => notify(error.message, 'error'))
 
   useEffect(() => { load() }, [])
@@ -153,7 +158,8 @@ function UserModal({ item, catalog, legalEntities, granular, onClose, onSave }) 
 }
 
 function ApprovalLegalEntityScope({ values, options, disabled, onChange }) {
-  const normalized = values.map(value => String(value || '').trim()).filter(Boolean)
+  const normalized = normalizeApprovalEntityOptions(values)
+  const availableOptions = normalizeApprovalEntityOptions(options)
   const selected = new Set(normalized.map(value => value.toLocaleLowerCase('ru-RU')))
   const allSelected = selected.size === 0
   const toggle = value => {
@@ -167,9 +173,9 @@ function ApprovalLegalEntityScope({ values, options, disabled, onChange }) {
   return <div className="approval-entity-scope">
     <div className="approval-entity-scope-head"><Crown size={18}/><span><strong>Юрлица для утверждения</strong><small>Можно выбрать несколько организаций</small></span></div>
     <button type="button" className={`approval-entity-option ${allSelected ? 'is-selected' : ''}`} disabled={disabled} onClick={() => onChange([])}><i>{allSelected && <Check size={13}/>}</i><span><strong>Все юридические лица</strong><small>Без ограничения</small></span></button>
-    <div className="approval-entity-list">{options.map(value => { const checked = selected.has(value.toLocaleLowerCase('ru-RU')); return <button type="button" key={value} className={`approval-entity-option ${checked ? 'is-selected' : ''}`} disabled={disabled} onClick={() => toggle(value)}><i>{checked && <Check size={13}/>}</i><span>{value}</span></button> })}</div>
+    <div className="approval-entity-list">{availableOptions.map(value => { const checked = selected.has(value.toLocaleLowerCase('ru-RU')); return <button type="button" key={value} className={`approval-entity-option ${checked ? 'is-selected' : ''}`} disabled={disabled} onClick={() => toggle(value)}><i>{checked && <Check size={13}/>}</i><span>{value}</span></button> })}</div>
     {!allSelected && <p>Утверждение «К оплате» доступно для {normalized.length} {normalized.length === 1 ? 'юрлица' : 'юрлиц'}. Чтобы разрешить все, выберите пункт выше.</p>}
-    {!options.length && <p>В активном справочнике пока нет юридических лиц.</p>}
+    {!availableOptions.length && <p>В активном справочнике пока нет юридических лиц.</p>}
   </div>
 }
 
