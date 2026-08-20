@@ -7,11 +7,12 @@ import { can } from './permissions'
 export default function UsersPage({ user: currentUser, notify }) {
   const [users, setUsers] = useState([])
   const [catalog, setCatalog] = useState({ groups: [], presets: {} })
+  const [legalEntities, setLegalEntities] = useState([])
   const [editing, setEditing] = useState(null)
   const manageable = can(currentUser, 'users.manage')
   const granular = can(currentUser, 'users.permissions')
-  const load = () => Promise.all([request('/api/users'), request('/api/permissions/catalog')])
-    .then(([items, permissions]) => { setUsers(items); setCatalog(permissions) })
+  const load = () => Promise.all([request('/api/users'), request('/api/permissions/catalog'), request('/api/references')])
+    .then(([items, permissions, references]) => { setUsers(items); setCatalog(permissions); setLegalEntities(references.legal_entities || []) })
     .catch(error => notify(error.message, 'error'))
 
   useEffect(() => { load() }, [])
@@ -20,7 +21,10 @@ export default function UsersPage({ user: currentUser, notify }) {
     try {
       const payload = { name: form.name, role: form.role === 'developer' ? 'admin' : form.role, active: form.active, password: form.password || '' }
       if (!form.id) payload.email = form.email
-      if (granular && !form.is_developer) payload.permissions = form.permissions
+      if (granular && !form.is_developer) {
+        payload.permissions = form.permissions
+        payload.approval_legal_entities = form.role === 'manager' ? (form.approval_legal_entities || []) : []
+      }
       if (form.id) await request(`/api/users/${form.id}`, { method: 'PATCH', body: JSON.stringify(payload) })
       else await request('/api/users', { method: 'POST', body: JSON.stringify(payload) })
       notify(form.id ? 'Пользователь и права обновлены' : 'Пользователь добавлен')
@@ -34,7 +38,7 @@ export default function UsersPage({ user: currentUser, notify }) {
       eyebrow="Доступ и роли"
       title="Пользователи"
       subtitle={granular ? 'Настройка доступа к каждому разделу и действию' : 'Просмотр пользователей и назначенных прав'}
-      actions={manageable && <button className="primary" onClick={() => setEditing({ permissions: catalog.presets.viewer || {} })}><Plus size={17}/>Добавить</button>}
+      actions={manageable && <button className="primary" onClick={() => setEditing({ permissions: catalog.presets.viewer || {}, approval_legal_entities: [] })}><Plus size={17}/>Добавить</button>}
     />
     <div className="role-cards">
       <RoleCard role="developer" icon={<Code2/>} title="Программист" text="Все права и управление индивидуальными доступами"/>
@@ -54,7 +58,7 @@ export default function UsersPage({ user: currentUser, notify }) {
         <span>{manageable && <button onClick={() => setEditing(item)} aria-label={`Изменить ${item.name}`}><UserPen size={17}/></button>}</span>
       </div>)}
     </section>
-    {editing && <UserModal item={editing} catalog={catalog} granular={granular} onClose={() => setEditing(null)} onSave={save}/>}
+    {editing && <UserModal item={editing} catalog={catalog} legalEntities={legalEntities} granular={granular} onClose={() => setEditing(null)} onSave={save}/>}
   </div>
 }
 
@@ -62,10 +66,10 @@ function RoleCard({ role, icon, title, text }) {
   return <div className={`role-card ${role}`}>{icon || <ShieldCheck/>}<div><strong>{title}</strong><span>{text}</span></div></div>
 }
 
-function UserModal({ item, catalog, granular, onClose, onSave }) {
+function UserModal({ item, catalog, legalEntities, granular, onClose, onSave }) {
   const [form, setForm] = useState({
     name: '', email: '', role: 'viewer', password: '', active: true,
-    permissions: catalog.presets.viewer || {}, ...item,
+    permissions: catalog.presets.viewer || {}, approval_legal_entities: [], ...item,
   })
   const setRole = role => setForm(current => ({
     ...current,
@@ -118,6 +122,7 @@ function UserModal({ item, catalog, granular, onClose, onSave }) {
           <label className="field"><span>{item.id ? 'Новый пароль (необязательно)' : 'Пароль'}</span><input type="password" required={!item.id} minLength="8" value={form.password} onChange={event => setForm({ ...form, password: event.target.value })}/></label>
           {item.id && <label className={`switch-row ${form.is_developer ? 'is-locked' : ''}`}><input type="checkbox" checked={form.active} disabled={form.is_developer} onChange={event => setForm({ ...form, active: event.target.checked })}/><i/><span>Учётная запись активна</span></label>}
           {form.is_developer && <div className="developer-lock-note"><Code2 size={18}/><span><strong>Защищённая роль</strong>Права программиста всегда включены и не могут быть сняты.</span></div>}
+          {form.role === 'manager' && !form.is_developer && <ApprovalLegalEntityScope values={form.approval_legal_entities || []} options={legalEntities} disabled={!granular} onChange={values => setForm(current => ({ ...current, approval_legal_entities: values }))}/>}
         </section>
         {granular && !form.is_developer && <section className="permission-editor">
           <header><div><strong>Индивидуальные права</strong><span>Галочки применяются сразу после сохранения</span></div><small>{Object.values(form.permissions || {}).filter(Boolean).length} включено</small></header>
@@ -140,6 +145,27 @@ function UserModal({ item, catalog, granular, onClose, onSave }) {
       </div>
       <div className="modal-footer"><button type="button" className="secondary" onClick={onClose}>Отмена</button><button className="primary">Сохранить</button></div>
     </form>
+  </div>
+}
+
+function ApprovalLegalEntityScope({ values, options, disabled, onChange }) {
+  const normalized = values.map(value => String(value || '').trim()).filter(Boolean)
+  const selected = new Set(normalized.map(value => value.toLocaleLowerCase('ru-RU')))
+  const allSelected = selected.size === 0
+  const toggle = value => {
+    if (disabled) return
+    const key = value.toLocaleLowerCase('ru-RU')
+    if (selected.has(key)) {
+      if (normalized.length === 1) return
+      onChange(normalized.filter(item => item.toLocaleLowerCase('ru-RU') !== key))
+    } else onChange([...normalized, value])
+  }
+  return <div className="approval-entity-scope">
+    <div className="approval-entity-scope-head"><Crown size={18}/><span><strong>Юрлица для утверждения</strong><small>Можно выбрать несколько организаций</small></span></div>
+    <button type="button" className={`approval-entity-option ${allSelected ? 'is-selected' : ''}`} disabled={disabled} onClick={() => onChange([])}><i>{allSelected && <Check size={13}/>}</i><span><strong>Все юридические лица</strong><small>Без ограничения</small></span></button>
+    <div className="approval-entity-list">{options.map(value => { const checked = selected.has(value.toLocaleLowerCase('ru-RU')); return <button type="button" key={value} className={`approval-entity-option ${checked ? 'is-selected' : ''}`} disabled={disabled} onClick={() => toggle(value)}><i>{checked && <Check size={13}/>}</i><span>{value}</span></button> })}</div>
+    {!allSelected && <p>Утверждение «К оплате» доступно для {normalized.length} {normalized.length === 1 ? 'юрлица' : 'юрлиц'}. Чтобы разрешить все, выберите пункт выше.</p>}
+    {!options.length && <p>В активном справочнике пока нет юридических лиц.</p>}
   </div>
 }
 

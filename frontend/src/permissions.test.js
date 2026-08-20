@@ -28,6 +28,27 @@ test('only manager and protected developer can approve obligations', () => {
   assert.equal(approvalStatusOptions(options, { role: 'manager', permissions: { 'obligations.approve': true } }).length, 3)
 })
 
+test('manager approval can be limited to several legal entities', () => {
+  const manager = {
+    role: 'manager',
+    permissions: { 'obligations.approve': true },
+    approval_legal_entities: ['ООО МЦ Мирт', 'ООО Клиника Мирт'],
+  }
+  assert.equal(canApproveObligations(manager), true)
+  assert.equal(canApproveObligations(manager, 'ООО МЦ Мирт'), true)
+  assert.equal(canApproveObligations(manager, 'ооо клиника мирт'), true)
+  assert.equal(canApproveObligations(manager, 'ООО Стоматология'), false)
+  assert.equal(canApproveObligations(manager, ''), false)
+  assert.equal(canApproveObligations({ ...manager, approval_legal_entities: [] }, 'ООО Стоматология'), true)
+  assert.equal(canApproveObligations({ role: 'developer', is_developer: true, approval_legal_entities: ['Одно юрлицо'] }, 'Другое юрлицо'), true)
+})
+
+test('user settings persist and display multiple approval legal entities', () => {
+  assert.match(users, /payload\.approval_legal_entities/)
+  assert.match(users, /Юрлица для утверждения/)
+  assert.match(users, /Все юридические лица/)
+})
+
 test('navigation, registry actions and access editor are permission driven', () => {
   assert.match(app, /permission: 'executive\.view'/)
   assert.match(app, /permission: 'my_invoices\.view'/)

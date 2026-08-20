@@ -27,12 +27,12 @@ export default function PriorityCenter({ user, notify }) {
     setLoading(true)
     return request(`/api/reports/priority-center?${query}`).then(result => {
       setData(result)
-      setSelected(current => current.filter(id => result.items.some(item => item.id === id && isRegistered(item.status))))
+      setSelected(current => current.filter(id => result.items.some(item => item.id === id && isRegistered(item.status) && canApproveObligations(user, item.legal_entity))))
     }).catch(error => notify(error.message, 'error')).finally(() => setLoading(false))
   }
   useEffect(() => { const timer = window.setTimeout(load, 160); return () => window.clearTimeout(timer) }, [query])
   const update = (key, value) => setFilters(current => ({ ...current, [key]: value }))
-  const approvable = data.items.filter(item => isRegistered(item.status))
+  const approvable = data.items.filter(item => isRegistered(item.status) && canApproveObligations(user, item.legal_entity))
   const allSelected = approvable.length > 0 && approvable.every(item => selected.includes(item.id))
   const toggle = id => setSelected(current => current.includes(id) ? current.filter(value => value !== id) : [...current, id])
   const approve = async ids => {
@@ -75,13 +75,13 @@ export default function PriorityCenter({ user, notify }) {
     <section className="panel urgent-table-card">
       <header><div><p className="eyebrow">Очередь на решение</p><h2>Платежи по степени срочности</h2></div><span>Показано {data.items.length}{data.items.length === 300 ? ' · уточните фильтры' : ''}</span></header>
       <div className="urgent-table-wrap"><table><thead><tr><th className="urgent-check">{approvalAllowed && <input type="checkbox" aria-label="Выбрать все доступные платежи" checked={allSelected} onChange={() => setSelected(allSelected ? [] : approvable.map(item => item.id))}/>}</th><th>Срок</th><th>Срочность / важность</th><th>Контрагент и документ</th><th>Юридическое лицо</th><th>Статья затрат</th><th>Ответственный</th><th>Сумма</th><th>Решение</th></tr></thead>
-      <tbody>{data.items.map(item => { const registered = isRegistered(item.status); return <tr key={item.id} className={`${item.overdue ? 'is-overdue' : item.due_today ? 'is-today' : ''} ${selected.includes(item.id) ? 'is-selected' : ''}`}>
-        <td className="urgent-check">{approvalAllowed && registered && <input type="checkbox" aria-label={`Выбрать платёж №${item.id}`} checked={selected.includes(item.id)} onChange={() => toggle(item.id)}/>}</td>
+      <tbody>{data.items.map(item => { const registered = isRegistered(item.status); const rowApprovalAllowed = approvalAllowed && canApproveObligations(user, item.legal_entity); return <tr key={item.id} className={`${item.overdue ? 'is-overdue' : item.due_today ? 'is-today' : ''} ${selected.includes(item.id) ? 'is-selected' : ''}`}>
+        <td className="urgent-check">{rowApprovalAllowed && registered && <input type="checkbox" aria-label={`Выбрать платёж №${item.id}`} checked={selected.includes(item.id)} onChange={() => toggle(item.id)}/>}</td>
         <td className="urgent-date"><strong>{shortDate(item.planned_payment_date)}</strong><small>{item.overdue ? 'Просрочено' : item.due_today ? 'Оплатить сегодня' : dueLabel(item.planned_payment_date)}</small></td>
         <td><div className="urgent-tags"><PriorityBadge value={item.urgency}/><PriorityBadge value={item.priority} quiet/></div></td>
         <td className="urgent-party"><strong>{item.counterparty || '—'}</strong><small>{item.document_number || 'Без номера'}{item.document_date ? ` от ${shortDate(item.document_date)}` : ''}</small>{item.comment && <em title={item.comment}>{item.comment}</em>}</td>
         <td>{item.legal_entity || '—'}</td><td>{item.cost_category || '—'}</td><td>{item.responsible || '—'}</td><td className="urgent-amount">{money(item.amount)}</td>
-        <td className="urgent-decision">{approvalAllowed && registered ? <button type="button" disabled={saving} onClick={() => approve([item.id])}><Check size={15}/>К оплате</button> : <span className={registered ? 'registered' : 'payable'}>{item.status || '—'}{item.approval_date && <small>от {shortDate(item.approval_date)}</small>}</span>}</td>
+        <td className="urgent-decision">{rowApprovalAllowed && registered ? <button type="button" disabled={saving} onClick={() => approve([item.id])}><Check size={15}/>К оплате</button> : <span className={registered ? 'registered' : 'payable'}>{item.status || '—'}{item.approval_date && <small>от {shortDate(item.approval_date)}</small>}</span>}</td>
       </tr>})}</tbody></table></div>
       {loading && <div className="urgent-loading"/>}
       {!loading && data.items.length === 0 && <div className="urgent-empty"><CalendarCheck2 size={30}/><strong>По выбранным условиям срочных платежей нет</strong><span>Измените период или фильтры.</span></div>}

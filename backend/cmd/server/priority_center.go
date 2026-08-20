@@ -169,7 +169,7 @@ func (a *app) approvePriorityCenter(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback()
-	rows, err := tx.QueryContext(r.Context(), `SELECT id FROM obligations WHERE id=ANY($1) AND BTRIM(COALESCE(status,'')) IN ('Зарегистрирован','Зарегистрировано') AND actual_payment_date IS NULL ORDER BY id FOR UPDATE`, ids)
+	rows, err := tx.QueryContext(r.Context(), `SELECT id,COALESCE(legal_entity,'') FROM obligations WHERE id=ANY($1) AND BTRIM(COALESCE(status,'')) IN ('Зарегистрирован','Зарегистрировано') AND actual_payment_date IS NULL ORDER BY id FOR UPDATE`, ids)
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "Не удалось подготовить платежи к согласованию")
 		return
@@ -177,9 +177,15 @@ func (a *app) approvePriorityCenter(w http.ResponseWriter, r *http.Request) {
 	eligible := []int64{}
 	for rows.Next() {
 		var id int64
-		if err = rows.Scan(&id); err != nil {
+		var legalEntity string
+		if err = rows.Scan(&id, &legalEntity); err != nil {
 			rows.Close()
 			fail(w, http.StatusInternalServerError, "Не удалось проверить платежи")
+			return
+		}
+		if !canApproveLegalEntity(user, legalEntity) {
+			rows.Close()
+			fail(w, http.StatusForbidden, approvalLegalEntityError{LegalEntity: legalEntity}.Error())
 			return
 		}
 		eligible = append(eligible, id)
