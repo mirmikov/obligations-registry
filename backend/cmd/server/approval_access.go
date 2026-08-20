@@ -14,7 +14,7 @@ const (
 	payableStatus = "К оплате"
 )
 
-var errManagerApprovalRequired = errors.New("статус «К оплате» и дату утверждения может изменять только руководитель или программист")
+var errManagerApprovalRequired = errors.New("статус «К оплате» и дату утверждения может изменять руководитель, редактор с выданным правом или программист")
 
 type approvalLegalEntityError struct{ LegalEntity string }
 
@@ -32,8 +32,10 @@ type obligationApprovalState struct {
 }
 
 func isManager(user authUser) bool {
-	return user.IsDeveloper || user.Role == managerRole && user.Permissions["obligations.approve"]
+	return user.IsDeveloper || canHoldApprovalPermissions(user.Role) && user.Permissions["obligations.approve"]
 }
+
+func canHoldApprovalPermissions(role string) bool { return role == managerRole || role == "editor" }
 
 func canApproveLegalEntity(user authUser, legalEntity string) bool {
 	if !isManager(user) {

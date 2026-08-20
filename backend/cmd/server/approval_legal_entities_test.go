@@ -28,6 +28,20 @@ func TestManagerCanApproveMultipleConfiguredLegalEntities(t *testing.T) {
 	}
 }
 
+func TestEditorCanApproveMultipleConfiguredLegalEntities(t *testing.T) {
+	editor := authUser{
+		Role:                  "editor",
+		Permissions:           permissionSet{"obligations.approve": true},
+		ApprovalLegalEntities: []string{"ООО МЦ Мирт", "ООО Клиника Мирт"},
+	}
+	for _, entity := range editor.ApprovalLegalEntities {
+		input := obligationInput{LegalEntity: entity, ApprovalDate: "2026-08-20", Status: payableStatus}
+		if err := validateApprovalCreate(editor, input); err != nil {
+			t.Fatalf("configured editor approval for %q failed: %v", entity, err)
+		}
+	}
+}
+
 func TestManagerCannotApproveUnconfiguredLegalEntity(t *testing.T) {
 	manager := scopedManager("ООО МЦ Мирт", "ООО Клиника Мирт")
 	input := obligationInput{LegalEntity: "ООО Стоматология", ApprovalDate: "2026-08-20", Status: payableStatus}
