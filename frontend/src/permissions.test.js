@@ -55,6 +55,9 @@ test('user settings persist and display multiple approval legal entities', () =>
   assert.match(users, /payload\.approval_legal_entities/)
   assert.match(users, /Юрлица для утверждения/)
   assert.match(users, /Все юридические лица/)
+  assert.match(users, /withApprovalScope\(current, values\)/)
+  assert.match(users, /Утверждение «К оплате» разрешено/)
+  assert.match(users, /Разрешить утверждение «К оплате»/)
 })
 
 test('navigation, registry actions and access editor are permission driven', () => {

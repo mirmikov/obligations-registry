@@ -132,6 +132,27 @@ func TestApprovalPermissionsRemainConfigurableForManagerAndEditorOnly(t *testing
 	}
 }
 
+func TestStoredEditorScopeRestoresApprovalPermission(t *testing.T) {
+	raw := []byte(`{"permissions":{"registry.edit":true,"obligations.approve":false},"approval_legal_entities":["ООО Мирт-Фарм"]}`)
+	permissions := permissionsFromState(raw, "editor")
+	if !permissions["obligations.approve"] || !permissions["registry.view"] {
+		t.Fatalf("stored editor scope did not restore approval access: %#v", permissions)
+	}
+	editor := authUser{Role: "editor", Permissions: permissions, ApprovalLegalEntities: approvalLegalEntitiesFromState(raw)}
+	if err := validateApprovalCreate(editor, obligationInput{LegalEntity: "ООО Мирт-Фарм", ApprovalDate: "2026-08-20", Status: payableStatus}); err != nil {
+		t.Fatalf("editor with a stored scope cannot approve its legal entity: %v", err)
+	}
+
+	withoutScope := permissionsFromState([]byte(`{"permissions":{"obligations.approve":false}}`), "editor")
+	if withoutScope["obligations.approve"] {
+		t.Fatal("editor without a configured scope unexpectedly gained approval access")
+	}
+	viewer := permissionsFromState(raw, "viewer")
+	if viewer["obligations.approve"] {
+		t.Fatal("approval scope granted approval access to an unsupported role")
+	}
+}
+
 func TestNonManagerUndoCannotRestoreApproval(t *testing.T) {
 	before, _ := json.Marshal([]map[string]any{{"id": 7, "approval_date": "2026-08-14", "status": payableStatus}})
 	after, _ := json.Marshal([]map[string]any{{"id": 7, "approval_date": "", "status": "Зарегистрирован"}})

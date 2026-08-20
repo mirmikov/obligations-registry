@@ -35,6 +35,17 @@ func isManager(user authUser) bool {
 	return user.IsDeveloper || canHoldApprovalPermissions(user.Role) && user.Permissions["obligations.approve"]
 }
 
+func permissionsWithApprovalScope(permissions permissionSet, role string, legalEntities []string) permissionSet {
+	if permissions == nil {
+		permissions = permissionSet{}
+	}
+	if canHoldApprovalPermissions(role) && len(normalizeApprovalLegalEntities(legalEntities)) > 0 {
+		permissions["obligations.approve"] = true
+		permissions["registry.view"] = true
+	}
+	return permissions
+}
+
 func canHoldApprovalPermissions(role string) bool { return role == managerRole || role == "editor" }
 
 func canApproveLegalEntity(user authUser, legalEntity string) bool {
