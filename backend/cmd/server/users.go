@@ -83,8 +83,8 @@ func (a *app) createUser(w http.ResponseWriter, r *http.Request) {
 	}
 	approvalLegalEntities := []string{}
 	if input.ApprovalLegalEntities != nil {
-		if requestedRole != managerRole && len(normalizeApprovalLegalEntities(*input.ApprovalLegalEntities)) > 0 {
-			fail(w, http.StatusBadRequest, "Юридические лица для утверждения можно назначить только руководителю")
+		if !canHoldApprovalPermissions(requestedRole) && len(normalizeApprovalLegalEntities(*input.ApprovalLegalEntities)) > 0 {
+			fail(w, http.StatusBadRequest, "Юридические лица для утверждения можно назначить только руководителю или редактору")
 			return
 		}
 		approvalLegalEntities, err = canonicalApprovalLegalEntities(r.Context(), tx, *input.ApprovalLegalEntities)
@@ -231,7 +231,7 @@ func (a *app) updateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	approvalLegalEntities := approvalLegalEntitiesFromState(targetState)
-	if requestedRole != managerRole {
+	if !canHoldApprovalPermissions(requestedRole) {
 		approvalLegalEntities = []string{}
 	} else if input.ApprovalLegalEntities != nil {
 		approvalLegalEntities, err = canonicalApprovalLegalEntities(r.Context(), tx, *input.ApprovalLegalEntities)

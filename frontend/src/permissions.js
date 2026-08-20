@@ -3,7 +3,7 @@ export function can(user, permission) {
 }
 
 export function canApproveObligations(user, legalEntity) {
-  const roleAllowed = Boolean(user?.is_developer || user?.role === 'developer' || (user?.role === 'manager' && user?.permissions?.['obligations.approve']))
+  const roleAllowed = Boolean(user?.is_developer || user?.role === 'developer' || (['manager', 'editor'].includes(user?.role) && user?.permissions?.['obligations.approve']))
   if (!roleAllowed) return false
   if (user?.is_developer || user?.role === 'developer' || legalEntity === undefined) return true
   const allowedEntities = Array.isArray(user?.approval_legal_entities)

@@ -18,11 +18,13 @@ test('ordinary users receive only explicitly enabled permissions', () => {
   assert.equal(can(user, 'registry.delete'), false)
 })
 
-test('only manager and protected developer can approve obligations', () => {
+test('manager, configured editor and protected developer can approve obligations', () => {
   assert.equal(canApproveObligations({ role: 'manager', permissions: { 'obligations.approve': true } }), true)
+  assert.equal(canApproveObligations({ role: 'editor', permissions: { 'obligations.approve': true } }), true)
+  assert.equal(canApproveObligations({ role: 'editor', permissions: {} }), false)
   assert.equal(canApproveObligations({ role: 'manager', permissions: {} }), false)
   assert.equal(canApproveObligations({ role: 'developer', is_developer: true }), true)
-  for (const role of ['admin', 'accountant', 'editor', 'viewer']) assert.equal(canApproveObligations({ role }), false)
+  for (const role of ['admin', 'accountant', 'viewer']) assert.equal(canApproveObligations({ role }), false)
   const options = [{ value: 'Зарегистрирован' }, { value: 'К оплате' }, { value: 'Оплачено' }]
   assert.deepEqual(approvalStatusOptions(options, { role: 'editor' }).map(item => item.value), ['Зарегистрирован', 'Оплачено'])
   assert.equal(approvalStatusOptions(options, { role: 'manager', permissions: { 'obligations.approve': true } }).length, 3)
@@ -41,6 +43,12 @@ test('manager approval can be limited to several legal entities', () => {
   assert.equal(canApproveObligations(manager, ''), false)
   assert.equal(canApproveObligations({ ...manager, approval_legal_entities: [] }, 'ООО Стоматология'), true)
   assert.equal(canApproveObligations({ role: 'developer', is_developer: true, approval_legal_entities: ['Одно юрлицо'] }, 'Другое юрлицо'), true)
+  const editor = { ...manager, role: 'editor' }
+  assert.equal(canApproveObligations(editor, 'ООО МЦ Мирт'), true)
+  assert.equal(canApproveObligations(editor, 'ООО Клиника Мирт'), true)
+  assert.equal(canApproveObligations(editor, 'ООО Стоматология'), false)
+  assert.equal(canApproveObligations({ ...editor, approval_legal_entities: [] }, 'ООО Стоматология'), true)
+
 })
 
 test('user settings persist and display multiple approval legal entities', () => {
@@ -56,6 +64,8 @@ test('navigation, registry actions and access editor are permission driven', () 
   assert.match(registry, /can\(user, 'registry\.delete'\)/)
   assert.match(registry, /can\(user, 'desktop\.broadcast'\)/)
   assert.match(registry, /can\(user, 'system\.maintenance'\)/)
+  assert.match(users, /canHoldApprovalPermissions\(form\.role\)/)
+  assert.match(users, /role === 'manager' \|\| role === 'editor'/)
   assert.match(users, /Индивидуальные права/)
   assert.match(users, /form\.is_developer/)
   assert.match(users, /RoleCard role="accountant"/)

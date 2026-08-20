@@ -95,11 +95,14 @@ func normalizePermissions(input permissionSet, role string) permissionSet {
 	if role != "accountant" {
 		delete(value, "invoice_mail.inbox")
 	}
-	if role != managerRole {
+	if !canHoldApprovalPermissions(role) {
 		delete(value, "obligations.approve")
 		delete(value, "executive.approve")
 		delete(value, "credits.approve")
 		delete(value, "priority_center.approve")
+	}
+	if canHoldApprovalPermissions(role) && (value["executive.approve"] || value["credits.approve"] || value["priority_center.approve"]) {
+		value["obligations.approve"] = true
 	}
 	for child, parent := range map[string]string{
 		"executive.approve": "executive.view", "executive.settings": "executive.view",

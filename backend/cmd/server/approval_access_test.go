@@ -6,14 +6,19 @@ import (
 	"testing"
 )
 
-func TestApprovalRoleIsLimitedToManagerAndDeveloper(t *testing.T) {
-	if !isManager(authUser{Role: managerRole, Permissions: permissionSet{"obligations.approve": true}}) || !isManager(authUser{Role: "developer", IsDeveloper: true}) {
-		t.Fatal("manager and developer must be able to approve")
+func TestApprovalRoleAllowsConfiguredManagerEditorAndDeveloper(t *testing.T) {
+	if !isManager(authUser{Role: managerRole, Permissions: permissionSet{"obligations.approve": true}}) ||
+		!isManager(authUser{Role: "editor", Permissions: permissionSet{"obligations.approve": true}}) ||
+		!isManager(authUser{Role: "developer", IsDeveloper: true}) {
+		t.Fatal("configured manager, configured editor and developer must be able to approve")
 	}
 	if isManager(authUser{Role: managerRole}) {
 		t.Fatal("manager without the configurable approval permission was allowed")
 	}
-	for _, role := range []string{"admin", "accountant", "editor", "viewer"} {
+	if isManager(authUser{Role: "editor"}) {
+		t.Fatal("editor without the configurable approval permission was allowed")
+	}
+	for _, role := range []string{"admin", "accountant", "viewer"} {
 		if isManager(authUser{Role: role}) {
 			t.Fatalf("role %q unexpectedly gained approval access", role)
 		}
@@ -44,16 +49,20 @@ func TestApprovalGuardAllowsUnrelatedEditsButRejectsApproval(t *testing.T) {
 	}
 }
 
-func TestApprovalPermissionsCannotBeGrantedToOtherRoles(t *testing.T) {
+func TestApprovalPermissionsCanBeGrantedOnlyToManagerOrEditor(t *testing.T) {
 	requested := permissionSet{"executive.approve": true, "credits.approve": true}
-	for _, role := range []string{"admin", "accountant", "editor", "viewer"} {
+	for _, role := range []string{"admin", "accountant", "viewer"} {
 		permissions := normalizePermissions(requested, role)
 		if permissions["executive.approve"] || permissions["credits.approve"] {
 			t.Fatalf("role %q retained approval permissions: %#v", role, permissions)
 		}
 	}
+	editor := normalizePermissions(requested, "editor")
+	if !editor["executive.approve"] || !editor["credits.approve"] || !editor["obligations.approve"] || !editor["executive.view"] || !editor["credits.view"] {
+		t.Fatalf("editor approval dependencies are incomplete: %#v", editor)
+	}
 	manager := normalizePermissions(requested, managerRole)
-	if !manager["executive.approve"] || !manager["credits.approve"] || !manager["executive.view"] || !manager["credits.view"] {
+	if !manager["executive.approve"] || !manager["credits.approve"] || !manager["obligations.approve"] || !manager["executive.view"] || !manager["credits.view"] {
 		t.Fatalf("manager approval dependencies are incomplete: %#v", manager)
 	}
 	defaults := defaultPermissions(managerRole)
@@ -93,14 +102,14 @@ func TestManagerPermissionAdministrationIsConfigurable(t *testing.T) {
 	}
 }
 
-func TestApprovalPermissionsRemainManagerOnlyAndConfigurable(t *testing.T) {
+func TestApprovalPermissionsRemainConfigurableForManagerAndEditorOnly(t *testing.T) {
 	requested := permissionSet{
 		"obligations.approve":     true,
 		"executive.approve":       true,
 		"credits.approve":         true,
 		"priority_center.approve": true,
 	}
-	for _, role := range []string{"admin", "accountant", "editor", "viewer"} {
+	for _, role := range []string{"admin", "accountant", "viewer"} {
 		permissions := normalizePermissions(requested, role)
 		for key := range requested {
 			if permissions[key] {
@@ -108,6 +117,13 @@ func TestApprovalPermissionsRemainManagerOnlyAndConfigurable(t *testing.T) {
 			}
 		}
 	}
+	editor := normalizePermissions(requested, "editor")
+	for key := range requested {
+		if !editor[key] {
+			t.Fatalf("editor lost configured approval permission %s", key)
+		}
+	}
+
 	manager := normalizePermissions(requested, managerRole)
 	for key := range requested {
 		if !manager[key] {

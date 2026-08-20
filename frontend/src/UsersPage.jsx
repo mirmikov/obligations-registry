@@ -23,7 +23,7 @@ export default function UsersPage({ user: currentUser, notify }) {
       if (!form.id) payload.email = form.email
       if (granular && !form.is_developer) {
         payload.permissions = form.permissions
-        payload.approval_legal_entities = form.role === 'manager' ? (form.approval_legal_entities || []) : []
+        payload.approval_legal_entities = canHoldApprovalPermissions(form.role) ? (form.approval_legal_entities || []) : []
       }
       if (form.id) await request(`/api/users/${form.id}`, { method: 'PATCH', body: JSON.stringify(payload) })
       else await request('/api/users', { method: 'POST', body: JSON.stringify(payload) })
@@ -45,7 +45,7 @@ export default function UsersPage({ user: currentUser, notify }) {
       <RoleCard role="admin" title="Администратор" text="Полный рабочий доступ без управления ролью программиста"/>
       <RoleCard role="manager" icon={<Crown/>} title="Руководитель" text="Полный стартовый доступ как у программиста, но каждое право можно настроить"/>
       <RoleCard role="accountant" icon={<Calculator/>} title="Бухгалтер" text="Получение и обработка счетов, отправленных сотрудниками"/>
-      <RoleCard role="editor" title="Редактор" text="Работа с реестром, оплатами и справочниками"/>
+      <RoleCard role="editor" title="Редактор" text="Работа с реестром; утверждение можно выдать отдельно по выбранным юрлицам"/>
       <RoleCard role="viewer" title="Зритель" text="Просмотр основных разделов без изменения данных"/>
     </div>
     <section className="panel users-panel">
@@ -77,7 +77,7 @@ function UserModal({ item, catalog, legalEntities, granular, onClose, onSave }) 
     permissions: granular ? { ...(catalog.presets[role] || {}) } : current.permissions,
   }))
   const togglePermission = key => {
-    if (isApprovalPermission(key) && form.role !== 'manager') return
+    if (isApprovalPermission(key) && !canHoldApprovalPermissions(form.role)) return
     const group = catalog.groups.find(candidate => candidate.permissions.some(permission => permission.key === key))
     const nextEnabled = !form.permissions?.[key]
     setForm(current => {
@@ -86,19 +86,23 @@ function UserModal({ item, catalog, legalEntities, granular, onClose, onSave }) 
       if (!nextEnabled && key === viewKey) group.permissions.forEach(permission => { permissions[permission.key] = false })
       if (nextEnabled && viewKey) permissions[viewKey] = true
       if (nextEnabled && (key === 'credits.view' || key === 'priority_center.view')) permissions['registry.view'] = true
+      if (nextEnabled && isApprovalPermission(key)) permissions['obligations.approve'] = true
+      if (!nextEnabled && key === 'obligations.approve') approvalPermissionKeys.forEach(permission => { permissions[permission] = false })
       return { ...current, permissions }
     })
   }
   const toggleGroup = group => {
-    const available = group.permissions.filter(permission => !isApprovalPermission(permission.key) || form.role === 'manager')
+    const available = group.permissions.filter(permission => !isApprovalPermission(permission.key) || canHoldApprovalPermissions(form.role))
     const enable = available.some(permission => !form.permissions?.[permission.key])
-    setForm(current => ({
-      ...current,
-      permissions: {
+    setForm(current => {
+      const permissions = {
         ...current.permissions,
         ...Object.fromEntries(available.map(permission => [permission.key, enable])),
-      },
-    }))
+      }
+      if (enable && available.some(permission => isApprovalPermission(permission.key))) permissions['obligations.approve'] = true
+      if (!permissions['obligations.approve']) approvalPermissionKeys.forEach(permission => { permissions[permission] = false })
+      return { ...current, permissions }
+    })
   }
   return <div className="modal-backdrop">
     <form className="modal user-access-modal" onSubmit={event => { event.preventDefault(); onSave(form) }}>
@@ -122,7 +126,7 @@ function UserModal({ item, catalog, legalEntities, granular, onClose, onSave }) 
           <label className="field"><span>{item.id ? 'Новый пароль (необязательно)' : 'Пароль'}</span><input type="password" required={!item.id} minLength="8" value={form.password} onChange={event => setForm({ ...form, password: event.target.value })}/></label>
           {item.id && <label className={`switch-row ${form.is_developer ? 'is-locked' : ''}`}><input type="checkbox" checked={form.active} disabled={form.is_developer} onChange={event => setForm({ ...form, active: event.target.checked })}/><i/><span>Учётная запись активна</span></label>}
           {form.is_developer && <div className="developer-lock-note"><Code2 size={18}/><span><strong>Защищённая роль</strong>Права программиста всегда включены и не могут быть сняты.</span></div>}
-          {form.role === 'manager' && !form.is_developer && <ApprovalLegalEntityScope values={form.approval_legal_entities || []} options={legalEntities} disabled={!granular} onChange={values => setForm(current => ({ ...current, approval_legal_entities: values }))}/>}
+          {canHoldApprovalPermissions(form.role) && !form.is_developer && <ApprovalLegalEntityScope values={form.approval_legal_entities || []} options={legalEntities} disabled={!granular} onChange={values => setForm(current => ({ ...current, approval_legal_entities: values }))}/>}
         </section>
         {granular && !form.is_developer && <section className="permission-editor">
           <header><div><strong>Индивидуальные права</strong><span>Галочки применяются сразу после сохранения</span></div><small>{Object.values(form.permissions || {}).filter(Boolean).length} включено</small></header>
@@ -134,7 +138,7 @@ function UserModal({ item, catalog, legalEntities, granular, onClose, onSave }) 
                   <span className={`permission-checkbox ${enabled === group.permissions.length ? 'checked' : enabled ? 'mixed' : ''}`}>{enabled > 0 && <Check size={14}/>}</span>
                   <strong>{group.label}</strong><small>{enabled}/{group.permissions.length}</small>
                 </button>
-                <div>{group.permissions.map(permission => { const locked = isApprovalPermission(permission.key) && form.role !== 'manager'; return <label className={locked ? 'permission-locked' : ''} key={permission.key} title={locked ? 'Это право доступно только руководителю и программисту' : ''}>
+                <div>{group.permissions.map(permission => { const locked = isApprovalPermission(permission.key) && !canHoldApprovalPermissions(form.role); return <label className={locked ? 'permission-locked' : ''} key={permission.key} title={locked ? 'Это право доступно руководителю, редактору и программисту' : ''}>
                   <input type="checkbox" checked={Boolean(form.permissions?.[permission.key])} disabled={locked} onChange={() => togglePermission(permission.key)}/>
                   <i><Check size={12}/></i><span>{permission.label}</span>
                 </label>})}</div>
@@ -169,4 +173,6 @@ function ApprovalLegalEntityScope({ values, options, disabled, onChange }) {
   </div>
 }
 
-function isApprovalPermission(key) { return key === 'obligations.approve' || key === 'executive.approve' || key === 'credits.approve' || key === 'priority_center.approve' }
+const approvalPermissionKeys = ['obligations.approve', 'executive.approve', 'credits.approve', 'priority_center.approve']
+function isApprovalPermission(key) { return approvalPermissionKeys.includes(key) }
+function canHoldApprovalPermissions(role) { return role === 'manager' || role === 'editor' }
