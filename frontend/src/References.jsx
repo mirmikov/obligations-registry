@@ -74,7 +74,11 @@ export default function References({ user, notify }) {
       ...current,
       counterparties: (current.counterparties || []).map(item => Number(item.id) === Number(id) ? { ...item, tax_id: result.tax_id || '' } : item),
     }))
-    notify(result.tax_id ? 'ИНН сохранён' : 'ИНН удалён')
+    if (result.reassigned_from) {
+      notify(`ИНН перенесён из архивной записи «${result.reassigned_from.value}» и сохранён. Записи не удалялись`)
+    } else {
+      notify(result.tax_id ? 'ИНН сохранён' : 'ИНН удалён')
+    }
   }
 
   const saveCounterpartyDeferment = async (id, defermentDays) => {
@@ -209,7 +213,7 @@ export default function References({ user, notify }) {
           {currentItems.map((item, index) => <div key={item.id} className={`${active === 'cost_categories' ? 'has-assignment' : ''} ${active === 'responsibles' && editable ? 'has-user-assignment' : ''} ${active === 'counterparties' ? 'counterparty-reference-row' : ''}`}>
             <span>{String(index + 1).padStart(2, '0')}</span>
             {active === 'counterparties' && editable && <button type="button" className={`reference-merge-checkbox ${selectedCounterparties.includes(Number(item.id)) ? 'selected' : ''}`} onClick={() => toggleCounterparty(Number(item.id))} aria-label={`Выбрать контрагента ${item.value} для объединения`} aria-pressed={selectedCounterparties.includes(Number(item.id))}>{selectedCounterparties.includes(Number(item.id)) && <Check size={15}/>}</button>}
-            {active === 'counterparties' ? <button type="button" className="reference-counterparty-name" onClick={() => openCounterpartyDetails(item)} title="Открыть актуальную карточку ФНС"><span><strong>{item.value}</strong><small>Сведения ФНС</small></span><Info size={16}/></button> : <strong>{item.value}</strong>}
+            {active === 'counterparties' ? <button type="button" className="reference-counterparty-name" onClick={() => openCounterpartyDetails(item)} title="Открыть актуальную карточку ФНС"><span><strong>{item.value}</strong><small>Сведения ФНС{item.aliases?.length ? ` · ранее: ${item.aliases.join(', ')}` : ''}</small></span><Info size={16}/></button> : <strong>{item.value}</strong>}
             {active === 'counterparties' && <CounterpartyTaxIDEditor item={item} editable={editable} onSave={saveCounterpartyTaxID} notify={notify}/>}
             {active === 'counterparties' && <CounterpartyDefermentEditor item={item} value={defermentAssignments[Number(item.id)]} editable={editable} onSave={saveCounterpartyDeferment} notify={notify}/>}
             {active === 'cost_categories' && <ResponsiblePicker
