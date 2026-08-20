@@ -259,7 +259,7 @@ export default function ExecutiveDashboard({ user, notify }) {
       loading={detailsLoading}
       statuses={(refs.statuses || []).map(item => item.value)}
       savingCells={detailsSaving}
-      editable={canApproveObligations(user)}
+      editable={legalEntity => canApproveObligations(user, legalEntity)}
       splitAllowed={can(user, 'registry.split')}
       onCommit={saveDetailField}
       onSplit={setSplitItem}
@@ -435,8 +435,8 @@ function ExecutiveDetails({ details, loading, statuses, savingCells, editable, s
                 <td>{item.comment || '—'}</td>
                 <td className="executive-detail-amount">{money(item.amount)}</td>
                 <td>{item.responsible || '—'}</td>
-                <ExecutiveStatusCell item={item} options={statusOptions} saving={savingCells.has(`${item.id}:status`)} editable={editable} onCommit={onCommit}/>
-                <ExecutiveApprovalDateCell item={item} saving={savingCells.has(`${item.id}:approval_date`)} editable={editable} onCommit={onCommit}/>
+                <ExecutiveStatusCell item={item} options={statusOptions} saving={savingCells.has(`${item.id}:status`)} editable={typeof editable === 'function' ? editable(item.legal_entity) : editable} onCommit={onCommit}/>
+                <ExecutiveApprovalDateCell item={item} saving={savingCells.has(`${item.id}:approval_date`)} editable={typeof editable === 'function' ? editable(item.legal_entity) : editable} onCommit={onCommit}/>
                 {splitAllowed && <ExecutiveSplitCell item={item} onSplit={onSplit}/>}
               </tr>)}</tbody>
               <tfoot><tr><td colSpan="6">Итого</td><td>{money(details.amount)}</td><td colSpan={splitAllowed ? 4 : 3}>{details.count.toLocaleString('ru-RU')} обязательств</td></tr></tfoot>
@@ -465,8 +465,8 @@ function ExecutiveSpecialDetailsTable({ details, statusOptions, savingCells, edi
       <td className="executive-detail-amount">{money(item.amount)}</td>
       <td className="executive-detail-paid">{money(item.paid_amount)}</td>
       <td className="executive-detail-outstanding">{money(item.outstanding_amount)}</td>
-      <ExecutiveStatusCell item={item} options={statusOptions} saving={savingCells.has(`${item.id}:status`)} editable={editable} onCommit={onCommit}/>
-      <ExecutiveApprovalDateCell item={item} saving={savingCells.has(`${item.id}:approval_date`)} editable={editable} onCommit={onCommit}/>
+      <ExecutiveStatusCell item={item} options={statusOptions} saving={savingCells.has(`${item.id}:status`)} editable={typeof editable === 'function' ? editable(item.legal_entity) : editable} onCommit={onCommit}/>
+      <ExecutiveApprovalDateCell item={item} saving={savingCells.has(`${item.id}:approval_date`)} editable={typeof editable === 'function' ? editable(item.legal_entity) : editable} onCommit={onCommit}/>
       {splitAllowed && <ExecutiveSplitCell item={item} onSplit={onSplit}/>}
     </tr>)}</tbody>
     <tfoot><tr>

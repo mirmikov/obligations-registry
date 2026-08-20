@@ -2,8 +2,16 @@ export function can(user, permission) {
   return Boolean(user?.is_developer || user?.permissions?.[permission])
 }
 
-export function canApproveObligations(user) {
-  return Boolean(user?.is_developer || user?.role === 'developer' || (user?.role === 'manager' && user?.permissions?.['obligations.approve']))
+export function canApproveObligations(user, legalEntity) {
+  const roleAllowed = Boolean(user?.is_developer || user?.role === 'developer' || (user?.role === 'manager' && user?.permissions?.['obligations.approve']))
+  if (!roleAllowed) return false
+  if (user?.is_developer || user?.role === 'developer' || legalEntity === undefined) return true
+  const allowedEntities = Array.isArray(user?.approval_legal_entities)
+    ? user.approval_legal_entities.map(value => String(value || '').trim()).filter(Boolean)
+    : []
+  if (!allowedEntities.length) return true
+  const target = String(legalEntity || '').trim().toLocaleLowerCase('ru-RU')
+  return Boolean(target && allowedEntities.some(value => value.toLocaleLowerCase('ru-RU') === target))
 }
 
 export function approvalStatusOptions(options = [], userOrAllowed) {

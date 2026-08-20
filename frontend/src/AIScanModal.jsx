@@ -15,6 +15,7 @@ export default function AIScanModal({ state, references, approvalEditable = fals
   const [activePage, setActivePage] = useState(state.items?.[0]?.page || 1)
   const items = state.items || []
   const active = items.find(item => item.page === activePage) || items[0]
+  const activeApprovalEditable = typeof approvalEditable === 'function' ? approvalEditable(active?.values?.legal_entity) : approvalEditable
   const selected = items.filter(item => item.include)
   const missing = selected.flatMap(item => requiredMissing(item).map(field => ({ page: item.page, field })))
   const updateItem = (page, updater) => onChange(current => ({ ...current, items: current.items.map(item => item.page === page ? updater(item) : item) }))
@@ -68,9 +69,9 @@ export default function AIScanModal({ state, references, approvalEditable = fals
                   <CustomSelect label="Статья затрат" value={active.values.cost_category} options={references.cost_categories} onChange={value => updateValue('cost_category', value)}/>
                   <ScanField label="Отсрочка, дней" type="number" min="0" step="1" value={active.values.deferment_days ?? ''} onChange={value => updateValue('deferment_days', value === '' ? null : Number(value))}/>
                   <ScanDateField label="Плановая оплата" value={active.values.planned_payment_date} onChange={value => updateValue('planned_payment_date', value)}/>
-                  {approvalEditable ? <ScanDateField label="Дата утверждения" value={active.values.approval_date} onChange={value => updateValue('approval_date', value)}/> : <div className="ai-scan-field ai-scan-field-locked"><span>Дата утверждения</span><strong>Только руководитель или программист</strong></div>}
+                  {activeApprovalEditable ? <ScanDateField label="Дата утверждения" value={active.values.approval_date} onChange={value => updateValue('approval_date', value)}/> : <div className="ai-scan-field ai-scan-field-locked"><span>Дата утверждения</span><strong>Нет права утверждать выбранное юрлицо</strong></div>}
                   <ScanDateField label="Фактическая оплата" value={active.values.actual_payment_date} onChange={value => updateValue('actual_payment_date', value)}/>
-                  <CustomSelect label="Статус" value={active.values.status} options={approvalStatusOptions(references.statuses, approvalEditable)} onChange={value => updateValue('status', value)}/>
+                  <CustomSelect label="Статус" value={active.values.status} options={approvalStatusOptions(references.statuses, activeApprovalEditable)} onChange={value => updateValue('status', value)}/>
                   <CustomSelect label="Срочность" value={active.values.urgency} options={references.urgencies} onChange={value => updateValue('urgency', value)}/>
                   <CustomSelect label="Ответственный" value={active.values.responsible} options={references.responsibles} onChange={value => updateValue('responsible', value)} allowCustom/>
                   <CustomSelect label="Приоритет" value={active.values.priority} options={references.priorities} onChange={value => updateValue('priority', value)}/>

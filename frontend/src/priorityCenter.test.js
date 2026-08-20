@@ -37,5 +37,5 @@ test('approval controls remain role-gated in every editable registry surface', (
   assert.match(registry, /canApproveObligations\(user\)/)
   assert.match(registry, /approvalStatusOptions\(refs\.statuses, approvalEditable\)/)
   assert.match(payments, /approvalStatusOptions\(refs\.statuses, approvalEditable\)/)
-  assert.match(scan, /approvalStatusOptions\(references\.statuses, approvalEditable\)/)
+  assert.match(scan, /approvalStatusOptions\(references\.statuses, activeApprovalEditable\)/)
 })

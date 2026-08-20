@@ -148,6 +148,34 @@ func profileRoleFromState(raw []byte, fallback string) string {
 	return fallback
 }
 
+func normalizeApprovalLegalEntities(values []string) []string {
+	seen := map[string]struct{}{}
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		key := strings.ToLower(value)
+		if value == "" {
+			continue
+		}
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		result = append(result, value)
+	}
+	return result
+}
+
+func approvalLegalEntitiesFromState(raw []byte) []string {
+	var state struct {
+		ApprovalLegalEntities []string `json:"approval_legal_entities"`
+	}
+	if len(raw) > 0 {
+		_ = json.Unmarshal(raw, &state)
+	}
+	return normalizeApprovalLegalEntities(state.ApprovalLegalEntities)
+}
+
 const profileRoleUpsertSQL = `
 	INSERT INTO user_workspace_state(user_id,state,updated_at)
 	VALUES($1,jsonb_build_object('profile_role',$2::text),now())
@@ -198,6 +226,7 @@ func (a *app) loadAuthUser(ctx context.Context, id int64) (authUser, error) {
 	} else {
 		user.Role = profileRoleFromState(raw, user.Role)
 		user.Permissions = permissionsFromState(raw, user.Role)
+		user.ApprovalLegalEntities = approvalLegalEntitiesFromState(raw)
 	}
 	return user, nil
 }
@@ -306,6 +335,15 @@ func saveUserPermissions(ctx context.Context, tx *sql.Tx, userID int64, permissi
 	_, err := tx.ExecContext(ctx, `
 		INSERT INTO user_workspace_state(user_id,state,updated_at) VALUES($1,jsonb_build_object('permissions',$2::jsonb),now())
 		ON CONFLICT(user_id) DO UPDATE SET state=jsonb_set(COALESCE(user_workspace_state.state,'{}'::jsonb),'{permissions}',$2::jsonb,true),updated_at=now()`,
+		userID, raw)
+	return err
+}
+
+func saveUserApprovalLegalEntities(ctx context.Context, tx *sql.Tx, userID int64, legalEntities []string) error {
+	raw, _ := json.Marshal(normalizeApprovalLegalEntities(legalEntities))
+	_, err := tx.ExecContext(ctx, `
+		INSERT INTO user_workspace_state(user_id,state,updated_at) VALUES($1,jsonb_build_object('approval_legal_entities',$2::jsonb),now())
+		ON CONFLICT(user_id) DO UPDATE SET state=jsonb_set(COALESCE(user_workspace_state.state,'{}'::jsonb),'{approval_legal_entities}',$2::jsonb,true),updated_at=now()`,
 		userID, raw)
 	return err
 }

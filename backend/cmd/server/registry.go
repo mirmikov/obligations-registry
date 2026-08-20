@@ -274,6 +274,7 @@ func (a *app) updateObligationRecord(w http.ResponseWriter, r *http.Request, aud
 	var previous struct {
 		ApprovalDate string `json:"approval_date"`
 		Counterparty string `json:"counterparty"`
+		LegalEntity  string `json:"legal_entity"`
 		Status       string `json:"status"`
 	}
 	if err = json.Unmarshal(beforeRow, &previous); err != nil {
@@ -287,7 +288,7 @@ func (a *app) updateObligationRecord(w http.ResponseWriter, r *http.Request, aud
 		}
 	}
 	input.normalizeForUpdate(previous.ApprovalDate)
-	if err = validateApprovalUpdate(user, obligationApprovalState{ApprovalDate: previous.ApprovalDate, Status: previous.Status}, input); err != nil {
+	if err = validateApprovalUpdate(user, obligationApprovalState{ApprovalDate: previous.ApprovalDate, LegalEntity: previous.LegalEntity, Status: previous.Status}, input); err != nil {
 		fail(w, http.StatusForbidden, err.Error())
 		return
 	}
@@ -462,6 +463,12 @@ func (a *app) bulkUpdate(w http.ResponseWriter, r *http.Request) {
 	if approvalOnly && scope.CostCategory != "" && lockedCount != uniqueIDCount(input.IDs) {
 		fail(w, http.StatusForbidden, "Можно изменять только платежи из раздела «Кредиты и лизинги»")
 		return
+	}
+	if approvalBulkUpdateRequested(input) {
+		if err = validateApprovalLegalEntitiesForIDs(r.Context(), tx, user, input.IDs); err != nil {
+			fail(w, http.StatusForbidden, err.Error())
+			return
+		}
 	}
 	before, err := snapshotRows(r.Context(), tx, "obligations", input.IDs)
 	if err != nil {

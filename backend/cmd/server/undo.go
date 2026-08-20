@@ -177,7 +177,7 @@ func (a *app) undoLast(w http.ResponseWriter, r *http.Request) {
 		fail(w, 500, "История отмены повреждена")
 		return
 	}
-	if payload.Obligations != nil && !isManager(user) {
+	if payload.Obligations != nil && !user.IsDeveloper {
 		if err = validateApprovalUndo(user, payload.Obligations); err != nil {
 			fail(w, http.StatusForbidden, err.Error())
 			return
@@ -245,7 +245,7 @@ func (a *app) undoLast(w http.ResponseWriter, r *http.Request) {
 }
 
 func validateApprovalUndo(user authUser, change *undoChange) error {
-	if isManager(user) || change == nil {
+	if user.IsDeveloper || change == nil {
 		return nil
 	}
 	type row struct {
@@ -266,13 +266,13 @@ func validateApprovalUndo(user authUser, change *undoChange) error {
 	for _, target := range before {
 		previous, exists := current[target.ID]
 		if !exists {
-			input := obligationInput{ApprovalDate: target.ApprovalDate, Status: target.Status}
+			input := obligationInput{ApprovalDate: target.ApprovalDate, LegalEntity: target.LegalEntity, Status: target.Status}
 			if err := validateApprovalCreate(user, input); err != nil {
 				return err
 			}
 			continue
 		}
-		if err := validateApprovalUpdate(user, previous, obligationInput{ApprovalDate: target.ApprovalDate, Status: target.Status}); err != nil {
+		if err := validateApprovalUpdate(user, previous, obligationInput{ApprovalDate: target.ApprovalDate, LegalEntity: target.LegalEntity, Status: target.Status}); err != nil {
 			return err
 		}
 	}

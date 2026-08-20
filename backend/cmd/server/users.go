@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"net/http"
@@ -29,11 +30,13 @@ func (a *app) listUsers(w http.ResponseWriter, r *http.Request) {
 			developer := isDeveloperEmail(email)
 			displayRole := profileRoleFromState(raw, role)
 			permissions := permissionsFromState(raw, displayRole)
+			approvalLegalEntities := approvalLegalEntitiesFromState(raw)
 			if developer {
 				displayRole = "developer"
 				permissions = fullPermissions()
+				approvalLegalEntities = []string{}
 			}
-			items = append(items, map[string]any{"id": id, "name": name, "email": email, "role": displayRole, "active": active, "created_at": created, "permissions": permissions, "is_developer": developer})
+			items = append(items, map[string]any{"id": id, "name": name, "email": email, "role": displayRole, "active": active, "created_at": created, "permissions": permissions, "approval_legal_entities": approvalLegalEntities, "is_developer": developer})
 		}
 	}
 	writeJSON(w, 200, items)
@@ -44,6 +47,7 @@ func (a *app) createUser(w http.ResponseWriter, r *http.Request) {
 		Name, Email, Password, Role string
 		Active                      *bool
 		Permissions                 *permissionSet
+		ApprovalLegalEntities       *[]string `json:"approval_legal_entities"`
 	}
 	if !decodeJSON(w, r, &input) {
 		return
@@ -77,6 +81,18 @@ func (a *app) createUser(w http.ResponseWriter, r *http.Request) {
 		fail(w, 500, "Не удалось зафиксировать настройки бухгалтерии")
 		return
 	}
+	approvalLegalEntities := []string{}
+	if input.ApprovalLegalEntities != nil {
+		if requestedRole != managerRole && len(normalizeApprovalLegalEntities(*input.ApprovalLegalEntities)) > 0 {
+			fail(w, http.StatusBadRequest, "Юридические лица для утверждения можно назначить только руководителю")
+			return
+		}
+		approvalLegalEntities, err = canonicalApprovalLegalEntities(r.Context(), tx, *input.ApprovalLegalEntities)
+		if err != nil {
+			fail(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
 	var id int64
 	err = tx.QueryRowContext(r.Context(), `INSERT INTO users(name,email,password_hash,role) VALUES($1,lower($2),$3,$4) RETURNING id`, strings.TrimSpace(input.Name), strings.TrimSpace(input.Email), string(hash), storedRole).Scan(&id)
 	if err != nil {
@@ -85,6 +101,10 @@ func (a *app) createUser(w http.ResponseWriter, r *http.Request) {
 	}
 	if err = saveUserProfileRole(r.Context(), tx, id, requestedRole); err != nil {
 		fail(w, 500, "Не удалось сохранить роль пользователя")
+		return
+	}
+	if err = saveUserApprovalLegalEntities(r.Context(), tx, id, approvalLegalEntities); err != nil {
+		fail(w, 500, "Не удалось сохранить юридические лица для утверждения")
 		return
 	}
 	effectivePermissions := defaultPermissions(requestedRole)
@@ -128,9 +148,10 @@ func (a *app) updateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var input struct {
-		Name, Role, Password string
-		Active               *bool
-		Permissions          *permissionSet
+		Name, Role, Password  string
+		Active                *bool
+		Permissions           *permissionSet
+		ApprovalLegalEntities *[]string `json:"approval_legal_entities"`
 	}
 	if !decodeJSON(w, r, &input) {
 		return
@@ -209,6 +230,20 @@ func (a *app) updateUser(w http.ResponseWriter, r *http.Request) {
 		fail(w, 500, "Не удалось сохранить роль пользователя")
 		return
 	}
+	approvalLegalEntities := approvalLegalEntitiesFromState(targetState)
+	if requestedRole != managerRole {
+		approvalLegalEntities = []string{}
+	} else if input.ApprovalLegalEntities != nil {
+		approvalLegalEntities, err = canonicalApprovalLegalEntities(r.Context(), tx, *input.ApprovalLegalEntities)
+		if err != nil {
+			fail(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
+	if err = saveUserApprovalLegalEntities(r.Context(), tx, id, approvalLegalEntities); err != nil {
+		fail(w, 500, "Не удалось сохранить юридические лица для утверждения")
+		return
+	}
 	effectivePermissions := permissionsFromState(targetState, requestedRole)
 	savePermissions := false
 	if input.Permissions != nil {
@@ -262,8 +297,40 @@ func (a *app) updateUser(w http.ResponseWriter, r *http.Request) {
 		fail(w, 500, "Не удалось завершить сохранение")
 		return
 	}
-	a.audit(r.Context(), user.ID, "update", "user", &id, map[string]any{"role": requestedRole, "active": input.Active})
+	a.audit(r.Context(), user.ID, "update", "user", &id, map[string]any{"role": requestedRole, "active": input.Active, "approval_legal_entities": approvalLegalEntities})
 	writeJSON(w, 200, map[string]any{"id": id})
+}
+
+func canonicalApprovalLegalEntities(ctx context.Context, tx *sql.Tx, requested []string) ([]string, error) {
+	requested = normalizeApprovalLegalEntities(requested)
+	if len(requested) == 0 {
+		return []string{}, nil
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT value FROM reference_values WHERE kind=$1 AND active ORDER BY sort_order,value`, "legal_entities")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	available := map[string]string{}
+	for rows.Next() {
+		var value string
+		if err = rows.Scan(&value); err != nil {
+			return nil, err
+		}
+		available[strings.ToLower(strings.TrimSpace(value))] = strings.TrimSpace(value)
+	}
+	if err = rows.Err(); err != nil {
+		return nil, err
+	}
+	result := make([]string, 0, len(requested))
+	for _, value := range requested {
+		canonical, exists := available[strings.ToLower(value)]
+		if !exists {
+			return nil, fmt.Errorf("юридическое лицо «%s» отсутствует в активном справочнике", value)
+		}
+		result = append(result, canonical)
+	}
+	return result, nil
 }
 
 func validRole(role string) bool {

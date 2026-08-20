@@ -14,12 +14,13 @@ import (
 )
 
 type authUser struct {
-	ID          int64         `json:"id"`
-	Name        string        `json:"name"`
-	Email       string        `json:"email"`
-	Role        string        `json:"role"`
-	Permissions permissionSet `json:"permissions"`
-	IsDeveloper bool          `json:"is_developer"`
+	ID                    int64         `json:"id"`
+	Name                  string        `json:"name"`
+	Email                 string        `json:"email"`
+	Role                  string        `json:"role"`
+	Permissions           permissionSet `json:"permissions"`
+	ApprovalLegalEntities []string      `json:"approval_legal_entities"`
+	IsDeveloper           bool          `json:"is_developer"`
 }
 
 type contextKey string
