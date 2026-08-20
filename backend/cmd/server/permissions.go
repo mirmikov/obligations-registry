@@ -209,7 +209,8 @@ func permissionsFromState(raw []byte, role string) permissionSet {
 			state.Permissions["invoice_mail.send"] = true
 		}
 	}
-	return normalizePermissions(state.Permissions, role)
+	permissions := normalizePermissions(state.Permissions, role)
+	return permissionsWithApprovalScope(permissions, role, approvalLegalEntitiesFromState(raw))
 }
 
 func (a *app) loadAuthUser(ctx context.Context, id int64) (authUser, error) {

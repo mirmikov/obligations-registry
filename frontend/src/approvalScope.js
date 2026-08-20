@@ -1,3 +1,5 @@
+export const approvalPermissionKeys = ['obligations.approve', 'executive.approve', 'credits.approve', 'priority_center.approve']
+
 export function normalizeApprovalEntityOptions(input) {
   if (!Array.isArray(input)) return []
   const seen = new Set()
@@ -12,4 +14,27 @@ export function normalizeApprovalEntityOptions(input) {
     result.push(value)
   }
   return result
+}
+
+export function withApprovalScope(form, values) {
+  return {
+    ...form,
+    approval_legal_entities: normalizeApprovalEntityOptions(values),
+    permissions: {
+      ...(form.permissions || {}),
+      'obligations.approve': true,
+      'registry.view': true,
+    },
+  }
+}
+
+export function withApprovalEnabled(form, enabled) {
+  const permissions = { ...(form.permissions || {}), 'obligations.approve': Boolean(enabled) }
+  if (enabled) permissions['registry.view'] = true
+  else approvalPermissionKeys.forEach(key => { permissions[key] = false })
+  return {
+    ...form,
+    permissions,
+    approval_legal_entities: enabled ? normalizeApprovalEntityOptions(form.approval_legal_entities) : [],
+  }
 }

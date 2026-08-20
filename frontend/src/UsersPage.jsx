@@ -3,7 +3,7 @@ import { Calculator, Check, Code2, Crown, Plus, ShieldCheck, UserPen, X } from '
 import { request } from './api'
 import { dateTime, PageHeader, roleLabel } from './App'
 import { can } from './permissions'
-import { normalizeApprovalEntityOptions } from './approvalScope'
+import { approvalPermissionKeys, normalizeApprovalEntityOptions, withApprovalEnabled, withApprovalScope } from './approvalScope'
 
 export default function UsersPage({ user: currentUser, notify }) {
   const [users, setUsers] = useState([])
@@ -80,6 +80,7 @@ function UserModal({ item, catalog, legalEntities, granular, onClose, onSave }) 
     ...current,
     role,
     permissions: granular ? { ...(catalog.presets[role] || {}) } : current.permissions,
+    approval_legal_entities: canHoldApprovalPermissions(role) ? current.approval_legal_entities : [],
   }))
   const togglePermission = key => {
     if (isApprovalPermission(key) && !canHoldApprovalPermissions(form.role)) return
@@ -93,7 +94,8 @@ function UserModal({ item, catalog, legalEntities, granular, onClose, onSave }) 
       if (nextEnabled && (key === 'credits.view' || key === 'priority_center.view')) permissions['registry.view'] = true
       if (nextEnabled && isApprovalPermission(key)) permissions['obligations.approve'] = true
       if (!nextEnabled && key === 'obligations.approve') approvalPermissionKeys.forEach(permission => { permissions[permission] = false })
-      return { ...current, permissions }
+      const next = { ...current, permissions }
+      return key === 'obligations.approve' ? withApprovalEnabled(next, nextEnabled) : next
     })
   }
   const toggleGroup = group => {
@@ -106,7 +108,8 @@ function UserModal({ item, catalog, legalEntities, granular, onClose, onSave }) 
       }
       if (enable && available.some(permission => isApprovalPermission(permission.key))) permissions['obligations.approve'] = true
       if (!permissions['obligations.approve']) approvalPermissionKeys.forEach(permission => { permissions[permission] = false })
-      return { ...current, permissions }
+      const next = { ...current, permissions }
+      return withApprovalEnabled(next, Boolean(permissions['obligations.approve']))
     })
   }
   return <div className="modal-backdrop">
@@ -131,7 +134,14 @@ function UserModal({ item, catalog, legalEntities, granular, onClose, onSave }) 
           <label className="field"><span>{item.id ? 'Новый пароль (необязательно)' : 'Пароль'}</span><input type="password" required={!item.id} minLength="8" value={form.password} onChange={event => setForm({ ...form, password: event.target.value })}/></label>
           {item.id && <label className={`switch-row ${form.is_developer ? 'is-locked' : ''}`}><input type="checkbox" checked={form.active} disabled={form.is_developer} onChange={event => setForm({ ...form, active: event.target.checked })}/><i/><span>Учётная запись активна</span></label>}
           {form.is_developer && <div className="developer-lock-note"><Code2 size={18}/><span><strong>Защищённая роль</strong>Права программиста всегда включены и не могут быть сняты.</span></div>}
-          {canHoldApprovalPermissions(form.role) && !form.is_developer && <ApprovalLegalEntityScope values={form.approval_legal_entities || []} options={legalEntities} disabled={!granular} onChange={values => setForm(current => ({ ...current, approval_legal_entities: values }))}/>}
+          {canHoldApprovalPermissions(form.role) && !form.is_developer && <ApprovalLegalEntityScope
+            values={form.approval_legal_entities || []}
+            options={legalEntities}
+            enabled={Boolean(form.permissions?.['obligations.approve'])}
+            disabled={!granular}
+            onEnabledChange={enabled => setForm(current => withApprovalEnabled(current, enabled))}
+            onChange={values => setForm(current => withApprovalScope(current, values))}
+          />}
         </section>
         {granular && !form.is_developer && <section className="permission-editor">
           <header><div><strong>Индивидуальные права</strong><span>Галочки применяются сразу после сохранения</span></div><small>{Object.values(form.permissions || {}).filter(Boolean).length} включено</small></header>
@@ -157,28 +167,33 @@ function UserModal({ item, catalog, legalEntities, granular, onClose, onSave }) 
   </div>
 }
 
-function ApprovalLegalEntityScope({ values, options, disabled, onChange }) {
+function ApprovalLegalEntityScope({ values, options, enabled, disabled, onEnabledChange, onChange }) {
   const normalized = normalizeApprovalEntityOptions(values)
   const availableOptions = normalizeApprovalEntityOptions(options)
   const selected = new Set(normalized.map(value => value.toLocaleLowerCase('ru-RU')))
-  const allSelected = selected.size === 0
+  const allSelected = enabled && selected.size === 0
   const toggle = value => {
     if (disabled) return
+    if (!enabled) {
+      onChange([value])
+      return
+    }
     const key = value.toLocaleLowerCase('ru-RU')
     if (selected.has(key)) {
       if (normalized.length === 1) return
       onChange(normalized.filter(item => item.toLocaleLowerCase('ru-RU') !== key))
     } else onChange([...normalized, value])
   }
-  return <div className="approval-entity-scope">
+  return <div className={`approval-entity-scope ${enabled ? 'is-enabled' : 'is-disabled'}`}>
     <div className="approval-entity-scope-head"><Crown size={18}/><span><strong>Юрлица для утверждения</strong><small>Можно выбрать несколько организаций</small></span></div>
+    <label className="switch-row approval-scope-switch"><input type="checkbox" checked={enabled} disabled={disabled} onChange={event => onEnabledChange(event.target.checked)}/><i/><span>{enabled ? 'Утверждение «К оплате» разрешено' : 'Разрешить утверждение «К оплате»'}</span></label>
     <button type="button" className={`approval-entity-option ${allSelected ? 'is-selected' : ''}`} disabled={disabled} onClick={() => onChange([])}><i>{allSelected && <Check size={13}/>}</i><span><strong>Все юридические лица</strong><small>Без ограничения</small></span></button>
-    <div className="approval-entity-list">{availableOptions.map(value => { const checked = selected.has(value.toLocaleLowerCase('ru-RU')); return <button type="button" key={value} className={`approval-entity-option ${checked ? 'is-selected' : ''}`} disabled={disabled} onClick={() => toggle(value)}><i>{checked && <Check size={13}/>}</i><span>{value}</span></button> })}</div>
-    {!allSelected && <p>Утверждение «К оплате» доступно для {normalized.length} {normalized.length === 1 ? 'юрлица' : 'юрлиц'}. Чтобы разрешить все, выберите пункт выше.</p>}
+    <div className="approval-entity-list">{availableOptions.map(value => { const checked = enabled && selected.has(value.toLocaleLowerCase('ru-RU')); return <button type="button" key={value} className={`approval-entity-option ${checked ? 'is-selected' : ''}`} disabled={disabled} onClick={() => toggle(value)}><i>{checked && <Check size={13}/>}</i><span>{value}</span></button> })}</div>
+    {enabled && !allSelected && <p>Утверждение «К оплате» доступно для {normalized.length} {normalized.length === 1 ? 'юрлица' : 'юрлиц'}. Чтобы разрешить все, выберите пункт выше.</p>}
+    {!enabled && <p>Выберите юрлицо или включите переключатель. После сохранения право появится у пользователя сразу.</p>}
     {!availableOptions.length && <p>В активном справочнике пока нет юридических лиц.</p>}
   </div>
 }
 
-const approvalPermissionKeys = ['obligations.approve', 'executive.approve', 'credits.approve', 'priority_center.approve']
 function isApprovalPermission(key) { return approvalPermissionKeys.includes(key) }
 function canHoldApprovalPermissions(role) { return role === 'manager' || role === 'editor' }

@@ -111,7 +111,8 @@ func (a *app) createUser(w http.ResponseWriter, r *http.Request) {
 	if input.Permissions != nil {
 		effectivePermissions = normalizePermissions(*input.Permissions, requestedRole)
 	}
-	if input.Permissions != nil || protectedProfileRole(requestedRole) {
+	effectivePermissions = permissionsWithApprovalScope(effectivePermissions, requestedRole, approvalLegalEntities)
+	if input.Permissions != nil || protectedProfileRole(requestedRole) || len(approvalLegalEntities) > 0 {
 		if err = saveUserPermissions(r.Context(), tx, id, effectivePermissions); err != nil {
 			fail(w, 500, "Не удалось сохранить права пользователя")
 			return
@@ -240,10 +241,6 @@ func (a *app) updateUser(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if err = saveUserApprovalLegalEntities(r.Context(), tx, id, approvalLegalEntities); err != nil {
-		fail(w, 500, "Не удалось сохранить юридические лица для утверждения")
-		return
-	}
 	effectivePermissions := permissionsFromState(targetState, requestedRole)
 	savePermissions := false
 	if input.Permissions != nil {
@@ -254,6 +251,16 @@ func (a *app) updateUser(w http.ResponseWriter, r *http.Request) {
 		savePermissions = true
 	} else if requestedRole != currentProfileRole && protectedProfileRole(currentProfileRole) {
 		savePermissions = true
+	}
+	if len(approvalLegalEntities) > 0 {
+		effectivePermissions = permissionsWithApprovalScope(effectivePermissions, requestedRole, approvalLegalEntities)
+		savePermissions = true
+	} else if !effectivePermissions["obligations.approve"] {
+		approvalLegalEntities = []string{}
+	}
+	if err = saveUserApprovalLegalEntities(r.Context(), tx, id, approvalLegalEntities); err != nil {
+		fail(w, 500, "Не удалось сохранить юридические лица для утверждения")
+		return
 	}
 	if savePermissions {
 		if err = saveUserPermissions(r.Context(), tx, id, effectivePermissions); err != nil {
