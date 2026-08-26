@@ -4,6 +4,7 @@ import { request, requestBlob } from './api'
 import { roleLabel } from './App'
 import { can } from './permissions'
 import AIScanModal from './AIScanModal'
+import { buildAIScanObligationValues, normalizeAIScanDocumentPages } from './aiScanValues'
 import { clearConversationUnread, dispatchChatRead } from './chatUnread'
 import { ACCOUNTING_DESCRIPTION_LIMIT, ACCOUNTING_FILE_ACCEPT, ACCOUNTING_SECTION, ACCOUNTING_SUBJECT_LIMIT, conversationsForSection, folderForAccountingConversation, validateAccountingMailDraft } from './accountingMail'
 import './accountingMail.css'
@@ -233,7 +234,7 @@ export default function Chat({ user, notify, compact = false, initialConversatio
       }
       if (result.status === 'processing') throw new Error('Распознавание не завершилось за 12 минут. Разделите PDF на части')
       if (result.status === 'error') throw new Error(result.error || 'Не удалось распознать документ')
-      const items = result.items.map(item => ({ page: item.page, include: !item.duplicate, duplicate: item.duplicate, warnings: item.warnings || [], confidence: item.confidence || {}, values: { ...blankObligation(), status: '', counterparty: item.counterparty || '', legal_entity: item.legal_entity || '', document_number: item.document_number || '', document_date: item.document_date || '', amount: item.amount ?? null } }))
+      const items = result.items.map(item => ({ page: item.page, pages: normalizeAIScanDocumentPages(item), include: !item.duplicate, duplicate: item.duplicate, duplicate_matches: item.duplicate_matches || [], warnings: item.warnings || [], confidence: item.confidence || {}, values: buildAIScanObligationValues(blankObligation(), item) }))
       setAIScan({ ...result, filename: file.name, items, loading: false, error: '' })
     } catch (error) { setAIScan({ loading: false, filename: file.name, error: error.message }) }
   }

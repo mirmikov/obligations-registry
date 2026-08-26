@@ -5,6 +5,7 @@ import { requestBlob } from './api'
 import { AI_SCAN_ZOOM_MAX, AI_SCAN_ZOOM_MIN, nextAIScanZoom } from './aiScanZoom'
 import { approvalStatusOptions } from './permissions'
 import { buildCostCategoryResponsibleMap, buildCounterpartyDefermentMap, withReferenceDefaults } from './referenceDefaults'
+import { formatAIScanDocumentPages, normalizeAIScanDocumentPages } from './aiScanValues'
 
 const automaticFields = [
   ['counterparty', 'Контрагент'], ['entry_date', 'Дата внесения'], ['legal_entity', 'Юридическое лицо'],
@@ -43,11 +44,11 @@ export default function AIScanModal({ state, references, approvalEditable = fals
             <header><strong>Найдено счетов: {items.length}</strong><span>Выбрано: {selected.length}</span></header>
             <div>{items.map(item => <button type="button" key={item.page} className={`${item.page === active?.page ? 'active' : ''} ${item.duplicate ? 'duplicate' : ''}`} onClick={() => setActivePage(item.page)}>
               <label onClick={event => event.stopPropagation()}><input type="checkbox" checked={item.include} onChange={event => updateItem(item.page, current => ({ ...current, include: event.target.checked }))}/><span><Check size={12}/></span></label>
-              <div><b>Страница {item.page}</b><strong>{item.values.counterparty || 'Контрагент не распознан'}</strong><small>{item.values.amount ? money(item.values.amount) : 'Сумма не распознана'}</small>{item.duplicate && <em>Возможный дубль</em>}</div>
+              <div><b>{formatAIScanDocumentPages(item)}</b><strong>{item.values.counterparty || 'Контрагент не распознан'}</strong><small>{item.values.amount ? money(item.values.amount) : 'Сумма не распознана'}</small>{item.duplicate && <em>Возможный дубль</em>}</div>
             </button>)}</div>
           </aside>
           {active && <main className="ai-scan-editor">
-            <AIScanPreview batch={state.batch} page={active.page}/>
+            <AIScanPreview batch={state.batch} pages={normalizeAIScanDocumentPages(active)}/>
             <div className="ai-scan-form">
               <section className="ai-scan-recognized">
                 <header><div><Sparkles size={18}/><span><strong>Извлечено из скана</strong><small>Обязательно проверьте перед сохранением</small></span></div><ConfidenceBadge item={active}/></header>
@@ -58,6 +59,8 @@ export default function AIScanModal({ state, references, approvalEditable = fals
                   <ScanField label="Сумма" type="number" step="0.01" min="0.01" value={active.values.amount ?? ''} onChange={value => updateValue('amount', value === '' ? null : Number(value))} required/>
                   <ScanField label="Документ" value={active.values.document_number} onChange={value => updateValue('document_number', value)} required/>
                   <ScanDateField label="Дата документа" value={active.values.document_date} onChange={value => updateValue('document_date', value)} required/>
+                  <ScanField label="Отсрочка, дней" type="number" min="0" step="1" value={active.values.deferment_days ?? ''} onChange={value => updateValue('deferment_days', value === '' ? null : Number(value))}/>
+                  <ScanField label="Условия оплаты" value={active.values.source_note} onChange={value => updateValue('source_note', value)} wide/>
                 </div>
                 {active.duplicate_matches?.length > 0 && <div className="ai-scan-duplicate-details"><AlertTriangle size={15}/><div><strong>Похожий счёт уже есть в реестре</strong>{active.duplicate_matches.slice(0, 3).map(match => <span key={match.id}>Запись №{match.id}: {match.document_number || 'без номера'} от {match.document_date || 'без даты'} · {match.amount == null ? 'без суммы' : money(match.amount)}</span>)}</div></div>}
                 {active.warnings.length > 0 && <div className="ai-scan-warnings">{active.warnings.map(warning => <span key={warning}><AlertTriangle size={13}/>{warning}</span>)}</div>}
@@ -67,7 +70,6 @@ export default function AIScanModal({ state, references, approvalEditable = fals
                 <div className="ai-scan-fields">
                   <CustomSelect label="Признак учёта" value={active.values.account_type} options={references.account_types} onChange={value => updateValue('account_type', value)}/>
                   <CustomSelect label="Статья затрат" value={active.values.cost_category} options={references.cost_categories} onChange={value => updateValue('cost_category', value)}/>
-                  <ScanField label="Отсрочка, дней" type="number" min="0" step="1" value={active.values.deferment_days ?? ''} onChange={value => updateValue('deferment_days', value === '' ? null : Number(value))}/>
                   <ScanDateField label="Плановая оплата" value={active.values.planned_payment_date} onChange={value => updateValue('planned_payment_date', value)}/>
                   {activeApprovalEditable ? <ScanDateField label="Дата утверждения" value={active.values.approval_date} onChange={value => updateValue('approval_date', value)}/> : <div className="ai-scan-field ai-scan-field-locked"><span>Дата утверждения</span><strong>Нет права утверждать выбранное юрлицо</strong></div>}
                   <ScanDateField label="Фактическая оплата" value={active.values.actual_payment_date} onChange={value => updateValue('actual_payment_date', value)}/>
@@ -76,7 +78,6 @@ export default function AIScanModal({ state, references, approvalEditable = fals
                   <CustomSelect label="Ответственный" value={active.values.responsible} options={references.responsibles} onChange={value => updateValue('responsible', value)} allowCustom/>
                   <CustomSelect label="Приоритет" value={active.values.priority} options={references.priorities} onChange={value => updateValue('priority', value)}/>
                   <ScanField label="Комментарий" value={active.values.comment} onChange={value => updateValue('comment', value)} wide/>
-                  <ScanField label="Условия оплаты" value={active.values.source_note} onChange={value => updateValue('source_note', value)} wide/>
                 </div>
               </section>
             </div>
@@ -102,9 +103,12 @@ function ConfidenceBadge({ item }) {
   return <span className={`ai-confidence ${confident === fields.length ? 'high' : confident >= 3 ? 'medium' : 'low'}`}>{confident}/{fields.length} уверенно</span>
 }
 
-function AIScanPreview({ batch, page }) {
+function AIScanPreview({ batch, pages }) {
+  const pageKey = pages.join(',')
+  const [page, setPage] = useState(pages[0])
   const [preview, setPreview] = useState({ loading: true, url: '', error: '' })
   const [zoom, setZoom] = useState(100)
+  useEffect(() => setPage(pages[0]), [pageKey])
   useEffect(() => {
     let active = true
     let url = ''
@@ -125,6 +129,7 @@ function AIScanPreview({ batch, page }) {
   const toggleZoom = () => setZoom(current => current === 100 ? 200 : 100)
   return <section className="ai-scan-preview" onWheel={handleWheel} aria-label={`Предпросмотр страницы ${page}`}>
     {!preview.loading && !preview.error && <div className="ai-scan-preview-toolbar" role="toolbar" aria-label="Масштаб документа">
+      {pages.length > 1 && <div className="ai-scan-preview-pages" aria-label="Страницы счёта">{pages.map(value => <button type="button" key={value} className={value === page ? 'active' : ''} onClick={() => setPage(value)} aria-label={`Открыть страницу ${value}`}>{value}</button>)}</div>}
       <button type="button" onClick={() => changeZoom(-1)} disabled={zoom <= AI_SCAN_ZOOM_MIN} title="Уменьшить" aria-label="Уменьшить масштаб"><ZoomOut size={16}/></button>
       <strong aria-live="polite">{zoom}%</strong>
       <button type="button" onClick={() => changeZoom(1)} disabled={zoom >= AI_SCAN_ZOOM_MAX} title="Увеличить" aria-label="Увеличить масштаб"><ZoomIn size={16}/></button>
