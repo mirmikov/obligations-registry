@@ -101,12 +101,15 @@ type aiScanBatchMeta struct {
 
 type aiScanSuggestion struct {
 	Page              int               `json:"page"`
+	Pages             []int             `json:"pages,omitempty"`
 	Counterparty      string            `json:"counterparty"`
 	CounterpartyTaxID string            `json:"counterparty_tax_id,omitempty"`
 	LegalEntity       string            `json:"legal_entity"`
 	DocumentNumber    string            `json:"document_number"`
 	DocumentDate      string            `json:"document_date"`
 	Amount            *float64          `json:"amount"`
+	DefermentDays     *int              `json:"deferment_days,omitempty"`
+	PaymentTerms      string            `json:"payment_terms,omitempty"`
 	Duplicate         bool              `json:"duplicate"`
 	DuplicateMatches  []duplicateMatch  `json:"duplicate_matches,omitempty"`
 	Confidence        map[string]string `json:"confidence"`
@@ -292,11 +295,20 @@ func (a *app) processAIScanBatch(token, directory string, pages []string) {
 			}
 		}
 		suggestion.Page = index + 1
-		suggestion.DuplicateMatches = a.aiScanDuplicates(ctx, suggestion)
-		suggestion.Duplicate = len(suggestion.DuplicateMatches) > 0
+		suggestion.Pages = []int{index + 1}
 		if ocrErr != nil {
 			suggestion.Warnings = append(suggestion.Warnings, "Страница распознана не полностью — проверьте значения вручную")
 		}
+		suggestions[index] = suggestion
+	}
+	pageTexts := make([]string, len(pages))
+	for index := range pageTexts {
+		pageTexts[index] = strings.TrimSpace(valueAt(ocrTexts, index) + "\n" + valueAt(textLayer, index))
+	}
+	suggestions = groupAIScanDocumentSuggestions(suggestions, pageTexts)
+	for index, suggestion := range suggestions {
+		suggestion.DuplicateMatches = a.aiScanDuplicates(ctx, suggestion)
+		suggestion.Duplicate = len(suggestion.DuplicateMatches) > 0
 		suggestions[index] = suggestion
 	}
 	if ctx.Err() != nil {
@@ -847,6 +859,14 @@ func mergeAIScanSuggestions(primary aiScanSuggestion, candidates ...aiScanSugges
 			primary.Amount = candidate.Amount
 			primary.Confidence["amount"] = candidate.Confidence["amount"]
 		}
+		if candidate.DefermentDays != nil && (primary.DefermentDays == nil || aiScanConfidenceRank(candidate.Confidence["deferment_days"]) > aiScanConfidenceRank(primary.Confidence["deferment_days"])) {
+			primary.DefermentDays = candidate.DefermentDays
+			primary.PaymentTerms = candidate.PaymentTerms
+			primary.Confidence["deferment_days"] = candidate.Confidence["deferment_days"]
+		} else if primary.PaymentTerms == "" && candidate.PaymentTerms != "" {
+			primary.PaymentTerms = candidate.PaymentTerms
+			primary.Confidence["deferment_days"] = candidate.Confidence["deferment_days"]
+		}
 	}
 	refreshAIScanWarnings(&primary)
 	return primary
@@ -869,6 +889,9 @@ func refreshAIScanWarnings(result *aiScanSuggestion) {
 		if absent {
 			result.Warnings = append(result.Warnings, "Не распознано поле: "+item.label)
 		}
+	}
+	if result.PaymentTerms != "" && result.DefermentDays == nil {
+		result.Warnings = append(result.Warnings, "Условия оплаты распознаны, но отсрочку нужно проверить вручную")
 	}
 }
 
@@ -920,6 +943,7 @@ func parseAIScanTextWithReferences(text string, counterparties []aiScanCounterpa
 			setAIScanDocumentFields(&result, text, standalone[1], standalone[2], date)
 		}
 	}
+	result.DefermentDays, result.PaymentTerms, result.Confidence["deferment_days"] = extractAIScanDeferment(text, result.DocumentDate)
 	result.Amount = parseAIScanAmount(text)
 	if result.Amount != nil {
 		result.Confidence["amount"] = "high"
@@ -1845,7 +1869,7 @@ func (a *app) commitAIScan(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &input) {
 		return
 	}
-	if len(input.Items) < 1 || len(input.Items) > meta.PageCount {
+	if len(input.Items) < 1 || len(input.Items) > len(meta.Items) {
 		fail(w, http.StatusBadRequest, "Выберите хотя бы один счёт")
 		return
 	}
@@ -1856,12 +1880,13 @@ func (a *app) commitAIScan(w http.ResponseWriter, r *http.Request) {
 	seen := map[int]bool{}
 	for index := range input.Items {
 		item := &input.Items[index]
-		if item.Page < 1 || item.Page > meta.PageCount || seen[item.Page] {
+		detected, exists := detectedByPage[item.Page]
+		if item.Page < 1 || item.Page > meta.PageCount || seen[item.Page] || !exists {
 			fail(w, http.StatusBadRequest, "Некорректный список страниц")
 			return
 		}
 		seen[item.Page] = true
-		if detected := detectedByPage[item.Page]; detected.CounterpartyTaxID != "" && normalizedPartyName(detected.Counterparty) == normalizedPartyName(item.Values.Counterparty) {
+		if detected.CounterpartyTaxID != "" && normalizedPartyName(detected.Counterparty) == normalizedPartyName(item.Values.Counterparty) {
 			item.CounterpartyTaxID = detected.CounterpartyTaxID
 		}
 		if strings.TrimSpace(item.Values.Counterparty) == "" || strings.TrimSpace(item.Values.LegalEntity) == "" || strings.TrimSpace(item.Values.DocumentNumber) == "" || item.Values.DocumentDate == "" || item.Values.Amount == nil || *item.Values.Amount <= 0 {
@@ -1920,14 +1945,14 @@ func (a *app) commitAIScan(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		ids = append(ids, id)
-		pageData, readErr := os.ReadFile(filepath.Join(directory, fmt.Sprintf("page-%03d.png", item.Page)))
+		detected := detectedByPage[item.Page]
+		scanName, pageData, readErr := readAIScanDocumentAttachment(directory, meta.OriginalName, meta.PageCount, detected)
 		if readErr != nil {
-			fail(w, http.StatusInternalServerError, fmt.Sprintf("Не удалось прикрепить скан страницы %d", item.Page))
+			fail(w, http.StatusInternalServerError, fmt.Sprintf("Не удалось прикрепить скан документа со страницы %d", item.Page))
 			return
 		}
-		scanName := fmt.Sprintf("%s — страница %d.png", strings.TrimSuffix(meta.OriginalName, filepath.Ext(meta.OriginalName)), item.Page)
 		if _, saveErr := saveObligationScan(id, scanName, pageData); saveErr != nil {
-			fail(w, http.StatusInternalServerError, fmt.Sprintf("Не удалось прикрепить скан страницы %d", item.Page))
+			fail(w, http.StatusInternalServerError, fmt.Sprintf("Не удалось прикрепить скан документа со страницы %d", item.Page))
 			return
 		}
 	}

@@ -17,6 +17,7 @@ import { buildPaymentSplitPayload } from './paymentSplitPayload'
 import AdvancedSplitEditor, { AdvancedSplitModePicker } from './AdvancedSplitEditor'
 import usePresence from './usePresence'
 import AIScanModal from './AIScanModal'
+import { buildAIScanObligationValues, normalizeAIScanDocumentPages } from './aiScanValues'
 import { CounterpartyModal } from './References'
 import DesktopBroadcastModal from './DesktopBroadcastModal'
 
@@ -374,17 +375,13 @@ export default function Registry({ user, notify, maintenance, onToggleMaintenanc
     if (result.status === 'error') throw new Error(result.error || 'Не удалось распознать документ')
     const items = result.items.map(item => ({
       page: item.page,
+      pages: normalizeAIScanDocumentPages(item),
       include: !item.duplicate,
       duplicate: item.duplicate,
       duplicate_matches: item.duplicate_matches || [],
       warnings: item.warnings || [],
       confidence: item.confidence || {},
-      values: withReferenceDefaults(
-        { ...blankObligation(), status: '', counterparty: item.counterparty || '', legal_entity: item.legal_entity || '', document_number: item.document_number || '', document_date: item.document_date || '', amount: item.amount ?? null },
-        'counterparty',
-        responsibleByCostCategory,
-        defermentByCounterparty,
-      ),
+      values: buildAIScanObligationValues(blankObligation(), item, responsibleByCostCategory, defermentByCounterparty),
     }))
     setAIScan({ ...result, filename: result.original_name || fallbackFilename, items, loading: false, error: '' })
   }

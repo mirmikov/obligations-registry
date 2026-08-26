@@ -17,7 +17,7 @@ test('registry exposes AI scan only through its dedicated permission and accepts
 test('AI scan keeps recognized and accountant fields separate', () => {
   for (const label of ['Контрагент', 'Дата внесения', 'Юридическое лицо', 'Сумма', 'Документ', 'Дата документа']) assert.match(modal, new RegExp(label))
   for (const label of ['Признак учёта', 'Статья затрат', 'Отсрочка, дней', 'Плановая оплата', 'Дата утверждения', 'Фактическая оплата', 'Статус', 'Срочность', 'Ответственный', 'Приоритет', 'Комментарий']) assert.match(modal, new RegExp(label))
-  assert.match(registry, /\.\.\.blankObligation\(\), status: ''/)
+  assert.match(registry, /buildAIScanObligationValues\(blankObligation\(\), item/)
 })
 
 test('AI scan applies derived status immediately when approval date changes', () => {
@@ -28,19 +28,27 @@ test('AI scan applies derived status immediately when approval date changes', ()
 
 test('multi-page scan supports preview, duplicate protection and confirmed batch commit', () => {
   assert.match(modal, /item\.duplicate.*Возможный дубль/s)
-  assert.match(modal, /AIScanPreview batch=\{state\.batch\} page=\{active\.page\}/)
+  assert.match(modal, /AIScanPreview batch=\{state\.batch\} pages=\{normalizeAIScanDocumentPages\(active\)\}/)
+  assert.match(modal, /formatAIScanDocumentPages\(item\)/)
   assert.match(registry, /\/api\/obligations\/ai-scan\/\$\{aiScan\.batch\}\/commit/)
   assert.match(styles, /\.ai-scan-layout\{[^}]*grid-template-columns:300px minmax\(0,1fr\)/)
   assert.match(styles, /html\[data-theme="dark"\] \.ai-scan-layout/)
 })
 
 test('AI scan preview provides bounded zoom without changing the source document', () => {
+  assert.match(modal, /ai-scan-preview-pages/)
   assert.match(modal, /nextAIScanZoom/)
   assert.match(modal, /event\.ctrlKey/)
   assert.match(modal, /onDoubleClick=\{toggleZoom\}/)
   assert.match(modal, /style=\{\{ width: `\$\{zoom\}%` \}\}/)
   assert.match(styles, /\.ai-scan-preview-toolbar/)
   assert.match(styles, /\.ai-scan-preview-canvas/)
+})
+
+test('AI scan displays extracted deferment and payment terms with recognized fields', () => {
+  assert.match(modal, /aiScanValues/)
+  assert.match(modal, /Отсрочка, дней/)
+  assert.match(modal, /Условия оплаты/)
 })
 
 test('confirmed AI scan refreshes counterparties created in the reference directory', () => {
