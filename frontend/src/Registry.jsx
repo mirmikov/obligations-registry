@@ -380,6 +380,7 @@ export default function Registry({ user, notify, maintenance, onToggleMaintenanc
       duplicate: item.duplicate,
       duplicate_matches: item.duplicate_matches || [],
       warnings: item.warnings || [],
+      learned_fields: item.learned_fields || [],
       confidence: item.confidence || {},
       values: buildAIScanObligationValues(blankObligation(), item, responsibleByCostCategory, defermentByCounterparty),
     }))
@@ -412,7 +413,8 @@ export default function Registry({ user, notify, maintenance, onToggleMaintenanc
       const payload = { items: items.map(item => ({ page: item.page, values: stripObligation(item.values) })) }
       const result = await requestJSONWithDuplicateConfirmation(`/api/obligations/ai-scan/${aiScan.batch}/commit`, 'POST', payload)
       const referenceNote = result.created_references ? `; новых контрагентов в справочнике: ${result.created_references}` : ''
-      notify(`Из скана добавлено ${result.created} обязательств${referenceNote}`)
+      const learningNote = result.learned_corrections ? `; подтверждённых исправлений запомнено: ${result.learned_corrections}` : ''
+      notify(`Из скана добавлено ${result.created} обязательств${referenceNote}${learningNote}`)
       setAIScan(null); setPage(1); load()
       request('/api/references').then(setRefs).catch(error => notify(error.message, 'error'))
     } catch (error) {

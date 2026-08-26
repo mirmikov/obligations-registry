@@ -12,6 +12,15 @@ const automaticFields = [
   ['amount', 'Сумма'], ['document_number', 'Документ'], ['document_date', 'Дата документа'],
 ]
 
+const learnedFieldLabels = {
+  counterparty: 'контрагент',
+  legal_entity: 'юридическое лицо',
+  amount: 'сумма',
+  document_number: 'номер документа',
+  document_date: 'дата документа',
+  deferment_days: 'отсрочка',
+}
+
 export default function AIScanModal({ state, references, approvalEditable = false, onChange, onRetry, onClose, onSave }) {
   const [activePage, setActivePage] = useState(state.items?.[0]?.page || 1)
   const items = state.items || []
@@ -52,6 +61,7 @@ export default function AIScanModal({ state, references, approvalEditable = fals
             <div className="ai-scan-form">
               <section className="ai-scan-recognized">
                 <header><div><Sparkles size={18}/><span><strong>Извлечено из скана</strong><small>Обязательно проверьте перед сохранением</small></span></div><ConfidenceBadge item={active}/></header>
+                {active.learned_fields?.length > 0 && <div className="ai-scan-learned"><Sparkles size={14}/><span>Применены подтверждённые ранее исправления: {active.learned_fields.map(field => learnedFieldLabels[field] || field).join(', ')}</span></div>}
                 <div className="ai-scan-fields">
                   <CustomSelect label="Контрагент" value={active.values.counterparty} options={references.counterparties} onChange={value => updateValue('counterparty', value)} allowCustom required/>
                   <ScanField label="Дата внесения" value={active.values.entry_date} readOnly/>
@@ -84,7 +94,10 @@ export default function AIScanModal({ state, references, approvalEditable = fals
           </main>}
         </div>}
       {!state.loading && !state.error && <footer className="modal-footer ai-scan-actions">
-        <div>{missing.length ? <span className="error"><AlertTriangle size={15}/>Заполните обязательные поля: {missing.map(item => `стр. ${item.page} — ${item.field}`).join('; ')}</span> : <span><CheckCircle2 size={15}/>Перед записью выбрано {selected.length} из {items.length}</span>}</div>
+        <div>
+          {missing.length ? <span className="error"><AlertTriangle size={15}/>Заполните обязательные поля: {missing.map(item => `стр. ${item.page} — ${item.field}`).join('; ')}</span> : <span><CheckCircle2 size={15}/>Перед записью выбрано {selected.length} из {items.length}</span>}
+          <small className="ai-scan-learning-note"><Sparkles size={13}/>Исправления распознанных полей будут запомнены для похожих документов. Суммы, номера и даты всегда извлекаются заново.</small>
+        </div>
         <button type="button" className="secondary" onClick={onClose} disabled={state.saving}>Отмена</button>
         <button type="button" className="primary" onClick={submit} disabled={!selected.length || missing.length > 0 || state.saving}>{state.saving ? <><LoaderCircle className="spin" size={16}/>Сохраняем…</> : `Добавить ${selected.length} в реестр`}</button>
       </footer>}
