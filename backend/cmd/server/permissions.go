@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -283,6 +284,13 @@ type maintenanceState struct {
 	UpdatedBy string `json:"updated_by,omitempty"`
 }
 
+type systemAnnouncementState struct {
+	Active    bool   `json:"active"`
+	Message   string `json:"message"`
+	UpdatedAt string `json:"updated_at,omitempty"`
+	UpdatedBy string `json:"updated_by,omitempty"`
+}
+
 func (a *app) readMaintenanceState(ctx context.Context) maintenanceState {
 	value := maintenanceState{Message: "Ведется обновление программы"}
 	var raw []byte
@@ -299,13 +307,33 @@ func (a *app) readMaintenanceState(ctx context.Context) maintenanceState {
 	return value
 }
 
-func (a *app) getSystemStatus(w http.ResponseWriter, r *http.Request) {
-	user := currentUser(r)
-	writeJSON(w, http.StatusOK, systemStatusPayload(user, a.readMaintenanceState(r.Context()), time.Now()))
+func (a *app) readSystemAnnouncement(ctx context.Context) systemAnnouncementState {
+	var value systemAnnouncementState
+	var raw []byte
+	err := a.db.QueryRowContext(ctx, `
+		SELECT COALESCE(s.state->'system_announcement','{}'::jsonb)
+		FROM users u LEFT JOIN user_workspace_state s ON s.user_id=u.id
+		WHERE lower(u.email)=$1`, developerEmail).Scan(&raw)
+	if err == nil {
+		_ = json.Unmarshal(raw, &value)
+	}
+	value.Message = strings.TrimSpace(value.Message)
+	if len([]rune(value.Message)) > 500 {
+		value.Message = string([]rune(value.Message)[:500])
+	}
+	if value.Active && value.Message == "" {
+		value.Active = false
+	}
+	return value
 }
 
-func systemStatusPayload(user authUser, maintenance maintenanceState, now time.Time) map[string]any {
-	value := map[string]any{"maintenance": maintenance}
+func (a *app) getSystemStatus(w http.ResponseWriter, r *http.Request) {
+	user := currentUser(r)
+	writeJSON(w, http.StatusOK, systemStatusPayload(user, a.readMaintenanceState(r.Context()), a.readSystemAnnouncement(r.Context()), time.Now()))
+}
+
+func systemStatusPayload(user authUser, maintenance maintenanceState, announcement systemAnnouncementState, now time.Time) map[string]any {
+	value := map[string]any{"maintenance": maintenance, "announcement": announcement}
 	if user.IsDeveloper || user.Permissions["system.backup_status"] {
 		value["backup"] = readBackupStatus(now)
 	}
@@ -332,6 +360,50 @@ func (a *app) updateMaintenance(w http.ResponseWriter, r *http.Request) {
 	}
 	a.audit(r.Context(), user.ID, "update", "system_maintenance", nil, map[string]any{"active": input.Active})
 	writeJSON(w, http.StatusOK, map[string]any{"maintenance": value})
+}
+
+func normalizeSystemAnnouncement(active bool, message string) (systemAnnouncementState, error) {
+	message = strings.TrimSpace(message)
+	if active && message == "" {
+		return systemAnnouncementState{}, fmt.Errorf("Введите текст сообщения")
+	}
+	if len([]rune(message)) > 500 {
+		return systemAnnouncementState{}, fmt.Errorf("Текст сообщения должен быть не длиннее 500 символов")
+	}
+	return systemAnnouncementState{Active: active, Message: message}, nil
+}
+
+func (a *app) updateSystemAnnouncement(w http.ResponseWriter, r *http.Request) {
+	user := currentUser(r)
+	if !user.IsDeveloper {
+		fail(w, http.StatusForbidden, "Только программист может управлять системным сообщением")
+		return
+	}
+	var input struct {
+		Active  bool   `json:"active"`
+		Message string `json:"message"`
+	}
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	value, err := normalizeSystemAnnouncement(input.Active, input.Message)
+	if err != nil {
+		fail(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	value.UpdatedAt = time.Now().Format(time.RFC3339)
+	value.UpdatedBy = user.Name
+	raw, _ := json.Marshal(value)
+	_, err = a.db.ExecContext(r.Context(), `
+		INSERT INTO user_workspace_state(user_id,state,updated_at) VALUES($1,jsonb_build_object('system_announcement',$2::jsonb),now())
+		ON CONFLICT(user_id) DO UPDATE SET state=jsonb_set(COALESCE(user_workspace_state.state,'{}'::jsonb),'{system_announcement}',$2::jsonb,true),updated_at=now()`,
+		user.ID, raw)
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Не удалось изменить системное сообщение")
+		return
+	}
+	a.audit(r.Context(), user.ID, "update", "system_announcement", nil, map[string]any{"active": value.Active, "message_length": len([]rune(value.Message))})
+	writeJSON(w, http.StatusOK, map[string]any{"announcement": value})
 }
 
 func saveUserPermissions(ctx context.Context, tx *sql.Tx, userID int64, permissions permissionSet) error {

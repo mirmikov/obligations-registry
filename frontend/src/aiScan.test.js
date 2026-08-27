@@ -61,3 +61,13 @@ test('Windows deep link opens the existing AI batch without uploading the docume
   assert.match(registry, /initialAIScanBatch.*finishAIScan\(\{ batch: initialAIScanBatch, status: 'processing' \}/s)
   assert.match(registry, /request\(`\/api\/obligations\/ai-scan\/\$\{result\.batch\}\/status`\)/)
 })
+
+test('AI scan shows and reports safe learned corrections', () => {
+  const chat = fs.readFileSync(new URL('./Chat.jsx', import.meta.url), 'utf8')
+  assert.match(registry, /learned_fields: item\.learned_fields \|\| \[\]/)
+  assert.match(chat, /learned_fields: item\.learned_fields \|\| \[\]/)
+  assert.match(modal, /Применены подтверждённые ранее исправления/)
+  assert.match(modal, /Суммы, номера и даты всегда извлекаются заново/)
+  assert.match(registry, /learned_corrections/)
+  assert.match(styles, /\.ai-scan-learned/)
+})

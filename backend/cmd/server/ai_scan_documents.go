@@ -16,8 +16,8 @@ import (
 var (
 	aiScanDocumentStartPattern = regexp.MustCompile(`(?im)^\s*(?:сч[её]т(?:\s+на\s+оплату|\s*[-–—]\s*(?:договор|оферта|фактура))?|универсальный\s+передаточный\s+документ|упд|товарная\s+накладная|акт(?:\s+(?:выполненных\s+работ|оказанных\s+услуг))?)\b`)
 	aiScanPaymentDaysPattern   = regexp.MustCompile(`(?i)(?:отсрочк[А-Яа-яЁёA-Za-z]*(?:\s+платежа)?|оплата|оплатить|постоплат[А-Яа-яЁёA-Za-z]*|срок\s+оплаты)[^\n]{0,120}?(\d{1,3})\s*(?:календарн[А-Яа-яЁёA-Za-z]*\s*)?(?:дн(?:ей|я|ь)|сут(?:ок|ки))`)
-	aiScanPaymentDatePattern   = regexp.MustCompile(`(?i)(?:оплата|оплатить|срок\s+оплаты|не\s+позднее|до)\D{0,45}([0-9]{1,2}(?:\s*[.\-/]\s*[0-9]{1,2}\s*[.\-/]\s*[0-9]{2,4}|\s+[А-Яа-яЁё]+\s+[0-9]{4}))`)
-	aiScanPaymentLinePattern   = regexp.MustCompile(`(?i)(?:услови[А-Яа-яЁёA-Za-z]*\s+оплаты|отсрочк[А-Яа-яЁёA-Za-z]*|постоплат[А-Яа-яЁёA-Za-z]*|предоплат[А-Яа-яЁёA-Za-z]*|срок\s+оплаты|оплатить\s+(?:в\s+течение|не\s+позднее|до)|оплата\s+(?:в\s+течение|не\s+позднее|до|через))`)
+	aiScanPaymentDatePattern   = regexp.MustCompile(`(?i)(?:дата\s+оплаты|оплата|оплатить|срок\s+оплаты|не\s+позднее|до)\D{0,45}([0-9]{1,2}(?:\s*[.\-/]\s*[0-9]{1,2}\s*[.\-/]\s*[0-9]{2,4}|\s+[А-Яа-яЁё]+\s+[0-9]{4}))`)
+	aiScanPaymentLinePattern   = regexp.MustCompile(`(?i)(?:услови[А-Яа-яЁёA-Za-z]*\s+оплаты|дата\s+оплаты|отсрочк[А-Яа-яЁёA-Za-z]*|постоплат[А-Яа-яЁёA-Za-z]*|предоплат[А-Яа-яЁёA-Za-z]*|срок\s+оплаты|оплатить\s+(?:в\s+течение|не\s+позднее|до)|оплата\s+(?:в\s+течение|не\s+позднее|до|через))`)
 	aiScanWorkingDaysPattern   = regexp.MustCompile(`(?i)(?:рабоч[А-Яа-яЁёA-Za-z]*|банковск[А-Яа-яЁёA-Za-z]*)\s+(?:дн(?:ей|я|ь)|сут(?:ок|ки))`)
 	aiScanPrepaymentPattern    = regexp.MustCompile(`(?i)(?:100\s*%\s*(?:предоплат[А-Яа-яЁёA-Za-z]*|аванс[А-Яа-яЁёA-Za-z]*)|(?:предоплат[А-Яа-яЁёA-Za-z]*|аванс[А-Яа-яЁёA-Za-z]*)\s*100\s*%|оплат[А-Яа-яЁёA-Za-z]*\s+до\s+(?:поставки|отгрузки))`)
 )
@@ -120,6 +120,28 @@ func groupAIScanDocumentSuggestions(perPage []aiScanSuggestion, pageTexts []stri
 		refreshAIScanWarnings(&merged)
 		merged.Warnings = appendAIScanPersistentWarnings(merged.Warnings, persistentWarnings...)
 		groups[len(groups)-1] = merged
+	}
+	// Re-evaluate terms after grouping. UTDs commonly put the document date on
+	// page one and the payable date on the final page, so per-page parsing cannot
+	// safely calculate deferment.
+	for index := range groups {
+		persistentWarnings := appendAIScanPersistentWarnings(nil, groups[index].Warnings...)
+		parts := make([]string, 0, len(groups[index].Pages))
+		for _, page := range groups[index].Pages {
+			if page > 0 && page <= len(pageTexts) {
+				parts = append(parts, pageTexts[page-1])
+			}
+		}
+		if days, terms, confidence := extractAIScanDeferment(strings.Join(parts, "\n"), groups[index].DocumentDate); days != nil {
+			groups[index].DefermentDays = days
+			groups[index].PaymentTerms = terms
+			groups[index].Confidence["deferment_days"] = confidence
+		} else if groups[index].PaymentTerms == "" && terms != "" {
+			groups[index].PaymentTerms = terms
+			groups[index].Confidence["deferment_days"] = confidence
+		}
+		refreshAIScanWarnings(&groups[index])
+		groups[index].Warnings = appendAIScanPersistentWarnings(groups[index].Warnings, persistentWarnings...)
 	}
 	return groups
 }

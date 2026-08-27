@@ -20,6 +20,7 @@ import AIScanModal from './AIScanModal'
 import { buildAIScanObligationValues, normalizeAIScanDocumentPages } from './aiScanValues'
 import { CounterpartyModal } from './References'
 import DesktopBroadcastModal from './DesktopBroadcastModal'
+import SystemAnnouncementModal from './SystemAnnouncementModal'
 
 const emptyFilters = { q: '', amount: '', counterparty: [], account_type: '', legal_entity: '', cost_category: '', priority: '', responsible: '', status: '', urgency: '', entry_date: '', document_date: '', planned_payment_date: '', approval_date: '', actual_payment_date: '', document_from: '', document_to: '', overdue: '' }
 const dateFields = new Set(['entry_date', 'document_date', 'planned_payment_date', 'approval_date', 'actual_payment_date'])
@@ -59,7 +60,7 @@ function saveColumnWidths(widths) {
   try { window.localStorage.setItem(registryColumnWidthsKey, JSON.stringify(widths)) } catch {}
 }
 
-export default function Registry({ user, notify, maintenance, onToggleMaintenance, initialAIScanBatch, onInitialAIScanApplied }) {
+export default function Registry({ user, notify, maintenance, onToggleMaintenance, announcement, onAnnouncementChanged, initialAIScanBatch, onInitialAIScanApplied }) {
   const [data, setData] = useState({ items: [], total: 0, filtered_amount: 0, page: 1, page_size: 50 })
   const [refs, setRefs] = useState({})
   const [filters, setFilters] = useState(emptyFilters)
@@ -76,6 +77,7 @@ export default function Registry({ user, notify, maintenance, onToggleMaintenanc
   const [duplicatePrompt, setDuplicatePrompt] = useState(null)
   const [counterpartyModal, setCounterpartyModal] = useState(null)
   const [broadcastOpen, setBroadcastOpen] = useState(false)
+  const [announcementOpen, setAnnouncementOpen] = useState(false)
   const [tableFullscreen, setTableFullscreen] = useState(false)
   const [largeTableFont, setLargeTableFont] = useState(readLargeFontPreference)
   const [columnWidths, setColumnWidths] = useState(readColumnWidths)
@@ -380,6 +382,7 @@ export default function Registry({ user, notify, maintenance, onToggleMaintenanc
       duplicate: item.duplicate,
       duplicate_matches: item.duplicate_matches || [],
       warnings: item.warnings || [],
+      learned_fields: item.learned_fields || [],
       confidence: item.confidence || {},
       values: buildAIScanObligationValues(blankObligation(), item, responsibleByCostCategory, defermentByCounterparty),
     }))
@@ -412,7 +415,8 @@ export default function Registry({ user, notify, maintenance, onToggleMaintenanc
       const payload = { items: items.map(item => ({ page: item.page, values: stripObligation(item.values) })) }
       const result = await requestJSONWithDuplicateConfirmation(`/api/obligations/ai-scan/${aiScan.batch}/commit`, 'POST', payload)
       const referenceNote = result.created_references ? `; новых контрагентов в справочнике: ${result.created_references}` : ''
-      notify(`Из скана добавлено ${result.created} обязательств${referenceNote}`)
+      const learningNote = result.learned_corrections ? `; подтверждённых исправлений запомнено: ${result.learned_corrections}` : ''
+      notify(`Из скана добавлено ${result.created} обязательств${referenceNote}${learningNote}`)
       setAIScan(null); setPage(1); load()
       request('/api/references').then(setRefs).catch(error => notify(error.message, 'error'))
     } catch (error) {
@@ -424,7 +428,7 @@ export default function Registry({ user, notify, maintenance, onToggleMaintenanc
   const approvalEditable = canApproveObligations(user)
   const selectedApprovalEditable = approvalEditable && selected.length > 0 && selected.every(id => { const item = rowsRef.current.get(id); return item && canApproveObligations(user, item.legal_entity) })
   return <div className={`page registry-page ${tableFullscreen ? 'is-table-fullscreen' : ''}`}>
-    <PageHeader eyebrow="Рабочая область" title="Реестр обязательств" subtitle={`${data.total.toLocaleString('ru-RU')} записей с учётом фильтров`} actions={<><PresenceCluster users={activeUsers} currentSession={sessionId}/>{can(user, 'desktop.broadcast') && <button className="secondary desktop-broadcast-launch" onClick={() => setBroadcastOpen(true)}><Megaphone size={17}/>Уведомление на ПК</button>}{can(user, 'system.maintenance') && <button className={`maintenance-toggle ${maintenance?.active ? 'is-active' : ''}`} onClick={onToggleMaintenance}><AlertTriangle size={17}/>{maintenance?.active ? 'Завершить обновление' : 'Начать обновление'}</button>}{can(user, 'registry.ai_scan') && <><input ref={aiScanRef} type="file" accept="application/pdf,image/png,image/jpeg" hidden onChange={analyzeScan}/><button className="primary ai-scan-launch" onClick={() => aiScanRef.current.click()}><ScanLine size={17}/>AI сканирование</button></>}{can(user, 'registry.import') && <><input ref={importRef} type="file" accept=".xlsx" hidden onChange={importFile}/><button className="secondary" onClick={() => importRef.current.click()}><FileUp size={17}/>Импорт</button></>}{can(user, 'registry.export') && <button className="secondary" onClick={() => download(`/api/obligations/export.xlsx?${query}`, 'Реестр обязательств.xlsx')}><Download size={17}/>Excel</button>}<button className="secondary registry-width-reset" onClick={resetColumnWidths} title="Вернуть стандартную ширину всех столбцов"><RotateCcw size={16}/>Ширина</button><FontSizeButton large={largeTableFont} onToggle={() => setLargeTableFont(value => !value)}/><button className="secondary registry-fullscreen-button" onClick={() => setTableFullscreen(true)} title="Открыть таблицу на весь экран" aria-label="Открыть таблицу на весь экран"><Maximize2 size={17}/></button></>}/>
+    <PageHeader eyebrow="Рабочая область" title="Реестр обязательств" subtitle={`${data.total.toLocaleString('ru-RU')} записей с учётом фильтров`} actions={<><PresenceCluster users={activeUsers} currentSession={sessionId}/>{can(user, 'desktop.broadcast') && <button className="secondary desktop-broadcast-launch" onClick={() => setBroadcastOpen(true)}><Megaphone size={17}/>Уведомление на ПК</button>}{user?.is_developer && <button className={`system-announcement-toggle ${announcement?.active ? 'is-active' : ''}`} onClick={() => setAnnouncementOpen(true)}><Info size={17}/>{announcement?.active ? 'Изменить сообщение' : 'Сообщение всем'}</button>}{can(user, 'system.maintenance') && <button className={`maintenance-toggle ${maintenance?.active ? 'is-active' : ''}`} onClick={onToggleMaintenance}><AlertTriangle size={17}/>{maintenance?.active ? 'Завершить обновление' : 'Начать обновление'}</button>}{can(user, 'registry.ai_scan') && <><input ref={aiScanRef} type="file" accept="application/pdf,image/png,image/jpeg" hidden onChange={analyzeScan}/><button className="primary ai-scan-launch" onClick={() => aiScanRef.current.click()}><ScanLine size={17}/>AI сканирование</button></>}{can(user, 'registry.import') && <><input ref={importRef} type="file" accept=".xlsx" hidden onChange={importFile}/><button className="secondary" onClick={() => importRef.current.click()}><FileUp size={17}/>Импорт</button></>}{can(user, 'registry.export') && <button className="secondary" onClick={() => download(`/api/obligations/export.xlsx?${query}`, 'Реестр обязательств.xlsx')}><Download size={17}/>Excel</button>}<button className="secondary registry-width-reset" onClick={resetColumnWidths} title="Вернуть стандартную ширину всех столбцов"><RotateCcw size={16}/>Ширина</button><FontSizeButton large={largeTableFont} onToggle={() => setLargeTableFont(value => !value)}/><button className="secondary registry-fullscreen-button" onClick={() => setTableFullscreen(true)} title="Открыть таблицу на весь экран" aria-label="Открыть таблицу на весь экран"><Maximize2 size={17}/></button></>}/>
     <section className="filter-panel">
       <div className="search-box"><Search size={18}/><input placeholder="Контрагент, счёт, комментарий…" value={filters.q} onChange={e => setFilter('q', e.target.value)}/>{filters.q && <button onClick={() => setFilter('q', '')}><X size={15}/></button>}</div>
       <div className="search-box amount-search-box"><Search size={18}/><input inputMode="decimal" placeholder="Поиск по сумме" value={filters.amount} onChange={e => setFilter('amount', e.target.value)}/>{filters.amount && <button onClick={() => setFilter('amount', '')} aria-label="Очистить поиск по сумме"><X size={15}/></button>}</div>
@@ -468,6 +472,7 @@ export default function Registry({ user, notify, maintenance, onToggleMaintenanc
       onClose={() => setBroadcastOpen(false)}
       onSent={created => { setBroadcastOpen(false); notify(`Уведомление отправлено: ${created} получателей`) }}
     />}
+    {announcementOpen && <SystemAnnouncementModal announcement={announcement} onClose={() => setAnnouncementOpen(false)} onSaved={value => { onAnnouncementChanged(value); setAnnouncementOpen(false) }} notify={notify}/>}
   </div>
 }
 

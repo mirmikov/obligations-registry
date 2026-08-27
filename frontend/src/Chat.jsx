@@ -234,7 +234,7 @@ export default function Chat({ user, notify, compact = false, initialConversatio
       }
       if (result.status === 'processing') throw new Error('Распознавание не завершилось за 12 минут. Разделите PDF на части')
       if (result.status === 'error') throw new Error(result.error || 'Не удалось распознать документ')
-      const items = result.items.map(item => ({ page: item.page, pages: normalizeAIScanDocumentPages(item), include: !item.duplicate, duplicate: item.duplicate, duplicate_matches: item.duplicate_matches || [], warnings: item.warnings || [], confidence: item.confidence || {}, values: buildAIScanObligationValues(blankObligation(), item) }))
+      const items = result.items.map(item => ({ page: item.page, pages: normalizeAIScanDocumentPages(item), include: !item.duplicate, duplicate: item.duplicate, duplicate_matches: item.duplicate_matches || [], warnings: item.warnings || [], learned_fields: item.learned_fields || [], confidence: item.confidence || {}, values: buildAIScanObligationValues(blankObligation(), item) }))
       setAIScan({ ...result, filename: file.name, items, loading: false, error: '' })
     } catch (error) { setAIScan({ loading: false, filename: file.name, error: error.message }) }
   }
@@ -243,7 +243,7 @@ export default function Chat({ user, notify, compact = false, initialConversatio
     setAIScan(current => ({ ...current, saving: true }))
     try {
       const result = await request(`/api/obligations/ai-scan/${aiScan.batch}/commit`, { method: 'POST', body: JSON.stringify({ items: items.map(item => ({ page: item.page, values: stripAIScanValues(item.values) })) }) })
-      notify(`Из файла добавлено ${result.created} обязательств${result.created_references ? `; новых контрагентов: ${result.created_references}` : ''}`)
+      notify(`Из файла добавлено ${result.created} обязательств${result.created_references ? `; новых контрагентов: ${result.created_references}` : ''}${result.learned_corrections ? `; исправлений запомнено: ${result.learned_corrections}` : ''}`)
       setAIScan(null); setAISource(null)
       request('/api/references').then(setReferences).catch(error => notify(error.message, 'error'))
     } catch (error) { setAIScan(current => ({ ...current, saving: false })); notify(error.message, 'error') }

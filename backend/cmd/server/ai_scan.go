@@ -114,6 +114,7 @@ type aiScanSuggestion struct {
 	DuplicateMatches  []duplicateMatch  `json:"duplicate_matches,omitempty"`
 	Confidence        map[string]string `json:"confidence"`
 	Warnings          []string          `json:"warnings"`
+	LearnedFields     []string          `json:"learned_fields,omitempty"`
 }
 
 type aiScanCommitItem struct {
@@ -306,6 +307,18 @@ func (a *app) processAIScanBatch(token, directory string, pages []string) {
 		pageTexts[index] = strings.TrimSpace(valueAt(ocrTexts, index) + "\n" + valueAt(textLayer, index))
 	}
 	suggestions = groupAIScanDocumentSuggestions(suggestions, pageTexts)
+	learningDocuments := aiScanLearningDocuments(suggestions, pageTexts)
+	if err = writeAIScanLearningDocuments(directory, learningDocuments); err != nil {
+		// A learning snapshot is optional. Recognition must still finish if it
+		// cannot be written; the original review/commit flow remains available.
+		log.Printf("save AI scan learning snapshot %s: %v", token, err)
+	}
+	learningRules := a.loadAIScanLearningRules(ctx)
+	for index := range suggestions {
+		if index < len(learningDocuments) {
+			suggestions[index] = applyAIScanLearningRules(suggestions[index], learningDocuments[index].Text, learningRules)
+		}
+	}
 	for index, suggestion := range suggestions {
 		suggestion.DuplicateMatches = a.aiScanDuplicates(ctx, suggestion)
 		suggestion.Duplicate = len(suggestion.DuplicateMatches) > 0
@@ -429,7 +442,9 @@ func recoverAIScanPage(ctx context.Context, pagePath, directory string, page int
 		text  string
 		err   error
 	}
-	modes := []string{"6", "11"}
+	// PSM 12 adds sparse-text recognition with orientation detection. It helps
+	// photographed and sideways invoices while preserving the existing passes.
+	modes := []string{"6", "11", "12"}
 	results := make(chan result, len(modes))
 	for index, mode := range modes {
 		go func(index int, mode string) {
@@ -1902,6 +1917,7 @@ func (a *app) commitAIScan(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	learningRules := aiScanLearningRulesForCommit(detectedByPage, input.Items, readAIScanLearningDocuments(directory), time.Now())
 	tx, err := a.db.BeginTx(r.Context(), nil)
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "Не удалось начать сохранение")
@@ -1961,6 +1977,11 @@ func (a *app) commitAIScan(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusInternalServerError, "Не удалось записать историю операции")
 		return
 	}
+	learnedCorrections, err := saveAIScanLearningRules(r.Context(), tx, user.ID, learningRules)
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "Не удалось сохранить подтверждённые исправления AI-сканирования")
+		return
+	}
 	if err = tx.Commit(); err != nil {
 		fail(w, http.StatusInternalServerError, "Не удалось завершить сохранение")
 		return
@@ -1968,6 +1989,9 @@ func (a *app) commitAIScan(w http.ResponseWriter, r *http.Request) {
 	scansSaved = true
 	for index, id := range ids {
 		a.audit(r.Context(), user.ID, "create", "obligation", &id, map[string]any{"source": "ai_scan", "page": input.Items[index].Page, "batch": token})
+	}
+	if learnedCorrections > 0 {
+		a.audit(r.Context(), user.ID, "learn", "obligation_ai_scan", nil, map[string]any{"batch": token, "corrections": learnedCorrections})
 	}
 	createdReferences := 0
 	for _, reference := range referenceAudits {
@@ -1981,5 +2005,5 @@ func (a *app) commitAIScan(w http.ResponseWriter, r *http.Request) {
 		a.audit(r.Context(), user.ID, action, "reference", &reference.ID, map[string]any{"kind": "counterparties", "value": reference.Value, "source": "ai_scan", "created": reference.Created, "reactivated": reference.Reactivated, "tax_id_updated": reference.TaxIDUpdated})
 	}
 	_ = os.RemoveAll(directory)
-	writeJSON(w, http.StatusCreated, map[string]any{"created": len(ids), "created_references": createdReferences, "ids": ids})
+	writeJSON(w, http.StatusCreated, map[string]any{"created": len(ids), "created_references": createdReferences, "learned_corrections": learnedCorrections, "ids": ids})
 }
