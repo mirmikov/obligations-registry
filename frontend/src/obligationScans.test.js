@@ -18,6 +18,8 @@ test('scan control uploads, views, replaces and deletes a document', () => {
   assert.match(registry, /requestBlob\(scanURL\)/)
   assert.match(registry, /Заменить файл/)
   assert.match(registry, /Нажмите ещё раз для удаления/)
+  assert.match(registry, /Печать без сжатия/)
+  assert.match(registry, /printOriginalScan\(\{/)
   assert.match(registry, /<iframe src=\{preview\.url\}/)
   assert.match(registry, /createPortal\(<div className="modal-backdrop scan-modal-backdrop"/)
   assert.match(registry, /accept="application\/pdf,image\/png,image\/jpeg,image\/webp"/)
@@ -27,6 +29,7 @@ test('scan modal is adaptive and cannot be clipped by the table cell', () => {
   assert.match(registry, /document\.body\)/)
   assert.match(styles, /\.scan-document-modal\{[^}]*height:min\(820px/)
   assert.match(styles, /\.scan-document-preview iframe,\.scan-document-preview img/)
+  assert.match(styles, /\.scan-print-frame\{[^}]*left:-10000px/)
   assert.match(styles, /@media\(max-width:760px\).*\.scan-document-layout\{grid-template-columns:1fr/s)
 })
 

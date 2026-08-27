@@ -639,6 +639,8 @@ html[data-theme="dark"] .row-actions .danger-button,html[data-theme="dark"] .ref
 .scan-preview-state button{height:35px;padding:0 14px}
 .scan-document-actions{height:auto;min-height:70px;padding:12px 22px;display:flex;gap:9px;flex-wrap:wrap}
 .scan-document-actions button,.scan-document-actions a{min-height:40px;padding:0 15px;border-radius:9px;display:flex;align-items:center;justify-content:center;gap:7px;text-decoration:none;font-size:11px;font-weight:800}
+.scan-document-actions .scan-print-button{background:#286f61;border-color:#286f61;color:#fff;box-shadow:0 5px 14px rgba(40,111,97,.18)}
+.scan-document-actions .scan-print-button:hover{background:#205e52;border-color:#205e52}
 .scan-document-actions a.secondary{border:1px solid #d1ddd9;background:#fff;color:#315f57}
 .scan-document-actions .danger{margin-left:auto;background:#a84b3d;color:#fff;border:1px solid #a84b3d}
 .scan-document-actions .danger.confirming{background:#7f2e26;border-color:#7f2e26;box-shadow:0 0 0 3px rgba(168,75,61,.15)}
@@ -656,6 +658,7 @@ html[data-theme="dark"] .scan-document-meta span{background:#213538;color:#a6bbb
 html[data-theme="dark"] .scan-document-meta small,html[data-theme="dark"] .scan-document-head span{color:#9bb0ac}
 html[data-theme="dark"] .scan-document-preview{background:#0d1719;border-color:#34474a;box-shadow:none}
 html[data-theme="dark"] .scan-document-actions a.secondary{background:#1b2d30;border-color:#3a4e50;color:#bfd0cc}
+.scan-print-frame{position:fixed;left:-10000px;top:0;width:1px;height:1px;border:0;opacity:.01;pointer-events:none}
 @media(max-width:760px){.scan-modal-backdrop{padding:8px}.scan-document-modal{width:100%;height:calc(100vh - 16px);max-height:calc(100vh - 16px);border-radius:12px}.scan-document-head{padding:16px}.scan-document-layout{grid-template-columns:1fr;grid-template-rows:auto minmax(0,1fr)}.scan-document-summary{padding:12px 15px;border-right:0;border-bottom:1px solid #dce6e2;flex-direction:row;text-align:left}.scan-document-icon{width:48px;height:48px;border-radius:12px}.scan-document-meta{align-items:flex-start}.scan-document-meta strong{text-align:left}.scan-document-meta span{display:none}.scan-document-preview{margin:9px}.scan-document-actions{padding:9px;gap:7px}.scan-document-actions button,.scan-document-actions a{flex:1;min-width:125px}.scan-document-actions .danger{margin-left:0;flex-basis:100%}}
 html[data-theme="dark"] .executive-period-overdue .executive-period-icon{background:#3a2422;color:#ef8e7c}
 
