@@ -139,6 +139,7 @@ func main() {
 	mux.Handle("GET /api/permissions/catalog", a.authorize(a.requirePermission("users.view")(http.HandlerFunc(a.permissionCatalogHandler))))
 	mux.Handle("GET /api/system/status", a.authorize(http.HandlerFunc(a.getSystemStatus)))
 	mux.Handle("PUT /api/system/maintenance", a.authorize(a.requirePermission("system.maintenance")(http.HandlerFunc(a.updateMaintenance))))
+	mux.Handle("PUT /api/system/announcement", a.authorize(http.HandlerFunc(a.updateSystemAnnouncement)))
 	mux.Handle("GET /api/audit", a.authorize(a.requirePermission("audit.view")(http.HandlerFunc(a.auditLog))))
 
 	server := &http.Server{
