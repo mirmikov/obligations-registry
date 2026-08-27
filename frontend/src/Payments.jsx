@@ -3,15 +3,17 @@ import { CalendarDays, ChevronDown, Download, ExternalLink, Printer, RefreshCw }
 import { download, request } from './api'
 import { DateInput, money, PageHeader, shortDate } from './App'
 import { DuplicateObligationModal, InlineCellSelect, normalizeCellValue, ObligationHistoryModal, ObligationScanControl, sameCellValue, stripObligation } from './Registry'
-import { localTodayISO, paymentColumns, paymentRowClassName, paymentScreenColumns } from './paymentsView'
+import { buildPaymentRegisterQuery, localTodayISO, paymentColumns, paymentRowClassName, paymentScreenColumns } from './paymentsView'
+import PaymentColumnFilter, { paymentFilterActive } from './PaymentColumnFilter'
 import { approvalStatusOptions, can, canApproveObligations } from './permissions'
 import { withDerivedObligationValues } from './obligationValues'
 import { buildCostCategoryResponsibleMap, withDefaultResponsible } from './referenceDefaults'
 import './paymentsPaid.css'
+import './paymentFilters.css'
 
 export default function Payments({ user, notify }) {
   const [refs, setRefs] = useState({})
-  const [filters, setFilters] = useState(() => ({ approval_date: localTodayISO(), legal_entity: '', account_type: '' }))
+  const [filters, setFilters] = useState(() => ({ approval_date: localTodayISO(), legal_entity: '', account_type: '', counterparty: [], document_number: '', document_date: '', amount: '', actual_payment_date: '', status: '' }))
   const [data, setData] = useState({ items: [], count: 0, amount: 0 })
   const [loading, setLoading] = useState(true)
   const [savingCells, setSavingCells] = useState(new Set())
@@ -20,7 +22,8 @@ export default function Payments({ user, notify }) {
   const rowsRef = useRef(new Map())
   const saveQueues = useRef(new Map())
   const responsibleByCostCategory = useMemo(() => buildCostCategoryResponsibleMap(refs), [refs])
-  const query = new URLSearchParams(Object.fromEntries(Object.entries(filters).filter(([,v]) => v))).toString()
+  const query = useMemo(() => buildPaymentRegisterQuery(filters), [filters])
+  const setFilter = (key, value) => setFilters(current => ({ ...current, [key]: value }))
   const load = () => { setLoading(true); return request(`/api/payment-register?${query}`).then(result => { rowsRef.current = new Map(result.items.map(item => [item.id, item])); setData(result) }).catch(e => notify(e.message, 'error')).finally(() => setLoading(false)) }
   const markSaving = (key, active) => setSavingCells(current => { const next = new Set(current); active ? next.add(key) : next.delete(key); return next })
   const confirmDuplicate = error => new Promise(resolve => setDuplicatePrompt({ ...(error.details || {}), resolve }))
@@ -83,9 +86,9 @@ export default function Payments({ user, notify }) {
   const approvalEditable = canApproveObligations(user)
   return <div className="page payments-page">
     <PageHeader eyebrow="Платёжный реестр" title="Обязательства к оплате" subtitle="Согласованные платежи по выбранным условиям" actions={<><button className="secondary" onClick={load}><RefreshCw size={17}/>Обновить</button>{can(user, 'payments.print') && <button className="secondary" onClick={() => window.print()} disabled={loading}><Printer size={17}/>Печать</button>}{can(user, 'registry.export') && <button className="primary" onClick={() => download(`/api/obligations/export.xlsx?status=${encodeURIComponent('К оплате')}&${query}`, 'К оплате.xlsx')}><Download size={17}/>Выгрузить</button>}</>}/>
-    <section className="payment-toolbar"><label><span>Дата утверждения</span><DateInput value={filters.approval_date} onChange={value => setFilters({...filters,approval_date:value})} aria-label="Дата утверждения"/></label><label><span>Юридическое лицо</span><select value={filters.legal_entity} onChange={e => setFilters({...filters,legal_entity:e.target.value})}><option value="">Все юрлица</option>{(refs.legal_entities||[]).map(x=><option key={x.id} value={x.value}>{x.value}</option>)}</select></label><label><span>Признак учёта</span><select value={filters.account_type} onChange={e => setFilters({...filters,account_type:e.target.value})}><option value="">Все</option>{(refs.account_types||[]).map(x=><option key={x.id} value={x.value}>{x.value}</option>)}</select></label></section>
+    <section className="payment-toolbar"><label><span>Дата утверждения</span><DateInput value={filters.approval_date} onChange={value => setFilter('approval_date', value)} aria-label="Дата утверждения"/></label><label><span>Юридическое лицо</span><select value={filters.legal_entity} onChange={e => setFilter('legal_entity', e.target.value)}><option value="">Все юрлица</option>{(refs.legal_entities||[]).map(x=><option key={x.id} value={x.value}>{x.value}</option>)}</select></label><label><span>Признак учёта</span><select value={filters.account_type} onChange={e => setFilter('account_type', e.target.value)}><option value="">Все</option>{(refs.account_types||[]).map(x=><option key={x.id} value={x.value}>{x.value}</option>)}</select></label></section>
     <section className="payment-summary"><div><CalendarDays/><span>Количество платежей<strong>{data.count}</strong></span></div><div><span>Общая сумма<strong>{money(data.amount)}</strong></span></div></section>
-    <section className="payment-list panel"><div className="payment-head">{paymentScreenColumns.map(column => <span key={column.key}>{column.label}</span>)}</div>{loading ? <div className="loading-line"/> : data.items.length === 0 ? <div className="empty-state"><CalendarDays size={28}/><strong>По выбранным условиям платежей нет</strong><span>Выберите другую дату или юридическое лицо</span></div> : data.items.map(item => <PaymentRow key={item.id} item={item} refs={refs} editable={can(user, 'payments.edit')} approvalEditable={canApproveObligations(user, item.legal_entity)} savingCells={savingCells} onSave={saveField} onOpenDetails={() => setDetailItem(item)} notify={notify}/>)}</section>
+    <section className="payment-list panel"><div className="payment-head">{paymentScreenColumns.map(column => <div key={column.key} className={`payment-column-head ${paymentFilterActive(filters[column.key]) ? 'filtered' : ''}`}><PaymentColumnFilter column={column} value={filters[column.key]} refs={refs} onChange={value => setFilter(column.key, value)}/></div>)}</div>{loading ? <div className="loading-line"/> : data.items.length === 0 ? <div className="empty-state"><CalendarDays size={28}/><strong>По выбранным условиям платежей нет</strong><span>Измените или сбросьте фильтры в заголовках</span></div> : data.items.map(item => <PaymentRow key={item.id} item={item} refs={refs} editable={can(user, 'payments.edit')} approvalEditable={canApproveObligations(user, item.legal_entity)} savingCells={savingCells} onSave={saveField} onOpenDetails={() => setDetailItem(item)} notify={notify}/>)}</section>
     <PaymentPrintReport data={data} filters={filters}/>
     {detailItem && <ObligationHistoryModal item={detailItem} notify={notify} onClose={() => setDetailItem(null)}/>}
     {duplicatePrompt && <DuplicateObligationModal conflict={duplicatePrompt} onCancel={() => finishDuplicatePrompt(false)} onConfirm={() => finishDuplicatePrompt(true)}/>}

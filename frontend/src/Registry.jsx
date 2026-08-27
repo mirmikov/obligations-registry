@@ -528,7 +528,7 @@ function ColumnResizeHandle({ columnIndex, columnWidth, onResizeStart, onResizeB
   return <span className="column-resize-handle" role="separator" tabIndex="0" aria-label="Изменить ширину столбца" aria-orientation="vertical" aria-valuenow={columnWidth} onPointerDown={event => onResizeStart(columnIndex, event)} onKeyDown={onKeyDown} onDoubleClick={() => onResizeReset(columnIndex)} title="Потяните для изменения ширины; двойной щелчок — сброс"/>
 }
 
-function DateHeaderFilter({ label, value, onChange }) {
+export function DateHeaderFilter({ label, value, onChange }) {
   const [open, setOpen] = useState(false)
   const triggerRef = useRef(null)
   return <div className={`header-filter date-header-filter ${open ? 'is-open' : ''} ${value ? 'has-value' : ''}`}>
@@ -537,7 +537,7 @@ function DateHeaderFilter({ label, value, onChange }) {
   </div>
 }
 
-function HeaderFilter({ label, value, options = [], onChange, multiple = false, allowBlank = false }) {
+export function HeaderFilter({ label, value, options = [], onChange, multiple = false, allowBlank = false }) {
   const [open, setOpen] = useState(false)
   const [search, setSearch] = useState('')
   const rootRef = useRef(null)

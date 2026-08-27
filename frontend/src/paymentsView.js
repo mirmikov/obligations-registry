@@ -7,13 +7,36 @@ export const paymentColumns = [
   { key: 'amount', label: 'Сумма' },
 ]
 
+const paymentScreenFilterTypes = {
+  account_type: 'select',
+  legal_entity: 'select',
+  counterparty: 'multi-select',
+  document_number: 'text',
+  document_date: 'date',
+  amount: 'amount',
+  actual_payment_date: 'date',
+  status: 'select',
+}
+
 export const paymentScreenColumns = [
   ...paymentColumns.map(column => ({ ...(column.key === 'planned_payment_date'
     ? { key: 'document_date', label: 'Дата документа' }
     : column), interactive: true })),
   { key: 'actual_payment_date', label: 'Фактическая дата оплаты', interactive: true },
   { key: 'status', label: 'Статус', interactive: true },
-]
+].map(column => ({ ...column, filter: paymentScreenFilterTypes[column.key] }))
+
+export function buildPaymentRegisterQuery(filters = {}) {
+  const params = new URLSearchParams()
+  Object.entries(filters).forEach(([key, rawValue]) => {
+    const values = Array.isArray(rawValue) ? rawValue : [rawValue]
+    values.forEach(raw => {
+      const value = String(raw ?? '').trim()
+      if (value) params.append(key, value)
+    })
+  })
+  return params.toString()
+}
 
 export function paymentUpdatePayload(item, field, value) {
   const { id, created_at, updated_at, overdue, due_soon, ...payload } = item
