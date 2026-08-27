@@ -115,6 +115,9 @@ func buildFilters(r *http.Request, start int) (string, []any) {
 	if q := strings.TrimSpace(query.Get("q")); q != "" {
 		add(`concat_ws(' ',counterparty,document_number,comment,responsible,legal_entity,cost_category) ILIKE '%%'||$%d||'%%'`, q)
 	}
+	if documentNumber := strings.TrimSpace(query.Get("document_number")); documentNumber != "" {
+		add(`document_number ILIKE '%%'||$%d||'%%'`, documentNumber)
+	}
 	if rawAmount := strings.TrimSpace(query.Get("amount")); rawAmount != "" {
 		normalized := strings.NewReplacer(" ", "", "\u00a0", "", "\u202f", "", ",", ".").Replace(rawAmount)
 		if amount, err := strconv.ParseFloat(normalized, 64); err == nil {

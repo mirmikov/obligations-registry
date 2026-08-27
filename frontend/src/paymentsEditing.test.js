@@ -59,7 +59,7 @@ test('print report remains bound only to original paymentColumns', () => {
 test('payment screen uses the original compact row and submits a complete obligation', () => {
   const source = fs.readFileSync(new URL('./Payments.jsx', import.meta.url), 'utf8')
   assert.match(source, /<PaymentRow[^>]+editable=\{can\(user, 'payments\.edit'\)\}/)
-  assert.match(source, /paymentScreenColumns\.map\(column => <span/)
+  assert.match(source, /paymentScreenColumns\.map\(column => <div/)
   assert.match(source, /<PaymentEditableCell/)
   assert.doesNotMatch(source, /<RegistryRow/)
   assert.doesNotMatch(source, /paymentEditableColumns/)
