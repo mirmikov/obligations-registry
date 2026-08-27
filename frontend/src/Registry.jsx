@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { AlertTriangle, ArrowRight, CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, Clock3, Download, ExternalLink, FileText, FileUp, Filter, History, Info, LoaderCircle, LocateFixed, Maximize2, Megaphone, Minimize2, Paperclip, Plus, RotateCcw, ScanLine, Scissors, Search, Trash2, UserRound, X } from 'lucide-react'
+import { AlertTriangle, ArrowRight, CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, Clock3, Download, ExternalLink, FileText, FileUp, Filter, History, Info, LoaderCircle, LocateFixed, Maximize2, Megaphone, Minimize2, Paperclip, Plus, Printer, RotateCcw, ScanLine, Scissors, Search, Trash2, UserRound, X } from 'lucide-react'
 import { download, request, requestBlob } from './api'
 import { DateInput, money, PageHeader, roleLabel, shortDate } from './App'
 import { BLANK_ACCOUNT_TYPE_FILTER } from './filterValues'
@@ -21,6 +21,7 @@ import { buildAIScanObligationValues, normalizeAIScanDocumentPages } from './aiS
 import { CounterpartyModal } from './References'
 import DesktopBroadcastModal from './DesktopBroadcastModal'
 import SystemAnnouncementModal from './SystemAnnouncementModal'
+import { printOriginalScan } from './scanPrint'
 
 const emptyFilters = { q: '', amount: '', counterparty: [], account_type: '', legal_entity: '', cost_category: '', priority: '', responsible: '', status: '', urgency: '', entry_date: '', document_date: '', planned_payment_date: '', approval_date: '', actual_payment_date: '', document_from: '', document_to: '', overdue: '' }
 const dateFields = new Set(['entry_date', 'document_date', 'planned_payment_date', 'approval_date', 'actual_payment_date'])
@@ -683,6 +684,16 @@ export function ObligationScanControl({ item, editable, notify, onChanged, scanU
       onChanged(null); setOpen(false); setConfirmDelete(false); notify('Скан документа удалён')
     } catch (error) { notify(error.message, 'error') } finally { setBusy(false) }
   }
+  const printScan = () => {
+    try {
+      printOriginalScan({
+        url: preview.url,
+        type: preview.type,
+        title: item.scan_name || `Скан документа №${item.id}`,
+        onError: () => notify('Не удалось открыть печать исходного файла', 'error'),
+      })
+    } catch (error) { notify(error.message, 'error') }
+  }
   return <>
     <input ref={inputRef} className="scan-file-input" type="file" accept="application/pdf,image/png,image/jpeg,image/webp" onChange={upload}/>
     <button type="button" className={`scan-cell-button ${item.has_scan ? 'has-scan' : ''}`} disabled={busy || (!editable && !item.has_scan)} onClick={() => { setConfirmDelete(false); item.has_scan ? setOpen(true) : chooseFile() }} title={item.has_scan ? `Открыть: ${item.scan_name}` : editable ? 'Загрузить скан документа' : 'Скан не загружен'} aria-label={item.has_scan ? `Открыть скан документа для записи №${item.id}` : `Загрузить скан документа для записи №${item.id}`}>
@@ -694,7 +705,7 @@ export function ObligationScanControl({ item, editable, notify, onChanged, scanU
         <aside className="scan-document-summary"><div className="scan-document-icon"><FileText size={30}/></div><div className="scan-document-meta"><strong title={item.scan_name}>{item.scan_name}</strong><span>{formatFileSize(item.scan_size)}</span>{item.scan_updated_at && <span>Загружен {formatScanDate(item.scan_updated_at)}</span>}<small>{item.counterparty || 'Контрагент не указан'}{item.document_number ? ` · ${item.document_number}` : ''}</small></div></aside>
         <div className="scan-document-preview" aria-live="polite">{preview.loading ? <div className="scan-preview-state"><LoaderCircle className="spin" size={30}/><strong>Загружаем документ…</strong></div> : preview.error ? <div className="scan-preview-state error"><AlertTriangle size={30}/><strong>{preview.error}</strong><button type="button" className="secondary" onClick={() => setPreviewVersion(version => version + 1)}>Повторить</button></div> : preview.url ? (preview.type.startsWith('image/') ? <img src={preview.url} alt={`Скан ${item.scan_name}`}/> : <iframe src={preview.url} title={`Скан ${item.scan_name}`}/>) : null}</div>
       </div>
-      <footer className="modal-footer scan-document-actions">{preview.url && <a className="secondary" href={preview.url} target="_blank" rel="noopener noreferrer"><ExternalLink size={16}/>Открыть отдельно</a>}{editable && <><button type="button" className="secondary" disabled={busy} onClick={chooseFile}><FileUp size={16}/>Заменить файл</button><button type="button" className={`danger ${confirmDelete ? 'confirming' : ''}`} disabled={busy} onClick={remove}><Trash2 size={16}/>{confirmDelete ? 'Нажмите ещё раз для удаления' : 'Удалить'}</button></>}</footer>
+      <footer className="modal-footer scan-document-actions">{preview.url && <><button type="button" className="primary scan-print-button" onClick={printScan} title="Печатать исходный файл без преобразования и сжатия"><Printer size={16}/>Печать без сжатия</button><a className="secondary" href={preview.url} target="_blank" rel="noopener noreferrer"><ExternalLink size={16}/>Открыть отдельно</a></>}{editable && <><button type="button" className="secondary" disabled={busy} onClick={chooseFile}><FileUp size={16}/>Заменить файл</button><button type="button" className={`danger ${confirmDelete ? 'confirming' : ''}`} disabled={busy} onClick={remove}><Trash2 size={16}/>{confirmDelete ? 'Нажмите ещё раз для удаления' : 'Удалить'}</button></>}</footer>
     </section></div>, document.body)}
   </>
 }
