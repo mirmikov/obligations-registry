@@ -1,5 +1,6 @@
 const pdfPrintDelay = 450
 const fallbackPrintDelay = 1400
+const imageFallbackPrintDelay = 5000
 const cleanupDelay = 120000
 
 function escapeHTML(value) {
@@ -53,6 +54,6 @@ export function printOriginalScan({ url, type = '', title = 'Скан докум
   if (type.startsWith('image/')) frame.srcdoc = imagePrintDocument(url, title)
   else frame.src = url
   documentObject.body.appendChild(frame)
-  windowObject.setTimeout(print, type === 'application/pdf' ? fallbackPrintDelay : 300)
+  windowObject.setTimeout(print, type === 'application/pdf' ? fallbackPrintDelay : imageFallbackPrintDelay)
   return cleanup
 }
