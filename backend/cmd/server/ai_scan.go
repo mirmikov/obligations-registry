@@ -1911,6 +1911,7 @@ func (a *app) commitAIScan(w http.ResponseWriter, r *http.Request) {
 	}
 	user := currentUser(r)
 	for index := range input.Items {
+		applyAIScanDefaults(&input.Items[index].Values)
 		input.Items[index].Values.normalize()
 		if approvalErr := validateApprovalCreate(user, input.Items[index].Values); approvalErr != nil {
 			fail(w, http.StatusForbidden, fmt.Sprintf("Страница %d: %v", input.Items[index].Page, approvalErr))
@@ -2006,4 +2007,10 @@ func (a *app) commitAIScan(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = os.RemoveAll(directory)
 	writeJSON(w, http.StatusCreated, map[string]any{"created": len(ids), "created_references": createdReferences, "learned_corrections": learnedCorrections, "ids": ids})
+}
+
+func applyAIScanDefaults(values *obligationInput) {
+	if strings.TrimSpace(values.Status) == "" {
+		values.Status = "Зарегистрирован"
+	}
 }

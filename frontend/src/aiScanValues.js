@@ -3,7 +3,7 @@ import { withReferenceDefaults } from './referenceDefaults.js'
 export function buildAIScanObligationValues(blank, item, responsibleByCostCategory = {}, defermentByCounterparty = {}) {
   let values = withReferenceDefaults({
     ...blank,
-    status: '',
+    status: 'Зарегистрирован',
     counterparty: item.counterparty || '',
     legal_entity: item.legal_entity || '',
     document_number: item.document_number || '',

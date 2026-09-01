@@ -21,6 +21,13 @@ test('AI scan preserves the directory deferment when the document has no safe te
   assert.equal(values.planned_payment_date, '2026-09-09')
 })
 
+test('AI scan starts every recognized obligation as registered', () => {
+  const values = buildAIScanObligationValues({ status: '' }, {
+    counterparty: 'ООО Поставщик', legal_entity: 'ООО Покупатель', document_number: '17', document_date: '2026-09-01', amount: 1250,
+  })
+  assert.equal(values.status, 'Зарегистрирован')
+})
+
 test('AI scan normalizes and labels pages belonging to one invoice', () => {
   assert.deepEqual(normalizeAIScanDocumentPages({ page: 2, pages: [4, 2, 3, 3] }), [2, 3, 4])
   assert.equal(formatAIScanDocumentPages({ page: 2, pages: [2, 3, 4] }), 'Страницы 2–4')
