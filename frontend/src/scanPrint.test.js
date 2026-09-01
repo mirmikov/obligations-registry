@@ -56,6 +56,7 @@ test('image printing does not create a canvas or transform the source', () => {
   assert.match(environment.frame.srcdoc, /blob:http:\/\/registry\.local\/original-image-bytes/)
   assert.match(environment.frame.srcdoc, /max-width:100%/)
   assert.equal(environment.frame.src, undefined)
+  assert.equal(environment.scheduled[0].delay, 5000)
   environment.listeners.get('load')()
   environment.scheduled.find(item => item.delay === 0).handler()
 
