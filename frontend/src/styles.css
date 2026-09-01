@@ -716,6 +716,8 @@ html[data-theme="dark"] .kpi.warning .kpi-icon{background:#3a2d1d;color:#e6ad65}
 html[data-theme="dark"] .kpi.mint .kpi-icon{background:#1d392f;color:#78c39f}
 
 @media print{
+  .system-maintenance-banner,.system-announcement-banner,.sidebar,.mobile-menu,.chat-widget,.chat-notification-stack,.toast{display:none!important}
+  .has-maintenance .main,.has-announcement .main,.has-maintenance.has-announcement .main{padding-top:0!important}
   html[data-theme="dark"]{color-scheme:light;--ink:#18363d;--paper:#fff;--muted:#718186;background:#fff!important;color:#18363d!important}
   html[data-theme="dark"] body,html[data-theme="dark"] #root,html[data-theme="dark"] .app-shell,html[data-theme="dark"] .main,html[data-theme="dark"] .page,html[data-theme="dark"] .modal,html[data-theme="dark"] .executive-detail-backdrop{background:#fff!important;color:#18363d!important}
   html[data-theme="dark"] .payment-print-report *,html[data-theme="dark"] .executive-print-report *{color:revert}

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { printOriginalScan } from './scanPrint.js'
+import { imagePrintDocument, printOriginalScan } from './scanPrint.js'
 
 function printEnvironment() {
   const scheduled = []
@@ -53,11 +53,21 @@ test('image printing does not create a canvas or transform the source', () => {
   let createdTags = []
   environment.documentObject.createElement = tag => { createdTags.push(tag); return environment.frame }
   printOriginalScan({ url: 'blob:http://registry.local/original-image-bytes', type: 'image/png', ...environment })
+  assert.match(environment.frame.srcdoc, /blob:http:\/\/registry\.local\/original-image-bytes/)
+  assert.match(environment.frame.srcdoc, /max-width:100%/)
+  assert.equal(environment.frame.src, undefined)
   environment.listeners.get('load')()
   environment.scheduled.find(item => item.delay === 0).handler()
 
   assert.deepEqual(createdTags, ['iframe'])
   assert.equal(environment.calls.printed, 1)
+})
+
+test('image print document escapes document data and keeps the original blob URL', () => {
+  const html = imagePrintDocument('blob:http://registry.local/image?name="scan"&page=1', 'Счёт <17>')
+  assert.match(html, /name=&quot;scan&quot;&amp;page=1/)
+  assert.match(html, /Счёт &lt;17&gt;/)
+  assert.doesNotMatch(html, /canvas|data:image/)
 })
 
 test('temporary print frame is removed after printing', () => {
