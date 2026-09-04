@@ -17,6 +17,13 @@ func TestExtractAIScanDefermentFromCalendarDays(t *testing.T) {
 		t.Fatalf("unexpected deferment: days=%v terms=%q confidence=%q", days, terms, confidence)
 	}
 }
+
+func TestExtractAIScanDefermentFromExplicitPaymentDaysCount(t *testing.T) {
+	days, terms, confidence := extractAIScanDeferment("Количество дней для оплаты 30", "2026-08-31")
+	if days == nil || *days != 30 || terms != "Количество дней для оплаты 30" || confidence != "high" {
+		t.Fatalf("unexpected Megafon payment days: days=%v terms=%q confidence=%q", days, terms, confidence)
+	}
+}
 func TestExtractAIScanDefermentPrefersExactLaterCondition(t *testing.T) {
 	days, terms, confidence := extractAIScanDeferment("Условия оплаты: согласно договору\nОтсрочка платежа 25 календарных дней", "2026-08-10")
 	if days == nil || *days != 25 || confidence != "high" || !strings.Contains(terms, "25 календарных") {
@@ -70,6 +77,46 @@ func TestGroupAIScanDocumentSuggestionsKeepsDifferentInvoicesSeparate(t *testing
 	groups := groupAIScanDocumentSuggestions([]aiScanSuggestion{first, second}, []string{"Счет № 17 от 10.08.2026", "Счет № 18 от 10.08.2026"})
 	if len(groups) != 2 || groups[0].Page != 1 || groups[1].Page != 2 {
 		t.Fatalf("different invoices were merged: %#v", groups)
+	}
+}
+
+func TestGroupAIScanMegafonBillingPacketAsOneObligation(t *testing.T) {
+	amount := 377.0
+	perPage := []aiScanSuggestion{
+		{DocumentNumber: "Счёт № 108-1", DocumentDate: "2026-08-31", Amount: &amount, Confidence: map[string]string{"document_number": "high", "document_date": "high", "amount": "high"}},
+		{Confidence: map[string]string{}},
+		{Counterparty: "МегаФон", CounterpartyTaxID: "7812014560", DocumentNumber: "Счёт-фактура № 20738261675/100", DocumentDate: "2026-08-31", Amount: &amount, Confidence: map[string]string{"counterparty": "high", "document_number": "high", "document_date": "high", "amount": "high"}},
+		{Counterparty: "МегаФон", CounterpartyTaxID: "7812014560", DocumentNumber: "Счёт на оплату № 170085961036", DocumentDate: "2026-08-31", Amount: &amount, Confidence: map[string]string{"counterparty": "high", "document_number": "high", "document_date": "high", "amount": "high"}},
+	}
+	pageTexts := []string{
+		"МегаФон ПроБизнес\nСчёт № 108-1 от 31.08.2026\nза расчётный период: 01.08.2026 - 31.08.2026\nОператор: ПАО МегаФон\nАбонент: ООО МИРТ-МРТ\nЛицевой счёт: 170085961036\nКоличество дней для оплаты 30",
+		"Подробная информация\nСчёт и единый лицевой счёт: 108-1 170085961036",
+		"МегаФон\nСчёт-фактура № 20738261675/100 от 31.08.2026\nИтого 377,00",
+		"Получатель: ПАО МегаФон\nЛицевой счёт 170085961036\nСчёт на оплату № 170085961036 от 31.08.2026",
+	}
+	groups := groupAIScanDocumentSuggestions(perPage, pageTexts)
+	if len(groups) != 1 {
+		t.Fatalf("Megafon packet created %d obligations: %#v", len(groups), groups)
+	}
+	result := groups[0]
+	if result.DocumentNumber != "Счёт № 108-1" || result.DocumentDate != "2026-08-31" || result.Counterparty != "МегаФон" || result.CounterpartyTaxID != "7812014560" || result.DefermentDays == nil || *result.DefermentDays != 30 {
+		t.Fatalf("unexpected grouped Megafon bill: %#v", result)
+	}
+	if len(result.Pages) != 4 || result.Pages[0] != 1 || result.Pages[3] != 4 {
+		t.Fatalf("unexpected grouped pages: %v", result.Pages)
+	}
+}
+
+func TestGroupAIScanMegafonStartsNewPacketAtNextBillingCover(t *testing.T) {
+	first := aiScanSuggestion{DocumentNumber: "Счёт № 108-1", DocumentDate: "2026-08-31", Confidence: map[string]string{"document_number": "high", "document_date": "high"}}
+	second := aiScanSuggestion{DocumentNumber: "Счёт № 109-1", DocumentDate: "2026-09-30", Confidence: map[string]string{"document_number": "high", "document_date": "high"}}
+	texts := []string{
+		"МегаФон\nСчёт № 108-1 от 31.08.2026\nза расчётный период\nОператор\nАбонент\nЛицевой счёт: 170085961036",
+		"МегаФон\nСчёт № 109-1 от 30.09.2026\nза расчётный период\nОператор\nАбонент\nЛицевой счёт: 170085961036",
+	}
+	groups := groupAIScanDocumentSuggestions([]aiScanSuggestion{first, second}, texts)
+	if len(groups) != 2 {
+		t.Fatalf("two Megafon covers must stay separate: %#v", groups)
 	}
 }
 

@@ -279,7 +279,7 @@ func (a *app) processAIScanBatch(token, directory string, pages []string) {
 		// Even a sparse PDF text layer can contain a precise invoice header or INN.
 		// Parse it independently before deciding whether raster recovery is needed;
 		// never concatenate it with OCR output.
-		if embedded := valueAt(textLayer, index); strings.TrimSpace(embedded) != "" && strings.TrimSpace(embedded) != strings.TrimSpace(text) {
+		if embedded := valueAt(textLayer, index); strings.TrimSpace(embedded) != "" && !corruptedAIScanTextLayer(embedded) && strings.TrimSpace(embedded) != strings.TrimSpace(text) {
 			suggestions[index] = mergeAIScanSuggestions(suggestions[index], parseAIScanTextWithReferences(embedded, counterparties, legalEntities))
 		}
 	}
@@ -304,7 +304,11 @@ func (a *app) processAIScanBatch(token, directory string, pages []string) {
 	}
 	pageTexts := make([]string, len(pages))
 	for index := range pageTexts {
-		pageTexts[index] = strings.TrimSpace(valueAt(ocrTexts, index) + "\n" + valueAt(textLayer, index))
+		embedded := valueAt(textLayer, index)
+		if corruptedAIScanTextLayer(embedded) {
+			embedded = ""
+		}
+		pageTexts[index] = strings.TrimSpace(valueAt(ocrTexts, index) + "\n" + embedded)
 	}
 	suggestions = groupAIScanDocumentSuggestions(suggestions, pageTexts)
 	learningDocuments := aiScanLearningDocuments(suggestions, pageTexts)
@@ -461,7 +465,7 @@ func recoverAIScanPage(ctx context.Context, pagePath, directory string, page int
 	}
 
 	candidates := make([]aiScanSuggestion, 0, len(texts)+1)
-	if strings.TrimSpace(textLayer) != "" {
+	if strings.TrimSpace(textLayer) != "" && !corruptedAIScanTextLayer(textLayer) {
 		candidates = append(candidates, parseAIScanTextWithReferences(textLayer, counterparties, legalEntities))
 	}
 	for _, text := range texts {
@@ -536,7 +540,22 @@ func extractAIScanPDFTextLayer(ctx context.Context, directory string, pageCount 
 }
 
 func usableAIScanTextLayer(text string) bool {
-	return len([]rune(strings.TrimSpace(text))) >= 80 && aiScanTextScore(text) >= 70
+	return !corruptedAIScanTextLayer(text) && len([]rune(strings.TrimSpace(text))) >= 80 && aiScanTextScore(text) >= 70
+}
+
+func corruptedAIScanTextLayer(text string) bool {
+	significant := 0
+	replacements := 0
+	for _, character := range text {
+		if unicode.IsSpace(character) {
+			continue
+		}
+		significant++
+		if character == '\uFFFD' {
+			replacements++
+		}
+	}
+	return replacements >= 3 && replacements*20 >= significant
 }
 
 func prepareAIScanPages(ctx context.Context, inputPath, contentType, directory string) ([]string, error) {

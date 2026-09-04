@@ -14,12 +14,13 @@ import (
 )
 
 var (
-	aiScanDocumentStartPattern = regexp.MustCompile(`(?im)^\s*(?:сч[её]т(?:\s+на\s+оплату|\s*[-–—]\s*(?:договор|оферта|фактура))?|универсальный\s+передаточный\s+документ|упд|товарная\s+накладная|акт(?:\s+(?:выполненных\s+работ|оказанных\s+услуг))?)\b`)
-	aiScanPaymentDaysPattern   = regexp.MustCompile(`(?i)(?:отсрочк[А-Яа-яЁёA-Za-z]*(?:\s+платежа)?|оплата|оплатить|постоплат[А-Яа-яЁёA-Za-z]*|срок\s+оплаты)[^\n]{0,120}?(\d{1,3})\s*(?:календарн[А-Яа-яЁёA-Za-z]*\s*)?(?:дн(?:ей|я|ь)|сут(?:ок|ки))`)
-	aiScanPaymentDatePattern   = regexp.MustCompile(`(?i)(?:дата\s+оплаты|оплата|оплатить|срок\s+оплаты|не\s+позднее|до)\D{0,45}([0-9]{1,2}(?:\s*[.\-/]\s*[0-9]{1,2}\s*[.\-/]\s*[0-9]{2,4}|\s+[А-Яа-яЁё]+\s+[0-9]{4}))`)
-	aiScanPaymentLinePattern   = regexp.MustCompile(`(?i)(?:услови[А-Яа-яЁёA-Za-z]*\s+оплаты|дата\s+оплаты|отсрочк[А-Яа-яЁёA-Za-z]*|постоплат[А-Яа-яЁёA-Za-z]*|предоплат[А-Яа-яЁёA-Za-z]*|срок\s+оплаты|оплатить\s+(?:в\s+течение|не\s+позднее|до)|оплата\s+(?:в\s+течение|не\s+позднее|до|через))`)
-	aiScanWorkingDaysPattern   = regexp.MustCompile(`(?i)(?:рабоч[А-Яа-яЁёA-Za-z]*|банковск[А-Яа-яЁёA-Za-z]*)\s+(?:дн(?:ей|я|ь)|сут(?:ок|ки))`)
-	aiScanPrepaymentPattern    = regexp.MustCompile(`(?i)(?:100\s*%\s*(?:предоплат[А-Яа-яЁёA-Za-z]*|аванс[А-Яа-яЁёA-Za-z]*)|(?:предоплат[А-Яа-яЁёA-Za-z]*|аванс[А-Яа-яЁёA-Za-z]*)\s*100\s*%|оплат[А-Яа-яЁёA-Za-z]*\s+до\s+(?:поставки|отгрузки))`)
+	aiScanDocumentStartPattern  = regexp.MustCompile(`(?im)^\s*(?:сч[её]т(?:\s+на\s+оплату|\s*[-–—]\s*(?:договор|оферта|фактура))?|универсальный\s+передаточный\s+документ|упд|товарная\s+накладная|акт(?:\s+(?:выполненных\s+работ|оказанных\s+услуг))?)\b`)
+	aiScanPaymentDaysPattern    = regexp.MustCompile(`(?i)(?:отсрочк[А-Яа-яЁёA-Za-z]*(?:\s+платежа)?|оплата|оплатить|постоплат[А-Яа-яЁёA-Za-z]*|срок\s+оплаты)[^\n]{0,120}?(\d{1,3})\s*(?:календарн[А-Яа-яЁёA-Za-z]*\s*)?(?:дн(?:ей|я|ь)|сут(?:ок|ки))`)
+	aiScanDaysForPaymentPattern = regexp.MustCompile(`(?i)количеств[А-Яа-яЁёA-Za-z]*\s+дн(?:ей|я|ь)\s+для\s+оплат[А-Яа-яЁёA-Za-z]*\D{0,20}(\d{1,3})\b`)
+	aiScanPaymentDatePattern    = regexp.MustCompile(`(?i)(?:дата\s+оплаты|оплата|оплатить|срок\s+оплаты|не\s+позднее|до)\D{0,45}([0-9]{1,2}(?:\s*[.\-/]\s*[0-9]{1,2}\s*[.\-/]\s*[0-9]{2,4}|\s+[А-Яа-яЁё]+\s+[0-9]{4}))`)
+	aiScanPaymentLinePattern    = regexp.MustCompile(`(?i)(?:услови[А-Яа-яЁёA-Za-z]*\s+оплаты|дата\s+оплаты|отсрочк[А-Яа-яЁёA-Za-z]*|постоплат[А-Яа-яЁёA-Za-z]*|предоплат[А-Яа-яЁёA-Za-z]*|срок\s+оплаты|оплатить\s+(?:в\s+течение|не\s+позднее|до)|оплата\s+(?:в\s+течение|не\s+позднее|до|через))`)
+	aiScanWorkingDaysPattern    = regexp.MustCompile(`(?i)(?:рабоч[А-Яа-яЁёA-Za-z]*|банковск[А-Яа-яЁёA-Za-z]*)\s+(?:дн(?:ей|я|ь)|сут(?:ок|ки))`)
+	aiScanPrepaymentPattern     = regexp.MustCompile(`(?i)(?:100\s*%\s*(?:предоплат[А-Яа-яЁёA-Za-z]*|аванс[А-Яа-яЁёA-Za-z]*)|(?:предоплат[А-Яа-яЁёA-Za-z]*|аванс[А-Яа-яЁёA-Za-z]*)\s*100\s*%|оплат[А-Яа-яЁёA-Za-z]*\s+до\s+(?:поставки|отгрузки))`)
 )
 
 func extractAIScanDeferment(text, documentDate string) (*int, string, string) {
@@ -27,7 +28,16 @@ func extractAIScanDeferment(text, documentDate string) (*int, string, string) {
 	lines := strings.Split(strings.ReplaceAll(text, "\r", ""), "\n")
 	for _, raw := range lines {
 		line := strings.Join(strings.Fields(raw), " ")
-		if line == "" || !aiScanPaymentLinePattern.MatchString(line) {
+		if line == "" {
+			continue
+		}
+		if match := aiScanDaysForPaymentPattern.FindStringSubmatch(line); len(match) == 2 {
+			days, _ := strconv.Atoi(match[1])
+			if days >= 0 && days <= 730 {
+				return intPointer(days), line, "high"
+			}
+		}
+		if !aiScanPaymentLinePattern.MatchString(line) {
 			continue
 		}
 		if len([]rune(line)) > 320 {
@@ -94,13 +104,77 @@ func shouldStartNewAIScanDocument(current, next aiScanSuggestion, pageText strin
 	return aiScanDocumentStartPattern.MatchString(pageText)
 }
 
+func isMegafonAIScanBillingStart(text string) bool {
+	folded := foldAIScanText(text)
+	return (strings.Contains(folded, "мегафон") || strings.Contains(folded, "megafon")) &&
+		strings.Contains(folded, "расчетный период") && strings.Contains(folded, "лицевой счет") &&
+		strings.Contains(folded, "оператор") && strings.Contains(folded, "абонент")
+}
+
+func megafonAIScanAccount(text string) string {
+	folded := foldAIScanText(text)
+	marker := strings.Index(folded, "лицевой счет")
+	if marker < 0 {
+		return ""
+	}
+	segment := []rune(folded[marker+len("лицевой счет"):])
+	if len(segment) > 80 {
+		segment = segment[:80]
+	}
+	var digits strings.Builder
+	for _, character := range segment {
+		if character >= '0' && character <= '9' {
+			digits.WriteRune(character)
+			continue
+		}
+		if digits.Len() >= 8 {
+			break
+		}
+		if digits.Len() > 0 && character != ' ' && character != '-' && character != ':' {
+			digits.Reset()
+		}
+	}
+	if digits.Len() < 8 || digits.Len() > 20 {
+		return ""
+	}
+	return digits.String()
+}
+
+func shouldContinueMegafonAIScanBilling(firstPageText, nextPageText string) bool {
+	if !isMegafonAIScanBillingStart(firstPageText) || isMegafonAIScanBillingStart(nextPageText) {
+		return false
+	}
+	folded := foldAIScanText(nextPageText)
+	if strings.Contains(folded, "мегафон") || strings.Contains(folded, "megafon") {
+		return true
+	}
+	account := megafonAIScanAccount(firstPageText)
+	if account == "" {
+		return false
+	}
+	var nextDigits strings.Builder
+	for _, character := range nextPageText {
+		if character >= '0' && character <= '9' {
+			nextDigits.WriteRune(character)
+		}
+	}
+	return strings.Contains(nextDigits.String(), account)
+}
+
 func groupAIScanDocumentSuggestions(perPage []aiScanSuggestion, pageTexts []string) []aiScanSuggestion {
 	groups := make([]aiScanSuggestion, 0, len(perPage))
 	for index, suggestion := range perPage {
 		page := index + 1
 		suggestion.Page = page
 		suggestion.Pages = []int{page}
-		if len(groups) == 0 || shouldStartNewAIScanDocument(groups[len(groups)-1], suggestion, valueAt(pageTexts, index)) {
+		continueMegafonPacket := false
+		if len(groups) > 0 && len(groups[len(groups)-1].Pages) > 0 {
+			firstPage := groups[len(groups)-1].Pages[0]
+			if firstPage > 0 && firstPage <= len(pageTexts) {
+				continueMegafonPacket = shouldContinueMegafonAIScanBilling(pageTexts[firstPage-1], valueAt(pageTexts, index))
+			}
+		}
+		if len(groups) == 0 || (!continueMegafonPacket && shouldStartNewAIScanDocument(groups[len(groups)-1], suggestion, valueAt(pageTexts, index))) {
 			groups = append(groups, suggestion)
 			continue
 		}

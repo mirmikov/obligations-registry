@@ -176,6 +176,20 @@ func TestAIScanTextLayerRejectsSparseGarbage(t *testing.T) {
 	}
 }
 
+func TestAIScanTextLayerRejectsBrokenFontMapping(t *testing.T) {
+	broken := strings.Repeat("������� ��������� ������ ", 20) + "170085961036 31.08.2026"
+	if !corruptedAIScanTextLayer(broken) {
+		t.Fatal("replacement-heavy text layer was not recognized as corrupted")
+	}
+	if usableAIScanTextLayer(broken) {
+		t.Fatal("replacement-heavy text layer must fall back to raster OCR")
+	}
+	readable := "Счёт № 108-1 от 31.08.2026. Поставщик ПАО МегаФон, покупатель ООО МИРТ. ИНН 7812014560. Всего к оплате 377,00 руб."
+	if corruptedAIScanTextLayer(readable + " �") {
+		t.Fatal("one stray replacement character must not reject a readable layer")
+	}
+}
+
 func TestParseAIScanDateRejectsImpossibleDate(t *testing.T) {
 	if value := parseAIScanDate("31.02.2026"); value != "" {
 		t.Fatalf("expected empty date, got %q", value)
