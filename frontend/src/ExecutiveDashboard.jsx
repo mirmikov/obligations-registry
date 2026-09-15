@@ -477,7 +477,7 @@ function ExecutiveSpecialDetailsTable({ details, statusOptions, savingCells, edi
 }
 
 function ExecutiveSplitCell({ item, onSplit }) {
-  if (!canSplitPayment(item)) return <td className="executive-detail-action"><span title="Этот платёж уже разбит, оплачен или отменён">—</span></td>
+  if (!canSplitPayment(item)) return <td className="executive-detail-action"><span title="Оплаченный или отменённый платёж нельзя разбить">—</span></td>
   return <td className="executive-detail-action"><button type="button" className="secondary executive-split-button" onClick={() => onSplit(item)} title="Разбить платёж"><Scissors size={14}/>Разбить</button></td>
 }
 

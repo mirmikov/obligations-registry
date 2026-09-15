@@ -329,7 +329,11 @@ func (a *app) readSystemAnnouncement(ctx context.Context) systemAnnouncementStat
 
 func (a *app) getSystemStatus(w http.ResponseWriter, r *http.Request) {
 	user := currentUser(r)
-	writeJSON(w, http.StatusOK, systemStatusPayload(user, a.readMaintenanceState(r.Context()), a.readSystemAnnouncement(r.Context()), time.Now()))
+	payload := systemStatusPayload(user, a.readMaintenanceState(r.Context()), a.readSystemAnnouncement(r.Context()), time.Now())
+	if user.IsDeveloper {
+		payload["disk"] = readDiskStatus(r.Context())
+	}
+	writeJSON(w, http.StatusOK, payload)
 }
 
 func systemStatusPayload(user authUser, maintenance maintenanceState, announcement systemAnnouncementState, now time.Time) map[string]any {

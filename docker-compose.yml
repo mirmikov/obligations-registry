@@ -33,6 +33,7 @@ services:
     volumes:
       - chat_uploads:/data/chat_uploads
       - ${REGISTRY_BACKUP_STATUS_DIR:-../backup-status/obligations-registry}:/data/backup_status:ro
+      - /:/host-filesystem:ro
     restart: unless-stopped
 
   frontend:

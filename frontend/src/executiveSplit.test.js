@@ -15,6 +15,12 @@ test('executive dashboard reuses the registry split modal and its eligibility ru
   assert.match(dashboard, /\/api\/obligations\/\$\{item\.id\}\/split/)
 })
 
+test('an unpaid installment can be split again', () => {
+  assert.match(registry, /return Number\(item\?\.amount\) > 0 && !item\?\.actual_payment_date/)
+  assert.doesNotMatch(registry, /Number\(item\?\.installment_count \|\| 0\) <= 1/)
+  assert.doesNotMatch(registry, /!item\?\.split_group_id/)
+})
+
 test('executive split refreshes both the dashboard and the active details', () => {
   assert.match(dashboard, /const \[dashboardResult, detailsResult\] = await Promise\.all/)
   assert.match(dashboard, /setData\(dashboardResult\)/)

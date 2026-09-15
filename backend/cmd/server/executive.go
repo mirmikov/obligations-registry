@@ -50,6 +50,7 @@ type executivePeriod struct {
 type executiveDetail struct {
 	ID                 int64   `json:"id"`
 	LegalEntity        string  `json:"legal_entity"`
+	AccountType        string  `json:"account_type"`
 	PlannedPaymentDate string  `json:"planned_payment_date"`
 	Counterparty       string  `json:"counterparty"`
 	PaymentPurpose     string  `json:"payment_purpose"`
@@ -76,6 +77,7 @@ type executiveSpecialSummary struct {
 type executiveSpecialDetail struct {
 	ID                 int64   `json:"id"`
 	LegalEntity        string  `json:"legal_entity"`
+	AccountType        string  `json:"account_type"`
 	PlannedPaymentDate string  `json:"planned_payment_date"`
 	DocumentNumber     string  `json:"document_number"`
 	DocumentDate       string  `json:"document_date"`
@@ -280,6 +282,7 @@ func (a *app) executiveDashboardDetails(w http.ResponseWriter, r *http.Request) 
 	rows, queryErr := a.db.QueryContext(r.Context(), `
 		SELECT id,
 			COALESCE(legal_entity,''),
+			COALESCE(account_type,''),
 			COALESCE(to_char(planned_payment_date,'YYYY-MM-DD'),''),
 			COALESCE(counterparty,''),
 			COALESCE(NULLIF(BTRIM(document_number),''),NULLIF(BTRIM(cost_category),''),''),
@@ -303,7 +306,7 @@ func (a *app) executiveDashboardDetails(w http.ResponseWriter, r *http.Request) 
 	for rows.Next() {
 		var item executiveDetail
 		if scanErr := rows.Scan(
-			&item.ID, &item.LegalEntity, &item.PlannedPaymentDate, &item.Counterparty,
+			&item.ID, &item.LegalEntity, &item.AccountType, &item.PlannedPaymentDate, &item.Counterparty,
 			&item.PaymentPurpose, &item.Comment, &item.Amount, &item.Responsible,
 			&item.Status, &item.ApprovalDate,
 		); scanErr != nil {
@@ -343,6 +346,7 @@ func (a *app) executiveSpecialDetails(w http.ResponseWriter, r *http.Request) {
 	rows, queryErr := a.db.QueryContext(r.Context(), `
 		SELECT id,
 			COALESCE(legal_entity,''),
+			COALESCE(account_type,''),
 			COALESCE(to_char(planned_payment_date,'YYYY-MM-DD'),''),
 			COALESCE(document_number,''),
 			COALESCE(to_char(document_date,'YYYY-MM-DD'),''),
@@ -368,7 +372,7 @@ func (a *app) executiveSpecialDetails(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var item executiveSpecialDetail
 		if scanErr := rows.Scan(
-			&item.ID, &item.LegalEntity, &item.PlannedPaymentDate, &item.DocumentNumber,
+			&item.ID, &item.LegalEntity, &item.AccountType, &item.PlannedPaymentDate, &item.DocumentNumber,
 			&item.DocumentDate, &item.PaymentPurpose, &item.Comment, &item.Amount,
 			&item.PaidAmount, &item.OutstandingAmount, &item.Status, &item.ApprovalDate,
 		); scanErr != nil {

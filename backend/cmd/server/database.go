@@ -124,12 +124,30 @@ func (input *obligationInput) normalize() {
 	}
 }
 
-func (input *obligationInput) normalizeForUpdate(previousApprovalDate string) {
+type obligationNormalizationState struct {
+	ApprovalDate  string
+	DocumentDate  string
+	DefermentDays *int
+}
+
+func (input *obligationInput) normalizeForUpdate(previous obligationNormalizationState) {
 	requestedStatus := input.Status
+	requestedPlannedPaymentDate := input.PlannedPaymentDate
+	recalculatePlannedPaymentDate := strings.TrimSpace(input.DocumentDate) != strings.TrimSpace(previous.DocumentDate) || !sameOptionalInt(input.DefermentDays, previous.DefermentDays)
 	input.normalize()
-	if strings.TrimSpace(input.ActualPaymentDate) == "" && strings.TrimSpace(input.ApprovalDate) == strings.TrimSpace(previousApprovalDate) {
+	if !recalculatePlannedPaymentDate {
+		input.PlannedPaymentDate = requestedPlannedPaymentDate
+	}
+	if strings.TrimSpace(input.ActualPaymentDate) == "" && strings.TrimSpace(input.ApprovalDate) == strings.TrimSpace(previous.ApprovalDate) {
 		input.Status = requestedStatus
 	}
+}
+
+func sameOptionalInt(left, right *int) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return *left == *right
 }
 
 func automaticObligationStatus(approvalDate, actualPaymentDate, status string) string {

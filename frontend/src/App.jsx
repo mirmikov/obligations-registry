@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { BarChart3, BellRing, BookOpen, ChartNoAxesCombined, ChevronDown, ChevronLeft, ChevronRight, CircleDollarSign, DatabaseBackup, FileCheck2, FileClock, Gauge, Landmark, LogOut, Maximize2, Menu, MessageCircle, Minus, Moon, ReceiptText, Settings, ShieldCheck, Sun, Undo2, Users, X } from 'lucide-react'
+import { BarChart3, BellRing, BookOpen, ChartNoAxesCombined, ChevronDown, ChevronLeft, ChevronRight, CircleDollarSign, DatabaseBackup, FileCheck2, FileClock, Gauge, HardDrive, Landmark, LogOut, Maximize2, Menu, MessageCircle, Minus, Moon, ReceiptText, Settings, ShieldCheck, Sun, Undo2, Users, X } from 'lucide-react'
 import { request } from './api'
 import Dashboard from './Dashboard'
 import Registry from './Registry'
@@ -17,6 +17,7 @@ import useChatNotifications from './useChatNotifications'
 import { can, firstAllowedPage, pagePermissions } from './permissions'
 import { applyTheme, resolveTheme, THEME_STORAGE_KEY } from './theme'
 import { backupStatusPresentation, backupStatusTooltip } from './backupStatus'
+import { diskStatusPresentation, diskStatusTooltip } from './diskStatus'
 import { clearDesktopNotificationTarget, readDesktopNotificationTarget } from './desktopNotificationLink'
 
 const nav = [
@@ -48,6 +49,7 @@ export default function App() {
   const [maintenance, setMaintenance] = useState({ active: false, message: 'Ведется обновление программы' })
   const [announcement, setAnnouncement] = useState({ active: false, message: '' })
   const [backupStatus, setBackupStatus] = useState(null)
+  const [diskStatus, setDiskStatus] = useState(null)
 
   useEffect(() => { applyTheme(theme) }, [theme])
 
@@ -102,6 +104,7 @@ export default function App() {
         setMaintenance(result.maintenance || { active: false, message: 'Ведется обновление программы' })
         setAnnouncement(result.announcement || { active: false, message: '' })
         if (can(user, 'system.backup_status')) setBackupStatus(result.backup || null)
+        if (user?.is_developer || user?.role === 'developer') setDiskStatus(result.disk || null)
       }
     }).catch(() => {})
     refreshStatus()
@@ -159,6 +162,7 @@ export default function App() {
       <nav>{nav.filter(item => isAllowedNavItem(item, user)).map(item => item.children ? <div className={`nav-group ${registryOpen ? 'is-open' : ''}`} key={item.id}><div className="nav-parent"><button className={page === item.id ? 'active' : ''} onClick={() => setPage(item.id)} title={item.label}><item.icon size={19}/><span>{item.label}</span></button><button type="button" className="nav-expand" onClick={() => setRegistryOpen(value => !value)} title={registryOpen ? 'Свернуть раздел' : 'Развернуть раздел'} aria-label={registryOpen ? 'Свернуть раздел Реестр' : 'Развернуть раздел Реестр'} aria-expanded={registryOpen}><ChevronDown size={16}/></button></div>{registryOpen && <div className="nav-children">{item.children.filter(child => can(user, child.permission)).map(child => <button key={child.id} className={page === child.id ? 'active' : ''} onClick={() => setPage(child.id)} title={child.label}><child.icon size={17}/><span>{child.label}</span></button>)}</div>}</div> : <button key={item.id} className={page === item.id ? 'active' : ''} onClick={() => item.id === 'chat' ? openChat() : setPage(item.id)} title={item.label}><item.icon size={19}/><span>{item.label}</span>{item.id === 'chat' && chatNotifications.unread > 0 && <b className="nav-unread">{unreadLabel(chatNotifications.unread)}</b>}{item.id === 'payments' && <i/>}</button>)}</nav>
       <div className="sidebar-bottom">
         {can(user, 'system.backup_status') && <DeveloperBackupStatus status={backupStatus}/>}
+        {(user?.is_developer || user?.role === 'developer') && <DeveloperDiskStatus status={diskStatus}/>}
         <button type="button" className={`undo-action ${undoing ? 'is-loading' : ''}`} onClick={undoLast} disabled={!undoState.available || undoState.loading || undoing || !can(user, 'registry.undo')} title={undoState.available ? `Отменить: ${undoState.description}` : 'Нет действий для отмены'} aria-label={undoState.available ? `Отменить последнее действие: ${undoState.description}` : 'Нет действий для отмены'}><Undo2 size={18}/><span>{undoing ? 'Отменяем…' : 'Отменить действие'}</span>{undoState.remaining > 0 && <b>{Math.min(undoState.remaining, 500)}</b>}</button>
         <button type="button" className="theme-toggle" onClick={() => setTheme(value => value === 'dark' ? 'light' : 'dark')} title={theme === 'dark' ? 'Включить светлую тему' : 'Включить тёмную тему'} aria-label={theme === 'dark' ? 'Включить светлую тему' : 'Включить тёмную тему'} aria-pressed={theme === 'dark'}>{theme === 'dark' ? <Sun size={18}/> : <Moon size={18}/>}<span>{theme === 'dark' ? 'Светлая тема' : 'Тёмная тема'}</span></button>
         <button className="collapse" onClick={() => setCollapsed(v => !v)}>{collapsed ? <ChevronRight size={18}/> : <ChevronLeft size={18}/>}<span>Свернуть</span></button>
@@ -178,6 +182,15 @@ function DeveloperBackupStatus({ status }) {
   const view = backupStatusPresentation(status)
   return <div className={`developer-backup-status is-${view.tone}`} title={backupStatusTooltip(status)} aria-label={`${view.title}. ${view.subtitle}`}>
     <DatabaseBackup size={18}/>
+    <span><strong>{view.title}</strong><small>{view.subtitle}</small></span>
+    <i aria-hidden="true"/>
+  </div>
+}
+
+function DeveloperDiskStatus({ status }) {
+  const view = diskStatusPresentation(status)
+  return <div className={`developer-disk-status is-${view.tone}`} title={diskStatusTooltip(status)} aria-label={`${view.title}. ${view.subtitle}`}>
+    <HardDrive size={18}/>
     <span><strong>{view.title}</strong><small>{view.subtitle}</small></span>
     <i aria-hidden="true"/>
   </div>
