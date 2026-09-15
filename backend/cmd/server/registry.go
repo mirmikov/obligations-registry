@@ -275,10 +275,13 @@ func (a *app) updateObligationRecord(w http.ResponseWriter, r *http.Request, aud
 		return
 	}
 	var previous struct {
-		ApprovalDate string `json:"approval_date"`
-		Counterparty string `json:"counterparty"`
-		LegalEntity  string `json:"legal_entity"`
-		Status       string `json:"status"`
+		ApprovalDate       string `json:"approval_date"`
+		Counterparty       string `json:"counterparty"`
+		LegalEntity        string `json:"legal_entity"`
+		Status             string `json:"status"`
+		DocumentDate       string `json:"document_date"`
+		DefermentDays      *int   `json:"deferment_days"`
+		PlannedPaymentDate string `json:"planned_payment_date"`
 	}
 	if err = json.Unmarshal(beforeRow, &previous); err != nil {
 		fail(w, 500, "Не удалось прочитать текущее обязательство")
@@ -290,7 +293,9 @@ func (a *app) updateObligationRecord(w http.ResponseWriter, r *http.Request, aud
 			return
 		}
 	}
-	input.normalizeForUpdate(previous.ApprovalDate)
+	input.normalizeForUpdate(obligationNormalizationState{
+		ApprovalDate: previous.ApprovalDate, DocumentDate: previous.DocumentDate, DefermentDays: previous.DefermentDays,
+	})
 	if err = validateApprovalUpdate(user, obligationApprovalState{ApprovalDate: previous.ApprovalDate, LegalEntity: previous.LegalEntity, Status: previous.Status}, input); err != nil {
 		fail(w, http.StatusForbidden, err.Error())
 		return

@@ -923,7 +923,7 @@ export function SplitPaymentModal({ item, refs, onClose, onSave }) {
 }
 
 export function canSplitPayment(item) {
-  return Number(item?.amount) > 0 && Number(item?.installment_count || 0) <= 1 && !item?.split_group_id && !item?.actual_payment_date && !['Оплачено', 'Отменено'].includes(item?.status)
+  return Number(item?.amount) > 0 && !item?.actual_payment_date && !['Оплачено', 'Отменено'].includes(item?.status)
 }
 
 export function ObligationHistoryModal({ item, notify, onClose }) {

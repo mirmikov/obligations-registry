@@ -92,14 +92,8 @@ func (a *app) splitObligation(w http.ResponseWriter, r *http.Request) {
 		fail(w, 404, "Платёж не найден")
 		return
 	}
-	beforeRow, err := snapshotOneObligation(r.Context(), tx, id)
-	if err != nil {
-		fail(w, 500, "Не удалось подготовить историю отмены")
-		return
-	}
-	before, _ := snapshotArray([]json.RawMessage{beforeRow})
-	if existingGroup != "" || existingCount > 1 {
-		fail(w, 400, "Этот платёж уже является частью графика")
+	if existingGroup == "" && existingCount > 1 {
+		fail(w, 400, "У платежа повреждена связь с графиком. Обратитесь к программисту")
 		return
 	}
 	if status == "Оплачено" || status == "Отменено" || actualDate != "" {
@@ -134,14 +128,54 @@ func (a *app) splitObligation(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	groupID, err := newSplitGroupID()
+	groupID := existingGroup
+	existingIDs := []int64{id}
+	if groupID != "" {
+		rows, queryErr := tx.QueryContext(r.Context(), `
+			SELECT id FROM obligations WHERE split_group_id=$1
+			ORDER BY installment_number NULLS LAST,id FOR UPDATE`, groupID)
+		if queryErr != nil {
+			fail(w, 500, "Не удалось загрузить существующий график")
+			return
+		}
+		existingIDs = existingIDs[:0]
+		containsTarget := false
+		for rows.Next() {
+			var existingID int64
+			if scanErr := rows.Scan(&existingID); scanErr != nil {
+				rows.Close()
+				fail(w, 500, "Не удалось прочитать существующий график")
+				return
+			}
+			existingIDs = append(existingIDs, existingID)
+			containsTarget = containsTarget || existingID == id
+		}
+		rowsErr := rows.Err()
+		rows.Close()
+		if rowsErr != nil || !containsTarget {
+			fail(w, 500, "Существующий график платежа повреждён")
+			return
+		}
+	} else {
+		groupID, err = newSplitGroupID()
+		if err != nil {
+			fail(w, 500, "Не удалось создать идентификатор графика")
+			return
+		}
+	}
+	totalInstallments := len(existingIDs) + len(plan) - 1
+	if totalInstallments > maxInstallments {
+		fail(w, 400, fmt.Sprintf("В одном графике может быть не более %d платежей", maxInstallments))
+		return
+	}
+	before, err := snapshotRows(r.Context(), tx, "obligations", existingIDs)
 	if err != nil {
-		fail(w, 500, "Не удалось создать идентификатор графика")
+		fail(w, 500, "Не удалось подготовить историю отмены")
 		return
 	}
 	user := currentUser(r)
 	first := plan[0]
-	_, err = tx.ExecContext(r.Context(), `UPDATE obligations SET account_type=$1,amount=$2::numeric,planned_payment_date=$3::date,split_group_id=$4,split_parent_id=NULL,installment_number=1,installment_count=$5,updated_by=$6,updated_at=now() WHERE id=$7`, nullable(first.AccountType), formatCents(first.cents), first.Date, groupID, len(plan), user.ID, id)
+	_, err = tx.ExecContext(r.Context(), `UPDATE obligations SET account_type=$1,amount=$2::numeric,planned_payment_date=$3::date,split_group_id=$4,installment_count=$5,updated_by=$6,updated_at=now() WHERE id=$7`, nullable(first.AccountType), formatCents(first.cents), first.Date, groupID, totalInstallments, user.ID, id)
 	if err != nil {
 		fail(w, 500, "Не удалось сохранить первый платёж")
 		return
@@ -153,15 +187,32 @@ func (a *app) splitObligation(w http.ResponseWriter, r *http.Request) {
 		err = tx.QueryRowContext(r.Context(), `
 			INSERT INTO obligations(source_row,account_type,entry_date,counterparty,legal_entity,cost_category,priority,responsible,document_number,deferment_days,document_date,amount,planned_payment_date,approval_date,actual_payment_date,status,urgency,comment,source_note,created_by,updated_by,split_group_id,split_parent_id,installment_number,installment_count)
 			SELECT NULL,$1,entry_date,counterparty,legal_entity,cost_category,priority,responsible,document_number,deferment_days,document_date,$2::numeric,$3::date,approval_date,NULL,status,urgency,comment,source_note,$4,$4,$5,$6,$7,$8
-			FROM obligations WHERE id=$9 RETURNING id`, nullable(installment.AccountType), formatCents(installment.cents), installment.Date, user.ID, groupID, id, installment.Number, len(plan), id).Scan(&childID)
+			FROM obligations WHERE id=$9 RETURNING id`, nullable(installment.AccountType), formatCents(installment.cents), installment.Date, user.ID, groupID, id, installment.Number, totalInstallments, id).Scan(&childID)
 		if err != nil {
 			fail(w, 500, "Не удалось создать часть платежа")
 			return
 		}
 		createdIDs = append(createdIDs, childID)
 	}
-	afterIDs := append([]int64{id}, createdIDs...)
-	after, err := snapshotRows(r.Context(), tx, "obligations", afterIDs)
+	orderedIDs, err := splitInstallmentOrder(existingIDs, id, createdIDs)
+	if err != nil {
+		fail(w, 500, "Не удалось обновить порядок графика")
+		return
+	}
+	targetIndex := 0
+	for index, installmentID := range orderedIDs {
+		if installmentID == id {
+			targetIndex = index
+		}
+		if _, err = tx.ExecContext(r.Context(), `UPDATE obligations SET installment_number=$1,installment_count=$2,updated_by=$3,updated_at=now() WHERE id=$4 AND split_group_id=$5`, index+1, totalInstallments, user.ID, installmentID, groupID); err != nil {
+			fail(w, 500, "Не удалось перенумеровать график платежей")
+			return
+		}
+	}
+	for index := range plan {
+		plan[index].Number = targetIndex + index + 1
+	}
+	after, err := snapshotRows(r.Context(), tx, "obligations", orderedIDs)
 	if err != nil || a.recordUndo(r.Context(), tx, user.ID, "split", fmt.Sprintf("Разбиение обязательства №%d на %d частей", id, len(plan)), undoPayload{Obligations: &undoChange{Before: before, After: after}}) != nil {
 		fail(w, 500, "Не удалось записать историю отмены")
 		return
@@ -171,8 +222,27 @@ func (a *app) splitObligation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	a.audit(r.Context(), user.ID, "split", "obligation", &id, map[string]any{"group_id": groupID, "original_amount": formatCents(totalCents), "installments": plan, "created_ids": createdIDs})
-	writeJSON(w, 200, map[string]any{"group_id": groupID, "original_id": id, "created_ids": createdIDs, "installments": plan})
+	a.audit(r.Context(), user.ID, "split", "obligation", &id, map[string]any{"group_id": groupID, "original_amount": formatCents(totalCents), "installments": plan, "created_ids": createdIDs, "group_installment_count": totalInstallments})
+	writeJSON(w, 200, map[string]any{"group_id": groupID, "original_id": id, "created_ids": createdIDs, "installments": plan, "group_installment_count": totalInstallments})
+}
+
+func splitInstallmentOrder(existing []int64, target int64, created []int64) ([]int64, error) {
+	result := make([]int64, 0, len(existing)+len(created))
+	found := false
+	for _, id := range existing {
+		result = append(result, id)
+		if id == target {
+			if found {
+				return nil, errors.New("duplicate target installment")
+			}
+			found = true
+			result = append(result, created...)
+		}
+	}
+	if !found {
+		return nil, errors.New("target installment is missing")
+	}
+	return result, nil
 }
 
 func buildPaymentPlan(totalCents int64, startDate time.Time, input paymentSplitInput) ([]paymentInstallment, error) {

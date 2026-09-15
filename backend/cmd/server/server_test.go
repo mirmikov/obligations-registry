@@ -210,6 +210,21 @@ func TestExecutiveSpecialSectionUsesSameFiltersAndMonthHorizon(t *testing.T) {
 	}
 }
 
+func TestExecutiveDetailsExposeAccountType(t *testing.T) {
+	for name, value := range map[string]any{
+		"general": executiveDetail{AccountType: "Коммерция"},
+		"special": executiveSpecialDetail{AccountType: "ОМС"},
+	} {
+		raw, err := json.Marshal(value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(raw), `"account_type"`) {
+			t.Fatalf("%s executive detail omits account_type: %s", name, raw)
+		}
+	}
+}
+
 func TestExecutiveSettingsAreKeptOutOfUserReferences(t *testing.T) {
 	if normalizeReferenceKind(executiveSettingsReferenceKind) != "" {
 		t.Fatal("internal executive settings must not be editable through reference endpoints")
@@ -756,27 +771,51 @@ func TestObligationNormalizeMarksApprovalAsPayable(t *testing.T) {
 
 func TestObligationNormalizeForUpdateUsesApprovalOnlyWhenItChanges(t *testing.T) {
 	newApproval := obligationInput{EntryDate: "2026-07-20", ApprovalDate: "2026-07-28", Status: "Зарегистрирован"}
-	newApproval.normalizeForUpdate("")
+	newApproval.normalizeForUpdate(obligationNormalizationState{})
 	if newApproval.Status != "К оплате" {
 		t.Fatalf("new approval status=%q, want К оплате", newApproval.Status)
 	}
 
 	changedApproval := obligationInput{EntryDate: "2026-07-20", ApprovalDate: "2026-07-29", Status: "Отменено"}
-	changedApproval.normalizeForUpdate("2026-07-28")
+	changedApproval.normalizeForUpdate(obligationNormalizationState{ApprovalDate: "2026-07-28"})
 	if changedApproval.Status != "К оплате" {
 		t.Fatalf("changed approval status=%q, want К оплате", changedApproval.Status)
 	}
 
 	manualStatus := obligationInput{EntryDate: "2026-07-20", ApprovalDate: "2026-07-28", Status: "Отменено"}
-	manualStatus.normalizeForUpdate("2026-07-28")
+	manualStatus.normalizeForUpdate(obligationNormalizationState{ApprovalDate: "2026-07-28"})
 	if manualStatus.Status != "Отменено" {
 		t.Fatalf("unchanged approval status=%q, want explicit Отменено", manualStatus.Status)
 	}
 
 	paid := obligationInput{EntryDate: "2026-07-20", ApprovalDate: "2026-07-29", ActualPaymentDate: "2026-07-30", Status: "Зарегистрирован"}
-	paid.normalizeForUpdate("2026-07-28")
+	paid.normalizeForUpdate(obligationNormalizationState{ApprovalDate: "2026-07-28"})
 	if paid.Status != "Оплачено" {
 		t.Fatalf("actual payment status=%q, want Оплачено", paid.Status)
+	}
+}
+
+func TestObligationNormalizeForUpdatePreservesManualPlannedPaymentDate(t *testing.T) {
+	deferment := 0
+	input := obligationInput{
+		EntryDate: "2026-09-15", DocumentDate: "2026-09-09", DefermentDays: &deferment,
+		PlannedPaymentDate: "2026-09-30", Status: "Зарегистрирован",
+	}
+	input.normalizeForUpdate(obligationNormalizationState{DocumentDate: "2026-09-09", DefermentDays: &deferment})
+	if input.PlannedPaymentDate != "2026-09-30" {
+		t.Fatalf("manual planned payment date=%q, want 2026-09-30", input.PlannedPaymentDate)
+	}
+}
+
+func TestObligationNormalizeForUpdateRecalculatesPlanWhenBasisChanges(t *testing.T) {
+	oldDeferment, newDeferment := 0, 5
+	input := obligationInput{
+		EntryDate: "2026-09-15", DocumentDate: "2026-09-09", DefermentDays: &newDeferment,
+		PlannedPaymentDate: "2026-09-30", Status: "Зарегистрирован",
+	}
+	input.normalizeForUpdate(obligationNormalizationState{DocumentDate: "2026-09-09", DefermentDays: &oldDeferment})
+	if input.PlannedPaymentDate != "2026-09-14" {
+		t.Fatalf("recalculated planned payment date=%q, want 2026-09-14", input.PlannedPaymentDate)
 	}
 }
 
@@ -805,6 +844,20 @@ func TestBuildPaymentPlanEqualPartsKeepsExactTotalWithCustomDates(t *testing.T) 
 	}
 	if total != 10000 {
 		t.Fatalf("plan total = %d cents, want 10000", total)
+	}
+}
+
+func TestSplitInstallmentOrderInsertsRepeatedSplitAfterTarget(t *testing.T) {
+	result, err := splitInstallmentOrder([]int64{101, 102, 103}, 102, []int64{201, 202})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []int64{101, 102, 201, 202, 103}
+	if !reflect.DeepEqual(result, want) {
+		t.Fatalf("split installment order=%v, want %v", result, want)
+	}
+	if _, err = splitInstallmentOrder([]int64{101}, 999, []int64{201}); err == nil {
+		t.Fatal("missing target must be rejected")
 	}
 }
 
